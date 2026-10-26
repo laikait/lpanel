@@ -1,0 +1,39 @@
+{#
+ # LPanel's layout. Pages extend it and fill `title` and `content`.
+ #
+ # In scope from Identity's Pages helper: `token` (CSRF), `me` (the signed-in
+ # Identity, or null), `urls`, `home`. Every value is escaped by Twig; only
+ # `content` (already-rendered markup) and a QR code's SVG are printed raw.
+ #}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ token|default('') }}">
+<title>{% block title %}{{ title|default('LPanel') }}{% endblock %} · LPanel</title>
+<link rel="stylesheet" href="{{ view.asset().core('vendor/bootstrap/css/bootstrap.min.css') }}">
+<link rel="stylesheet" href="{{ view.asset().core('css/app.css') }}">
+</head>
+<body class="bg-body-tertiary">
+<nav class="navbar navbar-expand bg-dark" data-bs-theme="dark">
+  <div class="container">
+    <a class="navbar-brand fw-semibold" href="{{ urls.home|default(home|default('/')) }}">LPanel</a>
+    {% if me|default(null) %}
+    <div class="navbar-nav ms-auto align-items-center gap-2">
+      <a class="nav-link" href="{{ urls.security }}">Security</a>
+      <span class="navbar-text small">{{ me.name }}{% if me.hasRole('root') %} <span class="badge text-bg-danger">root</span>{% endif %}</span>
+      <form method="post" action="{{ urls.logout }}" class="d-inline">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <button type="submit" class="btn btn-sm btn-outline-light">Sign out</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</nav>
+<main class="container py-4">{% block content %}{{ content|default('')|raw }}{% endblock %}</main>
+<script src="{{ view.asset().core('vendor/jquery/jquery.min.js') }}"></script>
+<script src="{{ view.asset().core('vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+<script src="{{ view.asset().core('js/app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+{% extends "layout.twig" %}
+
+{% block title %}Security{% endblock %}
+
+{% block content %}
+<h1 class="h4 mb-3">Sign-in security</h1>
+{% if status|default(null) %}<div class="alert alert-success" role="status">{{ status }}</div>{% endif %}
+{% if error|default(null) %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h2 class="h5">Two-factor sign-in</h2>
+
+    {% if recovery_codes|default(null) %}
+      <div class="alert alert-warning">
+        <p class="fw-semibold mb-2">Two-factor sign-in is on. Save these recovery codes now; they are shown only once.</p>
+        <ul class="list-unstyled font-monospace mb-0">{% for c in recovery_codes %}<li>{{ c }}</li>{% endfor %}</ul>
+      </div>
+
+    {% elseif enrolment|default(null) %}
+      <p>Scan this with your authenticator app, then enter the code it shows.</p>
+      <div class="mb-3" style="max-width: 220px">{{ enrolment.qr|raw }}</div>
+      <p class="small text-body-secondary">Or enter this key by hand: <code>{{ enrolment.secret }}</code></p>
+      <form method="post" action="{{ urls_security.confirm }}" class="row g-2">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <div class="col-auto"><input class="form-control" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="16" aria-label="Code"></div>
+        <div class="col-auto"><button class="btn btn-primary" type="submit">Turn on</button></div>
+      </form>
+
+    {% elseif enabled %}
+      <p>On. {{ remaining }} recovery code{{ remaining == 1 ? '' : 's' }} left.</p>
+      <form method="post" action="{{ urls_security.disable }}" class="row g-2">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <div class="col-auto"><input class="form-control" name="code" inputmode="numeric" required maxlength="16" placeholder="Current code" aria-label="Current code"></div>
+        <div class="col-auto"><button class="btn btn-outline-danger" type="submit">Turn off</button></div>
+      </form>
+
+    {% else %}
+      <p>Off. Two-factor sign-in is optional, and recommended for anyone who can change servers.</p>
+      <form method="post" action="{{ urls_security.begin }}">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <button class="btn btn-primary" type="submit">Set up two-factor sign-in</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

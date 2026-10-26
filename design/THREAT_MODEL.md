@@ -1,0 +1,123 @@
+# Threat model
+
+Scope: the MVP in [MVP_SCOPE.md](MVP_SCOPE.md), with the architecture in
+[ARCHITECTURE.md](ARCHITECTURE.md). Revisit this at every milestone that adds a
+mutating operation. Plan §14 says not to proceed past a failed security test.
+
+## 1. Assets
+
+| # | Asset | Why it matters |
+|---|---|---|
+| A1 | Panel operation-signing key | Whoever holds it can make every agent run any allowlisted operation |
+| A2 | Agent keys (signing + TLS) | Impersonate a server: forge results, read the operations sent to it |
+| A3 | Admin accounts, sessions, API tokens | Full control through the panel |
+| A4 | Customer files, databases, mail, secrets | The thing customers pay to have protected |
+| A5 | Generated hosting config + last-known-good backups | Wrong config takes every site down, or exposes another account |
+| A6 | Panel DB (users, audit, enrollment hashes, resource state) | Integrity of every decision |
+| A7 | `APP_KEY` (LPHP `Signer`/`Encrypter`) | Forged signed URLs and CSRF tokens; decrypts encrypted columns |
+| A8 | Audit trail | Accountability; must survive a compromised customer and a careless admin |
+
+## 2. Actors
+
+| Actor | Starting position |
+|---|---|
+| T1 Internet attacker | can reach `:8443` and customer sites |
+| T2 **Hosting customer** | panel login with customer role, **plus code execution as their own uid on a managed server** (PHP, cron, SFTP) |
+| T3 Compromised customer website | same as T2, but for an attacker the customer doesn't know about |
+| T4 Network attacker | on-path between agent and panel |
+| T5 Compromised `lpa-agent` process | the `lpa` user on one server |
+| T6 Compromised panel web process | the `lpanel` user on the panel host |
+| T7 Malicious or careless administrator | an admin role in the panel |
+| T8 Supply chain | PHP / Go dependencies, distro packages, the LPA release channel |
+
+## 3. Threats and mitigations
+
+Status: **D** = designed (in these docs), **T** = needs a named test before the milestone closes, **O** = open.
+
+### Authentication and sessions
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| T1 credential stuffing / brute force | LPHP login throttling (`auth.throttle.*`); TOTP required for every admin role | D, T |
+| T1 CSRF on cookie API | LPHP CSRF on by default; `/api/v1` keeps it; only bearer-only `/api/token/v1` and `/agent/v1` opt out | D, T |
+| Session fixation | LPHP regenerates the session on login and rotates CSRF | D (LPHP) |
+| Token theft from the DB | only SHA-256 fingerprints stored; tokens shown once; revocable; scoped to a role | D, T |
+| T1 user enumeration | LPHP: every login failure gives the same answer and costs the same time | D (LPHP) |
+
+### Authorization and isolation (release-blocking, plan §8)
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| T2 IDOR: change an id to reach another customer's resource | ownership checked in services through the `authorization.decision` filter (refuse-only); every repository lookup scoped by account | D, **T** (a test per resource type) |
+| T2 mass assignment (`"role":"admin"`) | `Schema::deserialize()` drops unknown fields; privileged fields never in customer schemas | D, T |
+| T2 reading another account's files on the server | distinct uid per account; homes `0750 <acct>:<acct>`; PHP-FPM pool per account running as that uid; the web server reads through group membership only where needed | D, **T** |
+| T2 reading LPA keys | `/etc/lpa` is `0700 lpa`; `exec.sock` is `0660 root:lpa`, and customers aren't in group `lpa` | D, T |
+| T2 talking to `lpa-exec` | `SO_PEERCRED` must equal the `lpa` uid; anything else is refused and logged | D, T |
+| T2 process snooping | `hidepid=invisible` on `/proc`, if compatible with PHP-FPM and systemd on both OSes | **O** |
+| T2 config injection through managed web settings | structured settings only; allowlisted keys and value grammars; LPA renders templates; values are escaped for Nginx syntax; `include`, `load_module`, `http`/`events` directives and absolute paths are refused | D, **T** |
+| T2 symlink tricks in the document root (e.g. pointing at `/etc/lpa`) | Nginx `disable_symlinks if_not_owner`; LPA resolves paths with `openat`-style containment before any privileged file operation | D, T |
+| T2 database reach | one DB user per database, granted only on it; a deny list for the `lpanel` schema and accounts | D, T |
+
+### Agent channel
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| T4 MITM / panel impersonation | SPKI pin from enrollment; TLS 1.2+ | D, T |
+| T4 replay of a request | request id + expiry ≤ 120s + seen-id store | D, **T** |
+| T4 / T6 forged operation | Ed25519 operation signature checked by the agent before parsing | D, **T** |
+| Stolen enrollment token | single use, 15 min, stored hashed, rate-limited, audited; the agent pins the panel | D, T |
+| T5 forged results for its own server | results validated against `result_schema`; resource is marked active only after a postcondition check; anomalies → `needs_attention` | D |
+| T5 acting for another server | `agent_id` in both the signature and the mTLS fingerprint; operations are leased per agent | D, T |
+| Compromised agent key | revoke in the UI; queued operations cancelled; 90-day rotation | D |
+
+### Privilege and blast radius
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| T6 RCE in the panel → shell on the panel host | `system.enabled=false` (ADR-0005); `lpanel` has no sudo; only `system/` is writable | D, T |
+| T6 RCE in the panel → all servers | the attacker gets allowlisted operations, not a shell. **But A1 is readable by `lpanel`**, so they can sign anything in the registry. Destructive operations (`*.delete`) need a recent re-auth at the API layer; the agent can't verify that | **O** — consider a separate signing service or hardware key after MVP |
+| T5 parser bug → root | network code runs as `lpa`; root code is reachable only over the socket ([ADR-0009](adr/0009-lpa-privilege-split.md)) | D |
+| T7 admin edits panel config through hosting operations | no hosting operation can name `lpanel-nginx` or `/etc/lpanel` (ADR-0003); the LPA deny list is compiled in | D, T |
+| Generic command execution | none exists: no `exec`/`shell` operation; adapters use fixed binaries + argv; the protocol rejects unknown fields | D, **T** (a registry test lists every op) |
+| Cron as an escalation route | cron operations install into the **customer's** crontab only, running as the customer uid. That is code execution at customer level, which is by design | D |
+
+### Configuration safety
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Bad candidate takes all sites down | write the candidate to a staging tree → `nginx -t -c <staged main config>` that includes the real main config → atomic swap → reload → health probe → automatic rollback | D, **T** |
+| Silent overwrite of manual edits | a hash of each generated file is recorded; drift is reported and never auto-fixed by default | D, T |
+| Disk full in the middle of a write | write a temp file + `fsync` + `rename`; check free space before writing | D, T |
+
+### Data, secrets and logs
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Secrets in logs, results or errors | LPHP `Secret`; results contain no raw output; operations never carry DB passwords in plain text (encrypted to the agent's X25519 key, derived from its Ed25519 key — **design in the Databases milestone**) | D / O |
+| Audit tampering by app roles | `audit_events` is append-only in code. Retention is deleted only by a scheduled task with a documented policy. Option: a MariaDB trigger that blocks UPDATE | D / O |
+| Backups deleted by a compromised customer | stored outside every customer's uid; customers ask for restores through operations only | Later milestone |
+
+### Supply chain
+
+| Threat | Mitigation | Status |
+|---|---|---|
+| Malicious LPA update | signed release packages; no self-update from an unauthenticated URL; apt repository with a signing key pinned at install | D (Phase 1 packaging) |
+| Vulnerable dependencies | `composer audit`, `govulncheck` in CI; dependency inventory | D |
+
+## 4. Tests this model requires (release-blocking ones in bold)
+
+1. **A customer changes every id in every customer API → 403/404, and an audit record for each attempt.**
+2. **Replayed, expired, wrong-signature, wrong-cert, wrong-agent and malformed agent requests are rejected with the right error code.**
+3. **An operation with a bad signature, an unknown op, unknown fields or an expired `not_after` is refused by LPA without acting.**
+4. **A registry test fails if any operation takes a free-form command, executable path or environment.**
+5. **As customer A's uid on a test server: can't read B's home, B's PHP session files, `/etc/lpa`, or connect to `exec.sock`.**
+6. **Invalid or prohibited web settings → no file changes, no reload; a failed reload → rollback verified by a health probe.**
+7. Enrollment token: second use, after expiry, and wrong token all give the same answer to the caller and different audit reasons.
+8. `config/system.php` has `enabled => false`; no module imports `App\Engine\System\*`.
+9. No secret appears in the `audit` / app logs or operation results (grep the test fixtures for known sentinel secrets).
+
+## 5. Open items for the product owner
+
+- **O-1:** Should the operation-signing key move out of the web process's reach (a signing helper on a Unix socket, or a TPM/HSM) before the public beta?
+- **O-2:** Is `hidepid` on `/proc` acceptable for the hosting servers?
+- **O-3:** What is the audit retention period?

@@ -1,0 +1,62 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Router for PHP's built-in server: `php -S 127.0.0.1:8080 -t public server`,
+ * which is what `composer serve` runs.
+ *
+ * Development only. The document root is public/, as it is for Apache and nginx,
+ * so nothing outside it -- engine/, config/, vendor/, a .env, this file -- can be
+ * addressed at all. The router serves a real file from public/ when one exists
+ * and hands everything else to the front controller.
+ */
+
+$public = __DIR__ . \DIRECTORY_SEPARATOR . 'public';
+
+// Started without -t public, the built-in server's document root is the project
+// directory, and returning false below would serve files from there. Refuse to
+// run like that rather than work in a way no real server does.
+$root = \realpath((string) ($_SERVER['DOCUMENT_ROOT'] ?? ''));
+
+if ($root === false || $root !== \realpath($public)) {
+    \http_response_code(500);
+    echo "The document root must be public/. Start the server with:\n\n    php -S 127.0.0.1:8080 -t public server\n";
+
+    return true;
+}
+
+$path = \rawurldecode((string) \strtok((string) ($_SERVER['REQUEST_URI'] ?? '/'), '?'));
+$file = $public . \str_replace('/', \DIRECTORY_SEPARATOR, $path);
+
+// A real file in public/ is served as it is -- except PHP, which only ever runs
+// as the front controller, and dotfiles such as public/.htaccess. Compared
+// without case, because on Windows and macOS INDEX.PHP is the same file.
+$dotfile = \preg_match('#(^|/)\.(?!well-known/)#', $path) === 1;
+
+// Windows opens "index.php." and "index.php " as index.php, and "index.php::$DATA"
+// is its data stream: each passes a suffix check on the requested name and then
+// serves the source. So the name is judged by the file it really opens, and a
+// name of those shapes is never served as a file at all.
+$windowsAlias = \preg_match('/[.\s]$|:/', $path) === 1;
+$real = \realpath($file);
+$inside = $real !== false && \str_starts_with($real, \realpath($public) . \DIRECTORY_SEPARATOR);
+
+if ($path !== '/' && !$dotfile && !$windowsAlias && $inside && \is_file($real)
+    && !\str_ends_with(\strtolower($real), '.php') && !\str_ends_with(\strtolower($file), '.php')) {
+    return false;
+}
+
+// Say which script is running, because the built-in server gets it wrong. For
+// a path that names a real directory (/assets) or looks like a file
+// (/customers.json), it reports the path itself as SCRIPT_NAME, and the base
+// path derived from that swallows the whole request: /assets would be served as
+// "/" under a base of "/assets". Apache with DocumentRoot=public/ reports /index.php.
+$_SERVER['SCRIPT_NAME'] = '/index.php';
+$_SERVER['PHP_SELF'] = '/index.php';
+$_SERVER['SCRIPT_FILENAME'] = $public . \DIRECTORY_SEPARATOR . 'index.php';
+
+require $public . '/index.php';
+
+return true;

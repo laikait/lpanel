@@ -1,0 +1,61 @@
+# The front controller.
+#
+# This directory is the document root: index.php and the application's own
+# assets, and nothing else. engine/, modules/, config/, vendor/ and the project's
+# metadata are one level up, where no URL reaches them, so there is nothing here
+# to deny by name. Point a virtual host's DocumentRoot at this directory.
+
+Options -Indexes
+
+# Files served straight from here -- the application's own assets -- never
+# reach PHP, so they never get the headers the application adds. nosniff is the
+# one that matters for a static file: without it a browser may decide a .txt or
+# an upload is HTML and run it on this origin. setifempty leaves alone the copy
+# PHP already sends on its own responses.
+<IfModule mod_headers.c>
+    Header setifempty X-Content-Type-Options "nosniff"
+</IfModule>
+
+# PHP prints some errors before any script runs: a body over post_max_size gets
+# "PHP Request Startup: POST Content-Length ... exceeds the limit" written into
+# the response, which also fixes the status at 200 before the application can
+# answer 413. The framework switches display_errors off as its first act, but
+# that is too late for these, so under mod_php they are switched off here too.
+# (Under PHP-FPM this block is skipped; set display_errors=Off in its php.ini.)
+<IfModule mod_php.c>
+    php_flag display_errors off
+    php_flag display_startup_errors off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag display_errors off
+    php_flag display_startup_errors off
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Not TRACE: Apache answers it in its core, before any .htaccess is read,
+    # echoing the request back with its cookies. Only "TraceEnable Off" in the
+    # server configuration stops it; see docs/operations/deployment.md.
+
+    # Dotfiles are not content -- this one least of all. /.well-known/ is the
+    # exception, because certificate authorities read challenges from it.
+    RewriteRule (^|/)\.(?!well-known/) - [F,L]
+
+    # Apache receives Authorization and does not pass it on: it treats the
+    # header as its own business, so $_SERVER never sees it and a bearer token
+    # the client definitely sent is invisible to PHP. The failure is silent and
+    # only happens on a real server -- token auth works under php -S and in
+    # every test, then answers 401 to everything once deployed.
+    #
+    # The framework also recovers it from getallheaders() where that exists, so
+    # this is the belt to that pair of braces. Both are needed: getallheaders()
+    # is absent under FastCGI, and this rule is absent from an nginx install.
+    RewriteCond %{HTTP:Authorization} .
+    RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+
+    # Anything that is not a real file here goes to the application.
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+    RewriteRule ^ index.php [L]
+</IfModule>

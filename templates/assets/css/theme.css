@@ -1,0 +1,41 @@
+/* The site's stylesheet: templates/assets/css/theme.css, served as /assets/template/css/theme.css */
+:root {
+    --muted: #6b6b78;
+    --line: #e7e7ee;
+    --accent: #5b3df5;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --ink: #ececf1;
+        --paper: #131316;
+        --muted: #9a9aa8;
+        --line: #2a2a31;
+        --accent: #9d8bff;
+    }
+}
+
+a { color: var(--accent); }
+code { font-size: .9em; padding: .1em .3em; border: 1px solid var(--line); border-radius: 4px; }
+
+.site-header { padding-bottom: 1rem; margin-bottom: 2.5rem; border-bottom: 1px solid var(--line); }
+.site-header .brand { color: var(--ink); font-weight: 600; text-decoration: none; }
+.site-footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .875rem; }
+
+.hero h1, .error-page h1 { font-size: 2rem; line-height: 1.2; margin: .25rem 0 .75rem; }
+.eyebrow, .status { color: var(--accent); font-weight: 600; letter-spacing: .04em; margin: 0; }
+.status { font-size: 3rem; line-height: 1; }
+
+.next { margin-top: 2.5rem; }
+.steps { padding-left: 1.25rem; }
+.steps li { margin-bottom: .9rem; }
+
+.button {
+    display: inline-block;
+    margin-top: .5rem;
+    padding: .5rem 1rem;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+}

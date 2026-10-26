@@ -1,0 +1,25 @@
+{#
+ # Every other status.
+ #
+ # Reached when no errors/<status> template exists, so it has to say something
+ # true for a 403, a 405 and a 500 alike -- which is why it says the status back
+ # rather than inventing a story about what went wrong.
+ #
+ # error.message is already safe to show: outside debug mode an arbitrary
+ # exception's message was replaced with the status text long before it got
+ # here. It is escaped anyway, because Twig escapes everything it prints.
+ #
+ # In scope: `error` (an ErrorDocument), `home`, and `view`.
+ #}
+{% extends "layout.twig" %}
+
+{% block title %}{{ error.status }} {{ error.title }}{% endblock %}
+
+{% block content %}
+<section class="error-page">
+    <p class="status">{{ error.status }}</p>
+    <h1>{{ error.status >= 500 ? 'Something went wrong at our end' : 'That request could not be completed' }}</h1>
+    <p>{{ error.message }}</p>
+    <p><a class="button" href="{{ home|default('/') }}">Back to the home page</a></p>
+</section>
+{% endblock %}

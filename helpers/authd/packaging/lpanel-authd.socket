@@ -1,0 +1,14 @@
+[Unit]
+Description=LPanel root password check (socket)
+
+[Socket]
+ListenStream=/run/lpanel-authd/authd.sock
+# Only the panel's PHP user may connect; authd also checks SO_PEERCRED.
+SocketUser=root
+SocketGroup=lpanel
+SocketMode=0660
+DirectoryMode=0750
+Accept=no
+
+[Install]
+WantedBy=sockets.target

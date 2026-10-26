@@ -1,0 +1,20 @@
+{% extends "layout.twig" %}
+
+{% block title %}Two-factor code{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-sm-8 col-md-5 col-lg-4">
+    <h1 class="h4 mb-3">Enter your code</h1>
+    {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ urls.login_code }}" class="card card-body shadow-sm">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <div class="mb-3">
+        <label class="form-label" for="code">Code from your authenticator app, or a recovery code</label>
+        <input class="form-control" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus maxlength="64">
+      </div>
+      <button class="btn btn-primary w-100" type="submit">Continue</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

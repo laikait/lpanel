@@ -1,0 +1,79 @@
+# MVP scope and milestone order
+
+Two targets:
+
+- **MVP** — an internal milestone: a customer gets a working PHP website over HTTPS on an Nginx server that LPanel manages.
+- **Public beta** — plan §15's acceptance list.
+
+Each milestone ends with:
+
+- `composer check` and the LPA tests;
+- the threat-model tests that milestone names ([THREAT_MODEL.md §4](THREAT_MODEL.md#4-tests-this-model-requires-release-blocking-ones-in-bold));
+- updated docs;
+- a short completion report.
+
+Work stops at a failed security or isolation test (plan §14).
+
+## Fixed for the first release
+
+| Item | Choice | Source |
+|---|---|---|
+| OS (panel and managed servers) | Ubuntu 24.04 + 26.04, Debian 12 + 13, amd64 | [ADR-0004](adr/0004-os-matrix.md) |
+| Agent | Go; `lpa-agent` + `lpa-exec` | [ADR-0001](adr/0001-lpa-in-go.md), [ADR-0009](adr/0009-lpa-privilege-split.md) |
+| Transport | agent pulls; mTLS + Ed25519 | [ADR-0002](adr/0002-agent-pull-transport.md) |
+| Panel web server | separate `lpanel-nginx` instance on `:8443` | [ADR-0003](adr/0003-separate-panel-nginx-instance.md) |
+| Panel DB | distro MariaDB (10.11 or 11.8) | [ADR-0008](adr/0008-panel-database-mariadb.md) |
+| Customer web backend | Nginx in MVP; Apache before beta | [ADR-0007](adr/0007-nginx-first-apache-second.md) |
+| Customer PHP | the distro default only (8.3 / 8.2) | ADR-0004 |
+| Customer DB | distro MariaDB (10.11 or 11.8) | plan §3.3 |
+| Certificates | Let's Encrypt via ACME HTTP-01, served by the hosting backend | plan §3.3 |
+
+## Milestones
+
+| # | Milestone | Repo | Delivers | Exit criteria (beyond the standard ones) |
+|---|---|---|---|---|
+| M0 | **Design lock** (this folder) | lpanel | discovery, architecture, protocol, threat model, data model, ADRs | product owner accepts or edits ADR-0005…0009 and answers the open questions below |
+| M1 | **LPA read-only prototype** | lpa | Go skeleton; config; protocol types + golden vectors; operation registry; the five read-only ops; local journal; systemd units; one `.deb` tested on all four OSes | tests reject bad, replayed and expired requests; no generic exec exists; install, upgrade, remove and restart pass in `ubuntu:24.04`, `ubuntu:26.04`, `debian:12`, `debian:13` |
+| M2a | **LPanel foundation** (done 2026-10-27) | lpanel | Audit module; Identity: users, code-declared roles, root login via `lpanel-authd` + PAM (ADR-0010), panel-password login, optional TOTP, login/code/security pages, session and users API; Dashboard; vendored Bootstrap/jQuery layout; `config/system.php` disabled | CSRF, session-rotation, privilege-escalation and suspension tests; authd tested against real PAM; `composer check` green |
+| M2b | **Identity, continued** | lpanel | password reset by email; API tokens (`TokenProvider`, `/api/token/v1`); user-management screens; MariaDB CI run (10.11 + 11.8) | token and reset tests; `security:check` clean apart from deployment items (APP_KEY, hosts, HSTS: M5) |
+| M3 | **Enrollment + inventory** | both | Servers module; `/agent/v1/enroll` + heartbeat; key rotation and revocation; server list and detail with health | THREAT_MODEL tests 2 and 7 pass end to end against a real LPA in a VM |
+| M4 | **Operations** | both | Operations module; claim/lease/result; sweeper; UI job states; `system.*` operations visible in the panel | lease expiry, duplicate delivery, offline agent and protocol mismatch all tested |
+| M5 | **Panel packaging** | lpanel | the `lpanel` installer: user, `/opt/lpanel`, `lpanel-nginx`, PHP-FPM pool, MariaDB accounts, worker/scheduler units, keys | clean install and upgrade on both OSes; panel config untouched by anything else |
+| M6 | **Hosting accounts + Nginx websites** | both | account uid/home; per-account PHP-FPM pool; Nginx adapter (render, validate, apply, rollback, drift); managed settings v1 (redirects, headers, `index`, PHP on/off); website create/suspend/delete | THREAT_MODEL tests 1, 5 and 6; failed reload rolls back; the panel's Nginx config is byte-identical before and after |
+| M7 | **TLS for websites** | both | ACME HTTP-01 issue/renew through the hosting Nginx; expiry status | issue against the Let's Encrypt **staging** server in CI |
+| — | **= MVP** | | | plan §11 E2E scenarios 1–8 |
+| M8 | Apache adapter | lpa | same contract suite as Nginx | contract suite green; backend migration designed |
+| M9 | Databases | both | MariaDB DB/user lifecycle; sealed secrets | THREAT_MODEL test 9; grants verified |
+| M10 | Files + SFTP + cron | both | scoped file manager; chrooted SFTP; customer crontab | symlink and traversal tests |
+| M11 | Backups (local) + restore | both | files + DB dumps; retention; verified restore into an isolated target | restore test (plan §15) |
+| M12 | Monitoring + service actions | both | metrics history; alerts; allowlisted restarts with confirmation | |
+| M13 | Hardening + release | both | full threat-model pass; compatibility matrix; docs | plan §15 checklist |
+| — | **= Public beta** | | | |
+
+## Out of scope for MVP and beta
+
+These are deferred unless the scope is changed:
+
+- **Mail.** It needs its own design: stack, abuse handling and deliverability (plan §6, Phase 6).
+- **DNS hosting.** See the open question below.
+- **OpenLiteSpeed.**
+- **Multiple PHP versions per server.**
+- **Off-server backups.**
+- **Firewall management.**
+- **Unattended upgrades.**
+- **Plan §16:** billing, resellers, containers, Windows and plugins.
+
+## Open questions
+
+These are for the product owner. An answer is needed by the milestone shown.
+
+| # | Question | Needed by | Recommendation |
+|---|---|---|---|
+| Q1 | Panel TLS on `:8443`. ACME HTTP-01 needs `:80`, which the hosting backend owns. Options: (a) the admin supplies a cert; (b) ACME DNS-01; (c) LPA adds a managed `/.well-known/acme-challenge/` rule for the panel hostname to the hosting backend. | M5 | (a) for MVP, with agents pinning the SPKI; (b) later |
+| Q2 | DNS: which backend, if any, before beta? PowerDNS (API, SQL backend) or BIND (zone files)? Or "external DNS only, we show the records to create"? | M9 | external-only for beta; PowerDNS after |
+| Q3 | Customer SFTP model: OpenSSH `ChrootDirectory` per account (needs a root-owned chroot path) or `internal-sftp` with a home chroot? | M10 | `internal-sftp` + `ChrootDirectory /home/%u` with root-owned home and a writable `site/` dir |
+| Q4 | Signing key protection ([THREAT_MODEL O-1](THREAT_MODEL.md#5-open-items-for-the-product-owner)) | M13 | a local signing helper after MVP |
+| Q5 | `hidepid` on `/proc` (THREAT_MODEL O-2) | M6 | yes, if PHP-FPM and systemd tests pass |
+| Q6 | Audit retention (THREAT_MODEL O-3) | M2 | **Decided:** 1 year (`Audit.retention_days`) |
+| Q7 | Licence and repository visibility for `lpa` and `lpanel` | M1 | — |
+| Q8 | Ask LPHP for `STABILITY.md` + `framework.json` for 3.1.3 ([LPHP_DISCOVERY §1](LPHP_DISCOVERY.md#1-which-lphp-this-is)) | M2 | — |

@@ -1,0 +1,39 @@
+# Forwards every request into public/, the real document root.
+#
+# Only read when the web server serves this project directory itself -- XAMPP at
+# http://localhost/framework/, or shared hosting that cannot change its document
+# root. A production virtual host points DocumentRoot at public/ instead, and
+# never sees this file. Verify either way:
+#
+#   curl -i http://localhost/framework/composer.json   -> the application's 404, never the file
+#
+# Everything is forwarded, whatever it names: /composer.json becomes
+# public/composer.json, which does not exist, so the application answers it. No
+# file outside public/ is ever served, and there is no list of names to keep up
+# to date. public/.htaccess takes over from there -- a request inside public/
+# is rewritten by that file's rules, not these, so this cannot loop.
+
+Options -Indexes
+
+# A real directory requested without its slash -- /engine, /modules/Shared -- is
+# otherwise answered by Apache with a 301 to the same path plus a slash, before
+# the rewrite below runs. That redirect is a map of the source tree: a directory
+# that exists answers 301 and one that does not answers 404. Switched off for
+# every directory except this one, recognised by what it holds rather than by
+# name, so http://localhost/framework still redirects to its own home page.
+<IfModule mod_dir.c>
+    <If "! -f '%{REQUEST_FILENAME}/public/index.php'">
+        DirectorySlash Off
+    </If>
+</IfModule>
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Without mod_rewrite nothing is forwarded, and serving this directory would
+# serve the source. Refuse everything instead.
+<IfModule !mod_rewrite.c>
+    Require all denied
+</IfModule>

@@ -1,0 +1,45 @@
+/vendor/
+# Working plans: kept locally, not part of the published documentation.
+/docs/plans/
+/system/Cache/*
+/system/Logs/*
+/system/Runtime/*
+# Created on demand by the file queue store; jobs are data, never source.
+/system/Queue/
+# Created on demand by the scheduler; a lock is one process's claim, not state.
+/system/Schedule/
+# Created on demand by the rate limiter; a count is traffic, not source.
+/system/Security/
+# Created on demand by the session store; a session is a live credential and
+# belongs in a repository even less than the rest of this list.
+/system/Sessions/
+# Created on demand by system.execution.max_concurrent; a slot is a lock file.
+/system/Commands/
+# Created on demand by the local disk; uploads and generated files are data.
+/system/Storage/
+# Created by framework:update: copies of the files it replaced, for framework:rollback.
+/system/Backups/
+!/system/Cache/.gitignore
+!/system/Logs/.gitignore
+!/system/Runtime/.gitignore
+
+# Tooling caches
+/.php-cs-fixer.cache
+/.phpunit.result.cache
+
+# Local overrides
+/.env
+/.env.local
+/phpunit.xml.local
+/phpstan.neon.local
+
+# Editors / OS
+/.idea/
+/.vscode/
+/nbproject/
+*.swp
+*~
+Thumbs.db
+Desktop.ini
+.DS_Store
+composer.lock

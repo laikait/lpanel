@@ -1,0 +1,19 @@
+/* The application's own stylesheet: /assets/core/css/app.css */
+:root {
+    color-scheme: light dark;
+    --ink: #16161a;
+    --paper: #fbfbfd;
+}
+
+body {
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.55 ui-sans-serif, system-ui, sans-serif;
+    margin: 0 auto;
+    max-width: 46rem;
+    padding: 2rem 1rem;
+}
+
+pre {
+    white-space: normal;
+}

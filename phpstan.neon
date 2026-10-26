@@ -1,0 +1,26 @@
+parameters:
+    level: 8
+    tmpDir: system/Runtime/phpstan
+    paths:
+        - engine
+        # An application's own modules, held to the same level as the engine.
+        # Left out until 2026-09-19, which is how the demo module that shipped
+        # here carried three type errors nobody was told about.
+        - modules
+        - tests
+    treatPhpDocTypesAsCertain: false
+
+    # composer.json says the framework runs on ^8.2, and this is what makes that
+    # claim true rather than aspirational. Analysing across the whole supported
+    # range reports syntax newer than 8.2 -- typed class constants, say -- on
+    # EVERY run, on whatever PHP the developer happens to have. The alternative
+    # is finding out from the one CI job that runs the oldest version, hours
+    # later and only if it was pushed.
+    phpVersion:
+        min: 80200
+        max: 80500
+
+    typeAliases:
+        # Anything the container knows how to invoke: a closure, a function or
+        # "Class::method" string, an invokable object, or [target, method].
+        InvokableTarget: 'callable|array{0: object|class-string, 1: string}|string'

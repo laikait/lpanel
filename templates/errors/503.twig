@@ -1,0 +1,20 @@
+{#
+ # Maintenance mode (php laika down), or anything else that answers 503.
+ #
+ # error.message is the --message given to `down`, when there was one. The
+ # Retry-After header is already on the response; this page only has to say
+ # what is happening.
+ #
+ # In scope: `error` (an ErrorDocument), `home`, and `view`.
+ #}
+{% extends "layout.twig" %}
+
+{% block title %}Down for maintenance{% endblock %}
+
+{% block content %}
+<section class="error-page">
+    <p class="status">{{ error.status }}</p>
+    <h1>Down for maintenance</h1>
+    <p>{{ error.message != error.title ? error.message : 'We are making some changes and will be back shortly.' }}</p>
+</section>
+{% endblock %}

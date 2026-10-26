@@ -1,0 +1,25 @@
+{% extends "layout.twig" %}
+
+{% block title %}Sign in{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-sm-8 col-md-5 col-lg-4">
+    <h1 class="h4 mb-3">Sign in to LPanel</h1>
+    {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+    <form method="post" action="{{ urls.login }}" class="card card-body shadow-sm" autocomplete="on">
+      <input type="hidden" name="_token" value="{{ token }}">
+      <div class="mb-3">
+        <label class="form-label" for="login">Login name</label>
+        <input class="form-control" id="login" name="login" value="{{ old }}" autocomplete="username" required autofocus maxlength="190">
+        <div class="form-text">Server administrators sign in as <code>root</code> with the server's root password.</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label" for="password">Password</label>
+        <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+      </div>
+      <button class="btn btn-primary w-100" type="submit">Sign in</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

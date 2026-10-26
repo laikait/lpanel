@@ -1,0 +1,12 @@
+{#
+ # Sent by Auth\EmailVerification. In scope: `link`, `name`, `hours`.
+ #}
+<!doctype html>
+<html>
+<body style="font-family: system-ui, sans-serif; line-height: 1.5; color: #1a1a1a;">
+    <p>Hello{{ name ? ' ' ~ name : '' }},</p>
+    <p>Please confirm this is your email address:</p>
+    <p><a href="{{ link }}">Confirm my address</a></p>
+    <p>The link works for {{ hours }} hours. If you did not create an account, ignore this email.</p>
+</body>
+</html>

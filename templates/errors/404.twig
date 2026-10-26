@@ -1,0 +1,26 @@
+{#
+ # The page a lost visitor sees.
+ #
+ # A template named after the status wins over errors/error, which is the whole
+ # of the rule: a 404 deserves a different sentence from a 500, because one is
+ # the visitor's mistake and the other is ours.
+ #
+ # It must not depend on the application being healthy. If rendering this
+ # throws, ErrorPage falls back to its built-in page rather than turning a
+ # handled 404 into an unhandled 500. In debug mode the built-in page always
+ # wins, so the trace is never hidden behind this one: preview it with debug off.
+ #
+ # In scope: `error` (an ErrorDocument), `home`, and `view`.
+ #}
+{% extends "layout.twig" %}
+
+{% block title %}Page not found{% endblock %}
+
+{% block content %}
+<section class="error-page">
+    <p class="status">404</p>
+    <h1>That page is not here</h1>
+    <p>The link may be out of date, or the address may have a typo in it.</p>
+    <p><a class="button" href="{{ home|default('/') }}">Back to the home page</a></p>
+</section>
+{% endblock %}

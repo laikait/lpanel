@@ -1,0 +1,18 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * The console entry point: php laika <command>.
+ *
+ * Deliberately five lines: everything worth analysing lives in ConsoleKernel,
+ * where static analysis can see it. On Windows the shebang does nothing, so
+ * invoke this as `php laika` or `composer console`.
+ */
+
+require __DIR__ . '/vendor/autoload.php';
+
+$app = require __DIR__ . '/engine/bootstrap.php';
+
+exit($app->run());
