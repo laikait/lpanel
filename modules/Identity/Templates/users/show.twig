@@ -1,0 +1,158 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+
+{% set u = target %}
+{% set locked = refusal is not null %}
+
+{% block title %}{{ u.name }}{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Administration</span>{{ ui.icon('chevron-right') }}<a href="{{ index_url }}">Users</a>{{ ui.icon('chevron-right') }}<span>{{ u.name }}</span>{% endblock %}
+
+{% block content %}
+<div class="lp-profile-head">
+  {{ ui.avatar(u.name, null, 'xl') }}
+  <div class="min-w-0">
+    <h1 class="lp-page-title mb-1 text-truncate">{{ u.name }}</h1>
+    <div class="lp-profile-head__meta">
+      <span class="font-monospace">{{ u.login }}</span>
+      {{ ui.status_badge(u.status) }}
+      {% for r in u.effectiveRoles %}{{ ui.role_badge(r) }}{% endfor %}
+    </div>
+  </div>
+</div>
+
+{% if locked %}
+<div class="lp-callout mb-4">
+  {{ ui.icon('lock') }}
+  <div>{{ refusal }}</div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-xl-8">
+    <form method="post" action="{{ actions.update }}" novalidate>
+      {{ ui.csrf(token) }}
+      <section class="card lp-card mb-4">
+        <div class="lp-card__header"><h2 class="lp-card__title">Profile</h2></div>
+        <div class="card-body">
+          <fieldset {{ locked ? 'disabled' : '' }}>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label" for="name">Full name</label>
+                <input class="form-control{{ errors.name is defined ? ' is-invalid' : '' }}" id="name" name="name" value="{{ old.name }}" maxlength="190" required>
+                {% if errors.name is defined %}<div class="invalid-feedback">{{ errors.name }}</div>{% endif %}
+              </div>
+              <div class="col-md-6">
+                <label class="form-label" for="email">Email</label>
+                <input class="form-control{{ errors.email is defined ? ' is-invalid' : '' }}" id="email" name="email" type="email" value="{{ old.email }}" maxlength="190">
+                {% if errors.email is defined %}<div class="invalid-feedback">{{ errors.email }}</div>{% endif %}
+              </div>
+              <div class="col-12">
+                <div class="form-label">Roles</div>
+                {% include "@Identity/users/_roles.twig" with {disabled: locked} %}
+              </div>
+            </div>
+          </fieldset>
+        </div>
+        {% if not locked %}
+        <div class="lp-card__footer lp-card__footer--actions"><button class="btn btn-primary" type="submit">Save changes</button></div>
+        {% endif %}
+      </section>
+    </form>
+
+    {% if not locked %}
+    <section class="card lp-card mb-4">
+      <div class="lp-card__header">
+        <div><h2 class="lp-card__title">Password</h2><p class="lp-card__subtitle">Set one for them, or email them a link to choose their own.</p></div>
+      </div>
+      <div class="card-body">
+        {% if errors.password is defined %}{{ ui.alert('danger', errors.password) }}{% endif %}
+        <form method="post" action="{{ actions.password }}" class="row g-3 align-items-end" novalidate>
+          {{ ui.csrf(token) }}
+          <div class="col-md-5">{{ ui.password('password', 'set_password', 'New password', 'new-password', 12) }}</div>
+          <div class="col-md-5">{{ ui.password('password_confirmation', 'set_password_confirmation', 'Repeat', 'new-password', 12) }}</div>
+          <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">Set</button></div>
+        </form>
+        <hr class="my-4">
+        <div class="lp-cta">
+          <div>
+            <div class="fw-semibold">Send a reset link</div>
+            <div class="small text-body-secondary">{{ u.email ? 'To ' ~ u.email ~ '. It works once, for one hour.' : 'Add an email address first.' }}</div>
+          </div>
+          <form method="post" action="{{ actions.reset_link }}">
+            {{ ui.csrf(token) }}
+            <button class="btn btn-light lp-btn-icon" type="submit"{{ u.email ? '' : ' disabled' }}>{{ ui.icon('mail') }}Send link</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <section class="card lp-card lp-card--danger">
+      <div class="lp-card__header"><h2 class="lp-card__title">Access</h2></div>
+      <div class="lp-actions">
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold">Sign out everywhere</div>
+            <div class="small text-body-secondary">Ends every session and revokes their {{ active_tokens }} active API token{{ active_tokens == 1 ? '' : 's' }}.</div>
+          </div>
+          <form method="post" action="{{ actions.sessions }}" data-lp-confirm="{{ u.name }} will be signed out of every browser, and their API tokens will stop working." data-lp-confirm-title="Sign out everywhere?" data-lp-confirm-ok="Sign out">
+            {{ ui.csrf(token) }}
+            <button class="btn btn-outline-secondary btn-sm" type="submit">Sign out</button>
+          </form>
+        </div>
+        {% if u.hasTwoFactor %}
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold">Reset two-factor sign-in</div>
+            <div class="small text-body-secondary">For a lost phone. They sign in with their password alone until they set it up again.</div>
+          </div>
+          <form method="post" action="{{ actions.two_factor }}" data-lp-confirm="Only do this once you are sure it is really {{ u.name }} asking." data-lp-confirm-title="Reset two-factor?" data-lp-confirm-ok="Reset">
+            {{ ui.csrf(token) }}
+            <button class="btn btn-outline-secondary btn-sm" type="submit">Reset</button>
+          </form>
+        </div>
+        {% endif %}
+        <div class="lp-action">
+          {% if u.isActive %}
+          <div>
+            <div class="fw-semibold text-danger">Suspend user</div>
+            <div class="small text-body-secondary">They are signed out at once and cannot sign in or use tokens until reactivated.</div>
+          </div>
+          <form method="post" action="{{ actions.status }}" data-lp-confirm="{{ u.name }} will be signed out and unable to sign in." data-lp-confirm-title="Suspend this user?" data-lp-confirm-ok="Suspend">
+            {{ ui.csrf(token) }}
+            <input type="hidden" name="status" value="suspended">
+            <button class="btn btn-danger btn-sm" type="submit">Suspend</button>
+          </form>
+          {% else %}
+          <div>
+            <div class="fw-semibold">Reactivate user</div>
+            <div class="small text-body-secondary">They can sign in again with their current password.</div>
+          </div>
+          <form method="post" action="{{ actions.status }}">
+            {{ ui.csrf(token) }}
+            <input type="hidden" name="status" value="active">
+            <button class="btn btn-success btn-sm" type="submit">Reactivate</button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="col-xl-4">
+    <section class="card lp-card">
+      <div class="lp-card__header"><h2 class="lp-card__title">Details</h2></div>
+      <div class="card-body">
+        <dl class="lp-dl">
+          <dt>Account type</dt><dd>{{ u.kind == 'system' ? 'Server account (PAM)' : 'Panel account' }}</dd>
+          <dt>Two-factor</dt><dd>{% if u.hasTwoFactor %}<span class="lp-yes">{{ ui.icon('check-circle') }}On</span> <span class="text-body-tertiary small">· {{ u.recoveryHashes|length }} recovery codes left</span>{% else %}<span class="lp-no">Off</span>{% endif %}</dd>
+          <dt>API tokens</dt><dd>{{ active_tokens }} active</dd>
+          <dt>Last sign-in</dt><dd>{{ ui.time(u.lastLoginAt) }}</dd>
+          <dt>Created</dt><dd>{{ ui.time(u.createdAt, '—') }}</dd>
+          <dt>ID</dt><dd><code class="small">{{ u.uid }}</code></dd>
+        </dl>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

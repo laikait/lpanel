@@ -54,6 +54,35 @@ final class Browser
         ]);
     }
 
+    /**
+     * A script's request: a bearer token, and this browser's cookies too unless told not to,
+     * to prove a route answers to the token alone.
+     *
+     * @param ?array<string, mixed> $json
+     */
+    public function bearer(string $method, string $uri, string $token, ?array $json = null, bool $withCookies = false): Response
+    {
+        $headers = ['Accept' => 'application/json', 'Authorization' => 'Bearer ' . $token];
+        $options = ['headers' => $headers];
+
+        if ($json !== null) {
+            $options['body'] = \json_encode($json, \JSON_THROW_ON_ERROR);
+            $options['headers']['Content-Type'] = 'application/json';
+        }
+
+        $saved = $this->cookies;
+
+        if (!$withCookies) {
+            $this->cookies = [];
+        }
+
+        try {
+            return $this->send($method, $uri, $options);
+        } finally {
+            $this->cookies = $saved;
+        }
+    }
+
     /** @return array<string, mixed> */
     public function json(string $uri): array
     {

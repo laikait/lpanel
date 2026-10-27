@@ -1,0 +1,43 @@
+{#
+ # The document every LPanel page is in: head, assets, and the confirm dialog.
+ # layout.twig (signed-in shell, or a plain page) and auth.twig (sign-in
+ # pages) extend it. Twig escapes every value; nothing here prints raw input.
+ #}
+{% import "macros/ui.twig" as ui %}
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csrf-token" content="{{ token|default('') }}">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}{{ title|default('LPanel') }}{% endblock %} · LPanel</title>
+<script src="{{ view.asset().core('js/theme.js') }}"></script>
+<link rel="stylesheet" href="{{ view.asset().core('vendor/bootstrap/css/bootstrap.min.css') }}">
+<link rel="stylesheet" href="{{ view.asset().core('css/app.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% block body %}{% endblock %}
+
+<div class="modal fade" id="lp-confirm" tabindex="-1" aria-labelledby="lp-confirm-title" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content lp-modal">
+      <div class="modal-body">
+        <div class="lp-modal__icon" data-lp-confirm-icon>{{ ui.icon('alert') }}</div>
+        <h2 class="lp-modal__title" id="lp-confirm-title" data-lp-confirm-title>Are you sure?</h2>
+        <p class="lp-modal__text" data-lp-confirm-text></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" data-lp-confirm-ok>Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="{{ view.asset().core('vendor/jquery/jquery.min.js') }}"></script>
+<script src="{{ view.asset().core('vendor/bootstrap/js/bootstrap.bundle.min.js') }}"></script>
+<script src="{{ view.asset().core('js/app.js') }}"></script>
+</body>
+</html>

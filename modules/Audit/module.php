@@ -13,6 +13,8 @@ use App\Modules\Audit\AuditLog;
 use App\Modules\Audit\AuthEvents;
 use App\Modules\Audit\Commands\PruneAudit;
 use App\Modules\Audit\Http\AuditApi;
+use App\Modules\Audit\Http\AuditPage;
+use App\Modules\Shared\Ui\Navigation;
 
 /**
  * The audit trail: who did what, when, from where, and whether it worked.
@@ -48,12 +50,18 @@ return static function (ModuleContext $module): void {
     });
 
     $module->routes(static function (RouteCollector $routes): void {
+        $routes->get('/audit', AuditPage::class)->name('audit.index')->meta(['can' => 'audit.read']);
         $routes->get('/api/v1/audit', AuditApi::class)
             ->name('api.v1.audit.index')
             ->meta(['api' => true, 'can' => 'audit.read']);
+        // Bearer tokens only; see Identity's /api/token/v1 group for why CSRF is off.
+        $routes->get('/api/token/v1/audit', AuditApi::class)
+            ->name('api.token.v1.audit.index')
+            ->meta(['api' => true, 'csrf' => false, 'can' => 'audit.read', 'rate_limit' => '120/1m']);
     });
 
-    $module->onBoot(static function (AuthEvents $events, HookEngine $hooks): void {
+    $module->onBoot(static function (AuthEvents $events, HookEngine $hooks, Navigation $nav): void {
         $events->listen($hooks);
+        $nav->add('admin', 'audit', 'Audit log', 'audit.index', 'activity', can: 'audit.read', order: 30);
     });
 };

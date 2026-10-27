@@ -1,0 +1,3 @@
+/etc/lpanel/authd.json
+/etc/logrotate.d/lpanel
+/etc/pam.d/lpanel

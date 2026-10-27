@@ -25,6 +25,8 @@ repository). Read them in this order:
 | [0008](adr/0008-panel-database-mariadb.md) | Panel DB is MariaDB | Accepted |
 | [0009](adr/0009-lpa-privilege-split.md) | `lpa-agent` / `lpa-exec` split | Accepted |
 | [0010](adr/0010-root-login-via-authd.md) | Root logs in with the system password via `lpanel-authd` | Accepted |
+| [0011](adr/0011-api-tokens-resets-and-session-epochs.md) | API tokens, password resets and session epochs; root has neither tokens nor reset links | Proposed |
+| [0012](adr/0012-panel-package-php-fpm-and-agent-port.md) | Panel package: own PHP-FPM master, agents on :8444, `.deb` with local MariaDB | Accepted |
 
 `design/` is in no LPHP manifest, so `framework:update` never touches it. It is
 outside `public/`, so the web server never serves it.

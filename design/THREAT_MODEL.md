@@ -107,12 +107,12 @@ Status: **D** = designed (in these docs), **T** = needs a named test before the 
 ## 4. Tests this model requires (release-blocking ones in bold)
 
 1. **A customer changes every id in every customer API → 403/404, and an audit record for each attempt.**
-2. **Replayed, expired, wrong-signature, wrong-cert, wrong-agent and malformed agent requests are rejected with the right error code.**
+2. **Replayed, expired, wrong-signature, wrong-cert, wrong-agent and malformed agent requests are rejected with the right error code.** *Built (M3): `tests/Feature/AgentRequestTest.php`; the real agent through panel Nginx in `test/e2e/run.sh`.*
 3. **An operation with a bad signature, an unknown op, unknown fields or an expired `not_after` is refused by LPA without acting.**
-4. **A registry test fails if any operation takes a free-form command, executable path or environment.**
+4. **A registry test fails if any operation takes a free-form command, executable path or environment.** *Built: the agent's `TestTheRegistryIsExactlyTheReadOnlyAllowlist` and `TestEveryOperationRefusesPayloadFields` (M1); the panel's `OperationCatalogueTest` (M4) checks its catalogue is exactly the agent's and that no payload takes a field.*
 5. **As customer A's uid on a test server: can't read B's home, B's PHP session files, `/etc/lpa`, or connect to `exec.sock`.**
 6. **Invalid or prohibited web settings → no file changes, no reload; a failed reload → rollback verified by a health probe.**
-7. Enrollment token: second use, after expiry, and wrong token all give the same answer to the caller and different audit reasons.
+7. Enrollment token: second use, after expiry, and wrong token all give the same answer to the caller and different audit reasons. *Built (M3): `tests/Feature/AgentEnrollmentTest.php`.*
 8. `config/system.php` has `enabled => false`; no module imports `App\Engine\System\*`.
 9. No secret appears in the `audit` / app logs or operation results (grep the test fixtures for known sentinel secrets).
 

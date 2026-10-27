@@ -31,14 +31,17 @@ final class TwoFactorTest extends ApplicationTestCase
     private function enable(Browser $browser): array
     {
         $page = $browser->post('/account/security/2fa/begin')->body();
-        if (\preg_match('/by hand: <code>([A-Z2-7]+)<\/code>/', $page, $m) !== 1) {
+        if (\preg_match('/id="lp-secret">([A-Z2-7]+)<\/code>/', $page, $m) !== 1) {
             self::fail('The enrolment page shows no secret to type in.');
         }
         $secret = $m[1];
 
         $confirmed = $browser->post('/account/security/2fa/confirm', ['code' => Totp::code($secret)]);
         self::assertSame(200, $confirmed->status());
-        self::assertSame(10, \preg_match_all('/<li>([^<]+)<\/li>/', $confirmed->body(), $codes));
+        if (\preg_match('/id="lp-recovery">(.*?)<\/div>/s', $confirmed->body(), $block) !== 1) {
+            self::fail('The recovery codes are not shown.');
+        }
+        self::assertSame(10, \preg_match_all('/<code>([^<]+)<\/code>/', $block[1], $codes));
 
         return [$secret, $codes[1]];
     }
@@ -48,7 +51,7 @@ final class TwoFactorTest extends ApplicationTestCase
         $page = $this->signedIn()->get('/account/security');
 
         self::assertSame(200, $page->status());
-        self::assertStringContainsString('Off. Two-factor sign-in is optional', $page->body());
+        self::assertStringContainsString('Two-factor sign-in is off', $page->body());
     }
 
     public function test_once_on_a_password_alone_is_not_enough(): void
@@ -92,7 +95,7 @@ final class TwoFactorTest extends ApplicationTestCase
         // The confirm step used this 30-second step; the next one is a fresh code.
         $off = $browser->post('/account/security/2fa/disable', ['code' => Totp::code($secret, \time() + 30)]);
         self::assertSame(303, $off->status());
-        self::assertStringContainsString('Off.', $browser->get('/account/security')->body());
+        self::assertStringContainsString('Two-factor sign-in is off', $browser->get('/account/security')->body());
     }
 
     public function test_root_can_turn_it_on_too(): void

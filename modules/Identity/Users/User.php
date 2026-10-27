@@ -13,6 +13,8 @@ final class User
 
     public const ACTIVE = 'active';
 
+    public const SUSPENDED = 'suspended';
+
     /**
      * @param list<string> $roles          as stored; see effectiveRoles()
      * @param list<string> $recoveryHashes
@@ -31,7 +33,19 @@ final class User
         public readonly ?int $totpLastStep,
         public readonly array $recoveryHashes,
         public readonly ?string $lastLoginAt,
+        public readonly int $sessionEpoch = 1,
+        public readonly ?string $createdAt = null,
     ) {}
+
+    public function isActive(): bool
+    {
+        return $this->status === self::ACTIVE;
+    }
+
+    public function hasTwoFactor(): bool
+    {
+        return $this->totpSecretEncrypted !== null;
+    }
 
     public function isRoot(): bool
     {
@@ -64,8 +78,9 @@ final class User
             'kind' => $this->kind,
             'status' => $this->status,
             'roles' => $this->effectiveRoles(),
-            'two_factor' => $this->totpSecretEncrypted !== null,
+            'two_factor' => $this->hasTwoFactor(),
             'last_login_at' => $this->lastLoginAt,
+            'created_at' => $this->createdAt,
         ];
     }
 }

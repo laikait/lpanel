@@ -1,0 +1,28 @@
+{% extends "auth.twig" %}
+{% import "macros/ui.twig" as ui %}
+
+{% block title %}Forgot password{% endblock %}
+{% block icon %}<div class="lp-auth__badge">{{ ui.icon('mail') }}</div>{% endblock %}
+{% block heading %}{{ sent ? 'Check your email' : 'Forgot your password?' }}{% endblock %}
+{% block lead %}{{ sent ? message : 'Enter your login name and we\'ll email you a link to choose a new password.' }}{% endblock %}
+
+{% block form %}
+{% if not sent %}
+<form method="post" action="{{ urls.forgot }}" class="lp-form" novalidate>
+  {{ ui.csrf(token) }}
+  <div class="mb-4">
+    <label class="form-label" for="login">Login name</label>
+    <div class="lp-input-icon">
+      {{ ui.icon('user') }}
+      <input class="form-control" id="login" name="login" value="{{ old }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus maxlength="190">
+    </div>
+  </div>
+  <button class="btn btn-primary btn-lg w-100" type="submit">Email me a link</button>
+</form>
+<div class="lp-callout mt-4">
+  {{ ui.icon('info') }}
+  <div>Root's password is the server's own. Change it on the server with <code>passwd</code>; the panel cannot reset it.</div>
+</div>
+{% endif %}
+<p class="text-center mt-4 mb-0"><a class="lp-link small" href="{{ urls.login }}">{{ ui.icon('arrow-left') }} Back to sign in</a></p>
+{% endblock %}

@@ -1,0 +1,162 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+
+{% set s = server %}
+
+{% block title %}{{ s.name }}{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Administration</span>{{ ui.icon('chevron-right') }}<a href="{{ index_url }}">Servers</a>{{ ui.icon('chevron-right') }}<span>{{ s.name }}</span>{% endblock %}
+
+{% block content %}
+<div class="lp-profile-head">
+  <span class="lp-chip lp-chip--{{ status == 'online' ? 'success' : (status == 'pending' ? 'amber' : 'danger') }} lp-chip--xl">{{ ui.icon('server') }}</span>
+  <div class="min-w-0">
+    <h1 class="lp-page-title mb-1 text-truncate">{{ s.name }}</h1>
+    <div class="lp-profile-head__meta">
+      {{ ui.status_badge(status) }}
+      {% if s.hostname %}<span class="font-monospace">{{ s.hostname }}</span>{% endif %}
+      {% if s.osLabel %}<span>· {{ s.osLabel }}</span>{% endif %}
+      {% if s.rotateRequested %}<span class="lp-badge lp-badge--info">{{ ui.icon('refresh') }}Key rotation requested</span>{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if status == 'pending' %}
+<div class="lp-banner mb-4">
+  <span class="lp-chip lp-chip--amber">{{ ui.icon('clock') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Waiting for the agent to pair</div>
+    <div class="small text-body-secondary">{% if outstanding %}A pairing token is outstanding until {{ ui.time(outstanding) }}.{% else %}No pairing token is outstanding. Make a new one to get the command again.{% endif %}</div>
+  </div>
+  {% if can_manage %}
+  <form method="post" action="{{ actions.enroll }}">{{ ui.csrf(token) }}<button class="btn btn-sm btn-primary" type="submit">New pairing command</button></form>
+  {% endif %}
+</div>
+{% elseif status == 'offline' %}
+<div class="lp-banner lp-banner--danger mb-4">
+  <span class="lp-chip lp-chip--danger">{{ ui.icon('alert') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">No heartbeat for over {{ (offline_after / 60)|round }} minutes</div>
+    <div class="small text-body-secondary">Check <code>systemctl status lpa-agent</code> on the server, and that it can reach the panel on port 8443.</div>
+  </div>
+</div>
+{% elseif status == 'revoked' %}
+<div class="lp-banner lp-banner--danger mb-4">
+  <span class="lp-chip lp-chip--danger">{{ ui.icon('ban') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">This server's agent is revoked</div>
+    <div class="small text-body-secondary">Every request it makes is refused. Pair it again with a new command to bring it back.</div>
+  </div>
+  {% if can_manage %}
+  <form method="post" action="{{ actions.enroll }}">{{ ui.csrf(token) }}<button class="btn btn-sm btn-primary" type="submit">Pair again</button></form>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-xl-8 d-flex flex-column gap-4">
+    <section class="card lp-card">
+      <div class="lp-card__header"><h2 class="lp-card__title">System</h2></div>
+      <div class="card-body">
+        <div class="lp-facts">
+          <div><span>Operating system</span><strong>{{ s.osLabel ?: '—' }}</strong></div>
+          <div><span>Kernel</span><strong class="font-monospace">{{ s.kernel ?: '—' }}</strong></div>
+          <div><span>Hostname</span><strong class="font-monospace">{{ s.hostname ?: '—' }}</strong></div>
+          <div><span>Agent version</span><strong class="font-monospace">{{ s.agentVersion ?: '—' }}</strong></div>
+          <div><span>Protocol</span><strong>{{ s.protocols is empty ? '—' : 'v' ~ s.protocols|join(', v') }}</strong></div>
+          <div><span>Last seen</span><strong>{{ ui.time(s.lastSeenAt) }}{% if s.lastSeenIp %} <span class="text-body-tertiary font-monospace small">from {{ s.lastSeenIp }}</span>{% endif %}</strong></div>
+        </div>
+      </div>
+    </section>
+
+    {% for p in panels.main %}{% include p.template with p.context %}{% endfor %}
+
+    <section class="card lp-card">
+      <div class="lp-card__header">
+        <div><h2 class="lp-card__title">What the agent can do</h2><p class="lp-card__subtitle">Its compiled-in operations. There is no shell, and no operation takes a command.</p></div>
+      </div>
+      {% if s.capabilities is empty %}
+        {{ ui.empty('activity', 'Not reported yet', 'The agent lists its operations in its first heartbeat.') }}
+      {% else %}
+      <div class="lp-caps">
+        {% for op, versions in s.capabilities %}
+          <div class="lp-cap"><code>{{ op }}</code><span>{% for v in versions %}<span class="lp-mono-chip">v{{ v }}</span>{% endfor %}</span></div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </section>
+
+    <section class="card lp-card">
+      <div class="lp-card__header">
+        <div><h2 class="lp-card__title">Agent keys</h2><p class="lp-card__subtitle">Each request is signed with a live key and sent with its TLS certificate.</p></div>
+      </div>
+      {% if credentials is empty %}
+        {{ ui.empty('key', 'No keys yet', 'The agent registers its key when it pairs.') }}
+      {% else %}
+      <div class="table-responsive">
+        <table class="table lp-table align-middle mb-0">
+          <thead><tr><th>Key id</th><th>Status</th><th class="d-none d-md-table-cell">Certificate</th><th>Since</th></tr></thead>
+          <tbody>
+          {% for c in credentials %}
+            <tr class="{{ c.state == 'revoked' ? 'lp-row-muted' : '' }}">
+              <td><code class="lp-mono-chip">{{ c.kid }}</code></td>
+              <td>{{ ui.status_badge(c.state) }}{% if c.state == 'rotating' and c.retireAt %}<div class="small text-body-tertiary">until {{ ui.time(c.retireAt) }}</div>{% endif %}</td>
+              <td class="d-none d-md-table-cell small font-monospace text-body-secondary" title="SHA-256 of the certificate">{{ c.tlsCertSha256|slice(0, 16) }}…</td>
+              <td class="small">{{ ui.time(c.createdAt) }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="col-xl-4 d-flex flex-column gap-4">
+    <section class="card lp-card">
+      <div class="lp-card__header"><h2 class="lp-card__title">Agent health</h2></div>
+      <div class="card-body">
+        {% set h = s.health %}
+        <dl class="lp-dl">
+          <dt>Running since</dt><dd>{{ h.started_at is defined and h.started_at > 0 ? ui.time(h.started_at|date('Y-m-d H:i:s', 'UTC')) : '—' }}</dd>
+          <dt>Results to send</dt><dd>{{ h.pending_results ?? '—' }}</dd>
+          <dt>Enrolled</dt><dd>{{ ui.time(s.enrolledAt, '—') }}</dd>
+          <dt>Agent id</dt><dd><code class="small">{{ s.agentId ?: '—' }}</code></dd>
+        </dl>
+        {% if h.last_errors is defined and h.last_errors is not empty %}
+          <hr>
+          <div class="small fw-semibold mb-2">Recent errors on the agent</div>
+          <ul class="list-unstyled small mb-0">
+            {% for e in h.last_errors|slice(-5)|reverse %}<li class="d-flex justify-content-between gap-2 py-1"><code>{{ e.code }}</code><span class="text-body-tertiary">{{ ui.time(e.at|date('Y-m-d H:i:s', 'UTC')) }}</span></li>{% endfor %}
+          </ul>
+        {% endif %}
+      </div>
+    </section>
+
+    {% for p in panels.side %}{% include p.template with p.context %}{% endfor %}
+
+    {% if can_manage and s.state == 'active' %}
+    <section class="card lp-card lp-card--danger">
+      <div class="lp-card__header"><h2 class="lp-card__title">Agent access</h2></div>
+      <div class="lp-actions">
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold">Rotate the agent's key</div>
+            <div class="small text-body-secondary">At its next heartbeat it makes a new key and certificate. The old one works for one more day.</div>
+          </div>
+          <form method="post" action="{{ actions.rotate }}">{{ ui.csrf(token) }}<button class="btn btn-outline-secondary btn-sm" type="submit"{{ s.rotateRequested ? ' disabled' : '' }}>{{ s.rotateRequested ? 'Requested' : 'Rotate' }}</button></form>
+        </div>
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold text-danger">Revoke the agent</div>
+            <div class="small text-body-secondary">Its next request is refused. To bring it back, pair it again.</div>
+          </div>
+          <form method="post" action="{{ actions.revoke }}" data-lp-confirm="The agent on {{ s.name }} will be refused from its next request. Pairing it again needs a new command, run on the server." data-lp-confirm-title="Revoke this agent?" data-lp-confirm-ok="Revoke">
+            {{ ui.csrf(token) }}<button class="btn btn-danger btn-sm" type="submit">Revoke</button>
+          </form>
+        </div>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

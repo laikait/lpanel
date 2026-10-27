@@ -1,25 +1,31 @@
-{% extends "layout.twig" %}
+{% extends "auth.twig" %}
+{% import "macros/ui.twig" as ui %}
 
 {% block title %}Sign in{% endblock %}
+{% block heading %}Sign in{% endblock %}
+{% block lead %}Welcome back. Sign in to manage your hosting.{% endblock %}
 
-{% block content %}
-<div class="row justify-content-center">
-  <div class="col-sm-8 col-md-5 col-lg-4">
-    <h1 class="h4 mb-3">Sign in to LPanel</h1>
-    {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
-    <form method="post" action="{{ urls.login }}" class="card card-body shadow-sm" autocomplete="on">
-      <input type="hidden" name="_token" value="{{ token }}">
-      <div class="mb-3">
-        <label class="form-label" for="login">Login name</label>
-        <input class="form-control" id="login" name="login" value="{{ old }}" autocomplete="username" required autofocus maxlength="190">
-        <div class="form-text">Server administrators sign in as <code>root</code> with the server's root password.</div>
-      </div>
-      <div class="mb-3">
-        <label class="form-label" for="password">Password</label>
-        <input class="form-control" id="password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
-      </div>
-      <button class="btn btn-primary w-100" type="submit">Sign in</button>
-    </form>
+{% block form %}
+<form method="post" action="{{ urls.login }}" class="lp-form" autocomplete="on" novalidate>
+  {{ ui.csrf(token) }}
+  <div class="mb-3">
+    <label class="form-label" for="login">Login name</label>
+    <div class="lp-input-icon">
+      {{ ui.icon('user') }}
+      <input class="form-control" id="login" name="login" value="{{ old }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus maxlength="190" placeholder="e.g. root or jane">
+    </div>
   </div>
+  <div class="mb-2">
+    {{ ui.password('password', 'password', 'Password', 'current-password') }}
+  </div>
+  <div class="d-flex justify-content-end mb-4">
+    {% if urls.forgot is defined %}<a class="lp-link small" href="{{ urls.forgot }}">Forgot your password?</a>{% endif %}
+  </div>
+  <button class="btn btn-primary btn-lg w-100 lp-btn-icon" type="submit">{{ ui.icon('login') }}Sign in</button>
+</form>
+
+<div class="lp-callout mt-4">
+  {{ ui.icon('terminal') }}
+  <div><strong>Server administrators</strong> sign in as <code>root</code> with the server's root password.</div>
 </div>
 {% endblock %}

@@ -1,0 +1,62 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+{% import "@Operations/macros.twig" as ops %}
+
+{% block title %}Operations{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Administration</span>{{ ui.icon('chevron-right') }}<span>Operations</span>{% endblock %}
+
+{% block content %}
+{{ ui.page_header('Operations', 'Everything the panel has asked of the agents, newest first. An agent runs only operations compiled into it; none takes a command.') }}
+
+<section class="card lp-card">
+  <form method="get" action="{{ index_url }}" class="lp-toolbar">
+    <div class="lp-segmented" role="group" aria-label="State">
+      {% for g in groups %}
+        <a class="lp-segmented__item{{ g.active ? ' active' : '' }}" href="{{ g.url }}"{% if g.active %} aria-current="true"{% endif %}>{{ g.label }}</a>
+      {% endfor %}
+    </div>
+    {% if group %}<input type="hidden" name="status" value="{{ group }}">{% endif %}
+    <select class="form-select lp-toolbar__select ms-lg-auto" name="server" aria-label="Server" data-lp-autosubmit>
+      <option value="">Every server</option>
+      {% for s in servers %}<option value="{{ s.uid }}"{{ server and server.uid == s.uid ? ' selected' : '' }}>{{ s.name }}</option>{% endfor %}
+    </select>
+    <noscript><button class="btn btn-light" type="submit">Filter</button></noscript>
+  </form>
+
+  {% if rows is empty %}
+    {{ ui.empty('list-check', paged ? 'No older operations' : (group or server ? 'Nothing matches' : 'No operations yet'), paged ? 'You have reached the first one.' : (group or server ? 'Try another state or server.' : 'Open a server and run an operation, such as Resource usage, to see it here.')) }}
+  {% else %}
+  <div class="table-responsive">
+    <table class="table lp-table lp-table--hover align-middle mb-0">
+      <thead><tr><th>Operation</th><th>Server</th><th>State</th><th class="d-none d-md-table-cell">Asked by</th><th>Queued</th><th class="d-none d-lg-table-cell text-end">Took</th><th class="text-end"><span class="visually-hidden">Open</span></th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        {% set o = row.op %}
+        <tr>
+          <td>
+            <a class="stretched-link text-reset text-decoration-none fw-medium" href="{{ row.url }}">{{ row.label }}</a>
+            <div class="small text-body-tertiary font-monospace">{{ o.op }} v{{ o.opVersion }}{% if o.attempt > 1 %} · attempt {{ o.attempt }}{% endif %}</div>
+          </td>
+          <td>{% if row.server %}<span class="lp-cell-strong">{{ row.server.name }}</span>{% else %}<span class="text-body-tertiary">—</span>{% endif %}</td>
+          <td>
+            {{ ui.status_badge(o.status) }}{{ ops.watch(row.watch, o.status) }}
+            {% if o.errorCode %}<div class="small text-body-tertiary font-monospace mt-1">{{ o.errorCode }}</div>{% endif %}
+          </td>
+          <td class="d-none d-md-table-cell small">{{ o.requestedByName ?: '—' }}</td>
+          <td class="small text-nowrap">{{ ui.time(o.queuedAt) }}</td>
+          <td class="d-none d-lg-table-cell small text-end text-nowrap">{{ row.duration ?: '—' }}</td>
+          <td class="text-end">{{ ui.icon('chevron-right', 'lp-row-chev') }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if paged or older_url %}
+  <div class="lp-card__footer lp-pager">
+    {% if paged %}<a class="btn btn-sm btn-light lp-btn-icon" href="{{ newest_url }}">{{ ui.icon('chevron-left') }}Newest</a>{% else %}<span></span>{% endif %}
+    {% if older_url %}<a class="btn btn-sm btn-light lp-btn-icon" href="{{ older_url }}">Older{{ ui.icon('chevron-right') }}</a>{% endif %}
+  </div>
+  {% endif %}
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Refuse an unsupported OS before anything is unpacked (ADR-0004).
+set -e
+
+if [ "$1" = install ] || [ "$1" = upgrade ]; then
+	. /etc/os-release
+	case "${ID}:${VERSION_ID}" in
+	ubuntu:24.04 | ubuntu:26.04 | debian:12 | debian:13) ;;
+	*)
+		if [ "${LPANEL_ALLOW_UNSUPPORTED_OS:-}" = yes ]; then
+			echo "lpanel: WARNING: ${PRETTY_NAME:-this system} is not supported; going on because LPANEL_ALLOW_UNSUPPORTED_OS=yes" >&2
+			logger -t lpanel "installed on unsupported OS ${PRETTY_NAME:-unknown} (LPANEL_ALLOW_UNSUPPORTED_OS=yes)" 2>/dev/null || true
+		else
+			echo "lpanel: ${PRETTY_NAME:-this system} is not supported. LPanel runs on Ubuntu 24.04 or 26.04 and Debian 12 or 13." >&2
+			echo "lpanel: to try anyway, set LPANEL_ALLOW_UNSUPPORTED_OS=yes." >&2
+			exit 1
+		fi
+		;;
+	esac
+fi
+
+exit 0

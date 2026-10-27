@@ -17,7 +17,7 @@ The panel is served by a second Nginx master process, using the same distro `ngi
 | PHP | `lpanel` PHP-FPM pool, own socket | per-account pools |
 | validate | `nginx -t -c /etc/lpanel/nginx/nginx.conf` | `nginx -t` (default config) |
 
-**Exact paths are proposals.** Verify them on Ubuntu 24.04 and Debian 12 in the LPA/LPanel packaging milestone. In particular:
+**Verified in M5** on Ubuntu 24.04 and 26.04 and Debian 12 and 13 by `test/packages/run.sh`, with the paths above. The panel's temp paths are `/var/cache/lpanel-nginx`, separate from the hosting Nginx's. A broken or stopped hosting Nginx leaves the panel serving and reloadable. Agents got their own listener (`:8444`), see [ADR-0012](0012-panel-package-php-fpm-and-agent-port.md). The original questions were:
 
 - whether the distro `nginx.service` drop-ins or AppArmor profiles get in the way;
 - whether `logrotate`'s nginx rule sends `USR1` to the right pid.

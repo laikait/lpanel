@@ -1,0 +1,20 @@
+{#
+ # Role checkboxes, for the create and edit forms. In scope: `assignable`,
+ # `old.roles`, `errors`, and `disabled` (true when the form is read-only).
+ #}
+{% import "macros/ui.twig" as ui %}
+<div class="lp-options">
+  {% for r in assignable %}
+    {% set checked = r.name in old.roles %}
+    <label class="lp-option{{ not r.allowed ? ' is-locked' : '' }}">
+      <input class="form-check-input" type="checkbox" name="roles[]" value="{{ r.name }}"{{ checked ? ' checked' : '' }}{{ (not r.allowed or disabled|default(false)) ? ' disabled' : '' }}>
+      <span class="lp-option__body">
+        <span class="lp-option__title">{{ r.label }}{% if not r.allowed %} <span class="lp-badge lp-badge--secondary">{{ ui.icon('lock') }}Root only</span>{% endif %}</span>
+        <span class="lp-option__help">{{ r.help }}</span>
+      </span>
+    </label>
+    {# A locked role the user already holds is kept: a disabled box is not sent with the form. #}
+    {% if checked and not r.allowed %}<input type="hidden" name="roles[]" value="{{ r.name }}">{% endif %}
+  {% endfor %}
+</div>
+{% if errors.roles is defined %}<div class="invalid-feedback d-block">{{ errors.roles }}</div>{% endif %}

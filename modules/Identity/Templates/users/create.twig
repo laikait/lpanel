@@ -1,0 +1,62 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+
+{% block title %}New user{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Administration</span>{{ ui.icon('chevron-right') }}<a href="{{ index_url }}">Users</a>{{ ui.icon('chevron-right') }}<span>New user</span>{% endblock %}
+
+{% block content %}
+{{ ui.page_header('New user', 'They sign in with the login name and password you set here.') }}
+
+<form method="post" action="{{ store_url }}" novalidate>
+  {{ ui.csrf(token) }}
+  <div class="row g-4">
+    <div class="col-xl-8">
+      <section class="card lp-card mb-4">
+        <div class="lp-card__header"><h2 class="lp-card__title">Profile</h2></div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label" for="name">Full name</label>
+              <input class="form-control{{ errors.name is defined ? ' is-invalid' : '' }}" id="name" name="name" value="{{ old.name }}" maxlength="190" required autofocus>
+              {% if errors.name is defined %}<div class="invalid-feedback">{{ errors.name }}</div>{% endif %}
+            </div>
+            <div class="col-md-6">
+              <label class="form-label" for="login">Login name</label>
+              <input class="form-control font-monospace{{ errors.login is defined ? ' is-invalid' : '' }}" id="login" name="login" value="{{ old.login }}" maxlength="64" required autocapitalize="none" spellcheck="false" pattern="[a-z][a-z0-9._\-]{2,63}">
+              {% if errors.login is defined %}<div class="invalid-feedback">{{ errors.login }}</div>{% else %}<div class="form-text">Lower case, 3–64 characters: letters, digits, “.”, “_” or “-”.</div>{% endif %}
+            </div>
+            <div class="col-12">
+              <label class="form-label" for="email">Email <span class="text-body-tertiary fw-normal">(optional)</span></label>
+              <input class="form-control{{ errors.email is defined ? ' is-invalid' : '' }}" id="email" name="email" type="email" value="{{ old.email }}" maxlength="190" autocomplete="off">
+              {% if errors.email is defined %}<div class="invalid-feedback">{{ errors.email }}</div>{% else %}<div class="form-text">Needed for “forgot password” emails.</div>{% endif %}
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card lp-card">
+        <div class="lp-card__header"><h2 class="lp-card__title">Password</h2></div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">{{ ui.password('password', 'password', 'Password', 'new-password', 12, false, errors.password is defined) }}{% if errors.password is defined %}<div class="invalid-feedback d-block">{{ errors.password }}</div>{% else %}<div class="form-text">At least 12 characters.</div>{% endif %}</div>
+            <div class="col-md-6">{{ ui.password('password_confirmation', 'password_confirmation', 'Repeat password', 'new-password', 12, false, errors.password_confirmation is defined) }}{% if errors.password_confirmation is defined %}<div class="invalid-feedback d-block">{{ errors.password_confirmation }}</div>{% endif %}</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="col-xl-4">
+      <section class="card lp-card mb-4">
+        <div class="lp-card__header"><h2 class="lp-card__title">Role</h2></div>
+        <div class="card-body">
+          {% include "@Identity/users/_roles.twig" %}
+        </div>
+      </section>
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary flex-grow-1 lp-btn-icon" type="submit">{{ ui.icon('user-plus') }}Create user</button>
+        <a class="btn btn-light" href="{{ index_url }}">Cancel</a>
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}

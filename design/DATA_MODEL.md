@@ -20,11 +20,11 @@ methods when the migration is written.
 
 | Table | Key columns |
 |---|---|
-| `users` | **built (M2a):** `uid` (ULID), `login` (unique, lower case), `name`, `email`, `kind` (`system` = root, checked by lpanel-authd and never by a hash; `panel`), `password_hash` (null for root), `status`, `totp_secret` (Encrypter, context `identity.totp`), `totp_last_step`, `recovery_codes` (JSON of hashes), `last_login_at`, timestamps |
+| `users` | **built (M2a):** `uid` (ULID), `login` (unique, lower case), `name`, `email`, `kind` (`system` = root, checked by lpanel-authd and never by a hash; `panel`), `password_hash` (null for root), `status`, `totp_secret` (Encrypter, context `identity.totp`), `totp_last_step`, `recovery_codes` (JSON of hashes), `last_login_at`, `session_epoch` (M2b: a session holds the number it started with; bumping it ends every other session), timestamps |
 | `user_roles` | **built (M2a):** `user_id`, `role` (name of a code-declared role: `admin`, `customer`) — unique(user, role). `root` is never stored; the provider grants it to the system root row alone. Account-scoped roles arrive with hosting accounts (M6) |
 | `roles`, `role_capabilities` | for custom roles; not built until someone needs one. Built-in roles live in `modules/Identity/module.php` |
-| `api_tokens` | `user_id`, `name`, `fingerprint` (SHA-256, unique), `role_id` (a token may hold fewer rights than its user), `last_used_at`, `expires_at`, `revoked_at` |
-| `password_resets` | as LPHP's `PasswordReset` needs — confirm in the Identity milestone |
+| `api_tokens` | **built (M2b):** `uid`, `user_id`, `name`, `prefix` (first 12 characters, for telling tokens apart), `fingerprint` (SHA-256, unique; the token itself is never stored), `expires_at` (30/90/180/365 days, no "never"), `last_used_at`, `last_used_ip`, `revoked_at`, timestamps. A token acts with its owner's current roles; narrower token scopes are not built yet. Root has none (ADR-0011) |
+| `password_resets` | **not needed (M2b):** LPHP's `PasswordReset` links are stateless, signed with APP_KEY and bound to the current password hash, so setting a password spends the link. Root never gets one |
 
 Sessions: the LPHP `database` session store (`framework:…create_sessions` migration), set with `session.store = database`.
 
@@ -38,17 +38,17 @@ Sessions: the LPHP `database` session store (`framework:…create_sessions` migr
 
 | Table | Key columns |
 |---|---|
-| `servers` | `uid`, `name`, `state` (pending/online/offline/maintenance/revoked), `os_id`, `os_version`, `agent_version`, `protocols` (JSON), `capabilities` (JSON), `last_seen_at`, `desired_backend` (nginx/apache), `detected_backend`, `facts` (JSON) |
-| `agent_credentials` | `server_id`, `agent_uuid` (unique), `kid`, `public_key` (32 bytes), `tls_fingerprint`, `state` (active/rotating/revoked), `issued_at`, `revoked_at`, `revoked_by` |
-| `agent_enrollments` | `server_id`, `token_hash` (unique), `expires_at`, `created_by`, `consumed_at`, `revoked_at`, `consumed_from_ip` |
-| `agent_seen_requests` | `agent_uuid`, `request_id`, `expires_at` — primary key (agent_uuid, request_id). Swept every minute. (Alternative: the LPHP cache, if a shared store is configured) |
+| `servers` | **built (M3):** `uid`, `name`, `state` (pending / active / revoked; *online* or *offline* is worked out from `last_seen_at` against `Servers.offline_after`, 180 s), `agent_id` (UUIDv4, unique, null until paired), `hostname`, `os_id`, `os_version`, `kernel`, `machine_id_sha256` (the raw machine id never leaves the server), `agent_version`, `protocols`, `capabilities`, `health` (JSON, each validated strictly on the way in), `rotate_requested`, `enrolled_at`, `last_seen_at`, `last_seen_ip`, `created_by`, timestamps. Later: `desired_backend`, `detected_backend` (M5) |
+| `agent_credentials` | **built (M3):** `server_id`, `kid` (unique), `public_key` (Ed25519, base64url), `tls_cert_sha256`, `state` (active / rotating / revoked), `retire_at` (end of a rotation overlap), `revoked_at`, timestamps. Who revoked is in the audit log |
+| `agent_enrollments` | **built (M3):** `server_id`, `token_hash` (SHA-256, unique; the token is shown once), `expires_at` (15 min), `created_by`, `consumed_at`, `consumed_from_ip`, `revoked_at` (a newer token for the same server revokes the older one) |
+| `agent_seen_requests` | **built (M3):** `agent_id`, `request_id`, `expires_at` (unix seconds, `expires_at` of the request + 60 s); unique (agent_id, request_id), which decides a race between two copies. `servers:sweep` empties it every minute |
 
 ## Operations (module Operations)
 
 | Table | Key columns |
 |---|---|
-| `operations` | `uid`, `server_id`, `op`, `op_version`, `target_type`, `target_uid`, `payload` (JSON, **no secrets**; secrets go through the sealed envelope), `idempotency_key` (unique per server), `status`, `attempt`, `max_attempts`, `lease_until`, `not_after`, `timeout_seconds`, `requested_by` (user/token id), `request_id`, `error_code`, `message`, `result` (JSON), `queued_at`, `claimed_at`, `finished_at` ; index (server_id, status, queued_at) |
-| `operation_events` | `operation_id`, `occurred_at`, `from_status`, `to_status`, `attempt`, `detail` (JSON, sanitized) |
+| `operations` | **built (M4):** `uid` (UUIDv4, the wire `operation_id`), `server_id`, `op`, `op_version`, `target_type`, `target_uid`, `payload` (JSON, **no secrets**; secrets go through the sealed envelope), `idempotency_key` (mutations only; unique per server), `mutating` and `idempotent` (copied from the definition when queued, so retries follow what was promised), `status`, `attempt` (deliveries so far), `max_attempts`, `cancel_requested`, `lease_seconds`, `timeout_seconds`, `lease_until`, `not_after`, `requested_by` (user id; null for the console), `requested_by_name`, `error_code`, `message`, `result` (JSON, only when it passed the result schema), `result_attempt`, `agent_version`, `started_at` / `finished_at` (as the agent reports), `queued_at`, `claimed_at`, `completed_at`; index (server_id, status, queued_at), index (status, lease_until) |
+| `operation_events` | **built (M4):** `operation_id`, `occurred_at`, `from_status`, `to_status` (equal for "cancel requested"), `attempt`, `actor` (user / agent / sweeper / system), `detail` (JSON, sanitized: an error code) |
 
 ## Hosting (modules Hosting, Websites; later ones in their own modules)
 

@@ -32,7 +32,7 @@ final class RootLoginTest extends ApplicationTestCase
 
         $home = $browser->get('/');
         self::assertSame(200, $home->status());
-        self::assertStringContainsString('badge text-bg-danger">root', $home->body());
+        self::assertStringContainsString('class="lp-root-pill"', $home->body());
     }
 
     public function test_login_name_is_case_and_space_insensitive_for_root(): void

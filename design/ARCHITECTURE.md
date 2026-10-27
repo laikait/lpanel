@@ -12,15 +12,16 @@ an ADR in [adr/](adr/).
         ▼
  ┌──────────────── panel host ────────────────────────────────┐
  │ lpanel-nginx.service  (own config tree, ADR-0003)           │
- │   └─ PHP-FPM pool "lpanel" (user lpanel) ── LPHP app        │
+ │   └─ lpanel-php-fpm.service (own master, user lpanel,       │
+ │      ADR-0012) ── LPHP app                                  │
  │         modules/: Shared, Identity, Audit, Servers,         │
  │                   Operations, Dashboard, Hosting, …         │
- │   lpanel-worker@default.service  (php laika queue:work)     │
  │   lpanel-scheduler.timer         (php laika schedule:run)   │
+ │   lpanel-authd.socket            (root password, ADR-0010)  │
  │   MariaDB "lpanel" (ADR-0008)                               │
  │   /etc/lpanel/keys/operations.key (Ed25519, not in DB)      │
  └─────────────────────────────────────────────────────────────┘
-        ▲  HTTPS :8443 /agent/v1/* — mTLS + signed envelopes,
+        ▲  HTTPS :8444 /agent/v1/* — mTLS + signed envelopes,
         │  agent-initiated only (ADR-0002, AGENT_PROTOCOL.md)
  ┌──────┴────────── managed server (each) ────────────────────┐
  │ lpa-agent.service  (user lpa; network, verify, journal)     │
@@ -106,13 +107,14 @@ Error bodies use LPHP's single error shape. Lists use `ApiResponse::collection`,
 - Two navigation trees: one for administrators, one for customers. Shared layout lives in `templates/layout.twig`, overridden for LPanel.
 - Every operation shows `queued` / `running` / `succeeded` / `failed` / `needs_attention`, with the stored `message`. Buttons are disabled while a mutation is pending.
 
-## 6. Panel deployment (summary)
+## 6. Panel deployment (summary; built in M5, details in [ADR-0012](adr/0012-panel-package-php-fpm-and-agent-port.md))
 
-- `lpanel` system user. The application lives in `/opt/lpanel/` (owned by root, readable by `lpanel`).
-- Writable by `lpanel`: `system/` and nothing else.
-- Panel Nginx serves `/opt/lpanel/public` only. Its server block starts from `php laika nginx:make --listen 8443 --root /opt/lpanel`, then is extended with TLS, client-cert and HSTS settings.
-- `.env` holds `APP_KEY` and `DB_*` (`0640 root:lpanel`). The operation-signing key is a separate file (`AGENT_PROTOCOL.md §1`).
-- Install and upgrade order: stop workers → `php laika down` → copy release → `composer install --no-dev` → `php laika migrate` (as `lpanel_migrate`) → `php laika cache:warm` → `php laika up` → start workers.
+- The `lpanel` `.deb` (`packaging/build-deb.sh`). `postinst` runs `lpanel-setup`, which is safe to run again; `sudo lpanel <command>` is the console.
+- `lpanel` system user. The application lives in `/opt/lpanel/`, owned by root and read-only to `lpanel`, with the production Composer dependencies bundled.
+- Writable by `lpanel`: `system/`, a link to `/var/lib/lpanel`, and nothing else.
+- Panel Nginx serves `/opt/lpanel/public` only. Its config is rendered from `nginx:make`'s server block, plus TLS, HSTS and a second listener for agents (8444, client certificates).
+- `.env` (a link to `/etc/lpanel/lpanel.env`, `0640 root:lpanel`) holds `APP_KEY` and `lpanel_app`'s password. `lpanel_migrate`'s password is in `/etc/lpanel/migrate.env` (root only). The operation-signing key is a separate file (`AGENT_PROTOCOL.md §1`).
+- Upgrade order: stop the scheduler → `down` → new files → `cache:clear` → `migrate` (as `lpanel_migrate`) → `cache:warm` → `up` → restart PHP-FPM, reload Nginx → start the scheduler.
 
 ## 7. Where the boundaries are
 

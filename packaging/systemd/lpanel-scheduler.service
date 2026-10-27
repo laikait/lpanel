@@ -1,0 +1,26 @@
+[Unit]
+Description=LPanel scheduled tasks (servers:sweep, operations:sweep, audit:prune)
+Documentation=file:///usr/share/doc/lpanel/README
+After=mariadb.service
+
+[Service]
+Type=oneshot
+User=lpanel
+Group=lpanel
+WorkingDirectory=/opt/lpanel
+ExecStart=/usr/bin/php /opt/lpanel/laika schedule:run
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/lpanel /var/log/lpanel/php
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=yes
+SystemCallArchitectures=native

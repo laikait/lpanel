@@ -56,4 +56,24 @@ final class AuditTest extends ApplicationTestCase
         self::assertIsInt($page['meta']['next_before']);
         self::assertSame(400, $root->get('/api/v1/audit?limit=999', ['Accept' => 'application/json'])->status());
     }
+
+    /** The query builder is immutable; a condition not assigned back was once silently dropped here. */
+    public function test_paging_and_filters_narrow_the_result(): void
+    {
+        $audit = $this->service(AuditLog::class);
+
+        foreach (['succeeded', 'denied', 'succeeded', 'denied', 'succeeded'] as $i => $outcome) {
+            $audit->record('test.event' . $i, $outcome, null, null, null, []);
+        }
+
+        $first = $audit->latest(2);
+        $next = $audit->latest(2, $first[1]['id']);
+        self::assertSame(['test.event4', 'test.event3'], \array_column($first, 'action'));
+        self::assertSame(['test.event2', 'test.event1'], \array_column($next, 'action'), 'the next page is older, not the same one');
+
+        self::assertSame(['test.event3', 'test.event1'], \array_column($audit->latest(50, null, 'test.', 'denied'), 'action'));
+        self::assertSame(['test.event2'], \array_column($audit->latest(50, null, 'test.event2'), 'action'));
+        self::assertSame(2, $audit->countSince(new \DateTimeImmutable('-1 hour'), 'denied', 'test.'));
+        self::assertSame(5, $audit->countSince(new \DateTimeImmutable('-1 hour')));
+    }
 }

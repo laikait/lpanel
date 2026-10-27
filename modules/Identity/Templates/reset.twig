@@ -1,0 +1,27 @@
+{% extends "auth.twig" %}
+{% import "macros/ui.twig" as ui %}
+
+{% block title %}Choose a new password{% endblock %}
+{% block icon %}<div class="lp-auth__badge">{{ ui.icon('lock') }}</div>{% endblock %}
+{% block heading %}Choose a new password{% endblock %}
+{% block lead %}At least 12 characters. A passphrase of a few unrelated words works well.{% endblock %}
+
+{% block form %}
+{% if reset_token %}
+<form method="post" action="{{ reset_url }}" class="lp-form" novalidate>
+  {{ ui.csrf(token) }}
+  <input type="hidden" name="token" value="{{ reset_token }}">
+  <div class="mb-3">
+    {{ ui.password('password', 'password', 'New password', 'new-password', 12, true) }}
+  </div>
+  <div class="mb-4">
+    {{ ui.password('password_confirmation', 'password_confirmation', 'Repeat the new password', 'new-password', 12) }}
+  </div>
+  <button class="btn btn-primary btn-lg w-100" type="submit">Set new password</button>
+  <p class="form-text mt-3 mb-0">Every session on your account will be signed out.</p>
+</form>
+{% elseif urls.forgot is defined %}
+<a class="btn btn-primary btn-lg w-100" href="{{ urls.forgot }}">Ask for a new link</a>
+{% endif %}
+<p class="text-center mt-4 mb-0"><a class="lp-link small" href="{{ urls.login }}">{{ ui.icon('arrow-left') }} Back to sign in</a></p>
+{% endblock %}

@@ -23,6 +23,9 @@
 !/system/Logs/.gitignore
 !/system/Runtime/.gitignore
 
+# Built packages (packaging/build-deb.sh)
+/dist/
+
 # Tooling caches
 /.php-cs-fixer.cache
 /.phpunit.result.cache
@@ -42,4 +45,3 @@
 Thumbs.db
 Desktop.ini
 .DS_Store
-composer.lock

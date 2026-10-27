@@ -23,6 +23,10 @@ final class AuthEvents
         $hooks->add('auth.failed', fn(string $login) => $this->audit->record('auth.failed', 'denied', null, null, null, ['login' => \mb_substr($login, 0, 100)]), 10, 'Audit');
         $hooks->add('auth.throttled', fn(string $limit) => $this->audit->record('auth.throttled', 'denied', null, null, null, ['limit' => $limit]), 10, 'Audit');
 
+        // A reset is asked for by someone who may not be the account's owner, so it is a request, not a change.
+        $hooks->add('auth.password_reset_requested', fn(Identity $identity) => $this->audit->record('auth.password_reset_requested', 'allowed', null, 'user', $identity->id), 10, 'Audit');
+        $hooks->add('auth.password_reset', fn(Identity $identity) => $this->audit->record('auth.password_reset', 'succeeded', null, 'user', $identity->id, ['sessions_ended' => true]), 10, 'Audit');
+
         foreach (['two_factor_enabled', 'two_factor_disabled', 'two_factor_failed', 'two_factor_throttled', 'recovery_code_used'] as $event) {
             $outcome = \in_array($event, ['two_factor_failed', 'two_factor_throttled'], true) ? 'denied' : 'succeeded';
             $hooks->add('auth.' . $event, fn(Identity $identity) => $this->audit->record('auth.' . $event, $outcome, $identity, 'user', $identity->id), 10, 'Audit');

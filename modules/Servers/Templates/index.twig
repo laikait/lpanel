@@ -1,0 +1,62 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+
+{% block title %}Servers{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Administration</span>{{ ui.icon('chevron-right') }}<span>Servers</span>{% endblock %}
+
+{% block content %}
+<div class="lp-page-header">
+  <div>
+    <h1 class="lp-page-title">Servers</h1>
+    <p class="lp-page-subtitle">Machines this panel manages through the LPanel agent.</p>
+  </div>
+  {% if can_manage %}
+  <div class="lp-page-actions"><a class="btn btn-primary lp-btn-icon" href="{{ create_url }}">{{ ui.icon('plus') }}Add server</a></div>
+  {% endif %}
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3"><div class="lp-stat lp-stat--compact"><span class="lp-chip lp-chip--primary">{{ ui.icon('server') }}</span><div><div class="lp-stat__value">{{ counts.total }}</div><div class="lp-stat__label">Servers</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="lp-stat lp-stat--compact"><span class="lp-chip lp-chip--success">{{ ui.icon('activity') }}</span><div><div class="lp-stat__value">{{ counts.online }}</div><div class="lp-stat__label">Online</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="lp-stat lp-stat--compact{{ counts.offline > 0 ? ' lp-stat--alert' : '' }}"><span class="lp-chip {{ counts.offline > 0 ? 'lp-chip--danger' : 'lp-chip--muted' }}">{{ ui.icon('alert') }}</span><div><div class="lp-stat__value">{{ counts.offline }}</div><div class="lp-stat__label">Offline</div></div></div></div>
+  <div class="col-6 col-lg-3"><div class="lp-stat lp-stat--compact"><span class="lp-chip lp-chip--amber">{{ ui.icon('clock') }}</span><div><div class="lp-stat__value">{{ counts.pending }}</div><div class="lp-stat__label">Waiting for agent</div></div></div></div>
+</div>
+
+<section class="card lp-card">
+  {% if rows is empty %}
+    <div class="lp-empty">
+      <span class="lp-empty__icon">{{ ui.icon('server') }}</span>
+      <h3 class="lp-empty__title">No servers yet</h3>
+      <p class="lp-empty__text">Add a server, then run the one-line command it gives you on that machine. The agent connects to the panel; the panel never connects to it.</p>
+      {% if can_manage %}<a class="btn btn-primary lp-btn-icon mt-3" href="{{ create_url }}">{{ ui.icon('plus') }}Add your first server</a>{% endif %}
+    </div>
+  {% else %}
+  <div class="table-responsive">
+    <table class="table lp-table lp-table--hover align-middle mb-0">
+      <thead><tr><th>Server</th><th>Status</th><th class="d-none d-md-table-cell">System</th><th class="d-none d-lg-table-cell">Agent</th><th class="d-none d-sm-table-cell">Last seen</th><th class="text-end"><span class="visually-hidden">Open</span></th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        {% set s = row.server %}
+        <tr>
+          <td>
+            <div class="lp-person">
+              <span class="lp-chip lp-chip--{{ row.status == 'online' ? 'success' : (row.status == 'offline' or row.status == 'revoked' ? 'danger' : 'muted') }} lp-chip--sm">{{ ui.icon('server') }}</span>
+              <div class="min-w-0">
+                <a class="lp-person__name stretched-link-row" href="{{ row.url }}">{{ s.name }}</a>
+                <div class="lp-person__meta font-monospace">{{ s.hostname ?: '—' }}</div>
+              </div>
+            </div>
+          </td>
+          <td>{{ ui.status_badge(row.status) }}</td>
+          <td class="d-none d-md-table-cell small">{{ s.osLabel ?: '—' }}{% if s.kernel %}<div class="text-body-tertiary font-monospace">{{ s.kernel }}</div>{% endif %}</td>
+          <td class="d-none d-lg-table-cell small font-monospace">{{ s.agentVersion ?: '—' }}</td>
+          <td class="d-none d-sm-table-cell small">{{ ui.time(s.lastSeenAt) }}</td>
+          <td class="text-end"><span class="lp-row-chev">{{ ui.icon('chevron-right') }}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

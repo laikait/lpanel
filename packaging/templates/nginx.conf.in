@@ -1,0 +1,121 @@
+# /etc/lpanel/nginx/nginx.conf -- written by lpanel-setup from
+# /usr/share/lpanel/nginx.conf.in on every install, upgrade and run. Do not
+# edit it: change /etc/lpanel/lpanel.conf, then run lpanel-setup.
+#
+# The panel's own Nginx (ADR-0003): its own master, pid, logs and temp paths.
+# Two listeners (ADR-0012):
+#   @PANEL_PORT@  people: the screens and the API, with a certificate you may replace
+#   @AGENT_PORT@  agents: /agent/v1 only, mutual TLS, with the key agents pin
+
+user lpanel-web;
+worker_processes 2;
+pid /run/lpanel-nginx.pid;
+error_log /var/log/lpanel/nginx/error.log warn;
+
+events {
+    worker_connections 512;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    server_tokens off;
+    access_log /var/log/lpanel/nginx/access.log;
+
+    # Not the hosting Nginx's /var/lib/nginx.
+    client_body_temp_path /var/cache/lpanel-nginx/body;
+    fastcgi_temp_path /var/cache/lpanel-nginx/fastcgi;
+    proxy_temp_path /var/cache/lpanel-nginx/proxy;
+    uwsgi_temp_path /var/cache/lpanel-nginx/uwsgi;
+    scgi_temp_path /var/cache/lpanel-nginx/scgi;
+
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:lpanel_tls:5m;
+    ssl_session_timeout 1h;
+    ssl_session_tickets off;
+
+    upstream lpanel_php {
+        server unix:/run/lpanel-php-fpm/php-fpm.sock;
+    }
+
+    # ---- people ----------------------------------------------------------
+    server {
+        listen @PANEL_PORT@ ssl@HTTP2_LISTEN@;
+@LISTEN6_PANEL@
+@HTTP2_ON@
+        server_name _;
+
+        ssl_certificate /etc/lpanel/tls/panel.crt;
+        ssl_certificate_key /etc/lpanel/tls/panel.key;
+
+        # The application's body limit (8 MB) and a little.
+        client_max_body_size 9m;
+        root /opt/lpanel/public;
+        index index.php;
+
+        add_header Strict-Transport-Security "max-age=31536000" always;
+
+        # Dotfiles are refused, except /.well-known/ for certificate challenges.
+        location ~ /\.(?!well-known/) { deny all; }
+
+        # /assets/core/<path> is public/assets/<path>, served without PHP.
+        location ^~ /assets/core/ {
+            alias /opt/lpanel/public/assets/;
+            access_log off;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header Strict-Transport-Security "max-age=31536000" always;
+            location ~ /\. { deny all; }
+        }
+
+        # The agents' API is not served to people at all.
+        location ^~ /agent/ { return 404; }
+
+        location / {
+            try_files $uri /index.php$is_args$args;
+        }
+
+        location = /index.php {
+            include /etc/nginx/fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root/index.php;
+            fastcgi_param HTTPS on;
+            fastcgi_pass lpanel_php;
+        }
+
+        location ~ \.php$ { return 404; }
+    }
+
+    # ---- agents (AGENT_PROTOCOL.md §2) ---------------------------------------
+    server {
+        listen @AGENT_PORT@ ssl;
+@LISTEN6_AGENT@
+        server_name _;
+
+        # Never replaced by hand: every agent pins this key.
+        ssl_certificate /etc/lpanel/tls/agent.crt;
+        ssl_certificate_key /etc/lpanel/tls/agent.key;
+        # Asked for, checked by no CA: the panel matches it to the agent by SHA-256.
+        ssl_verify_client optional_no_ca;
+
+        client_max_body_size 1m;
+        root /opt/lpanel/public;
+        access_log /var/log/lpanel/nginx/agents.log;
+
+        location ^~ /agent/v1/ {
+            rewrite ^ /index.php last;
+        }
+
+        location = /index.php {
+            internal;
+            include /etc/nginx/fastcgi_params;
+            fastcgi_param SCRIPT_FILENAME $document_root/index.php;
+            fastcgi_param HTTPS on;
+            # A FastCGI param, never a header: a client cannot set it.
+            fastcgi_param SSL_CLIENT_ESCAPED_CERT $ssl_client_escaped_cert;
+            fastcgi_pass lpanel_php;
+        }
+
+        location / { return 404; }
+    }
+}

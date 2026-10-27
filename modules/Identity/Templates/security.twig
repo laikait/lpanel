@@ -1,47 +1,146 @@
 {% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
 
-{% block title %}Security{% endblock %}
+{% block title %}Sign-in security{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Your account</span>{{ ui.icon('chevron-right') }}<span>Sign-in security</span>{% endblock %}
 
 {% block content %}
-<h1 class="h4 mb-3">Sign-in security</h1>
-{% if status|default(null) %}<div class="alert alert-success" role="status">{{ status }}</div>{% endif %}
-{% if error|default(null) %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
+{{ ui.page_header('Sign-in security', 'Your password and two-factor sign-in.') }}
 
-<div class="card shadow-sm">
-  <div class="card-body">
-    <h2 class="h5">Two-factor sign-in</h2>
+{% if error %}{{ ui.alert('danger', error) }}{% endif %}
 
-    {% if recovery_codes|default(null) %}
-      <div class="alert alert-warning">
-        <p class="fw-semibold mb-2">Two-factor sign-in is on. Save these recovery codes now; they are shown only once.</p>
-        <ul class="list-unstyled font-monospace mb-0">{% for c in recovery_codes %}<li>{{ c }}</li>{% endfor %}</ul>
+<div class="row g-4">
+  <div class="col-xl-8">
+
+    <section class="card lp-card mb-4">
+      <div class="lp-card__header">
+        <div class="lp-card__heading">
+          <span class="lp-chip lp-chip--primary">{{ ui.icon('phone') }}</span>
+          <div>
+            <h2 class="lp-card__title">Two-factor sign-in</h2>
+            <p class="lp-card__subtitle">A code from your phone as well as your password.</p>
+          </div>
+        </div>
+        {% if enabled or recovery_codes|default(null) %}
+          <span class="lp-badge lp-badge--success lp-badge--dot">On</span>
+        {% else %}
+          <span class="lp-badge lp-badge--secondary lp-badge--dot">Off</span>
+        {% endif %}
       </div>
+      <div class="card-body">
 
-    {% elseif enrolment|default(null) %}
-      <p>Scan this with your authenticator app, then enter the code it shows.</p>
-      <div class="mb-3" style="max-width: 220px">{{ enrolment.qr|raw }}</div>
-      <p class="small text-body-secondary">Or enter this key by hand: <code>{{ enrolment.secret }}</code></p>
-      <form method="post" action="{{ urls_security.confirm }}" class="row g-2">
-        <input type="hidden" name="_token" value="{{ token }}">
-        <div class="col-auto"><input class="form-control" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="16" aria-label="Code"></div>
-        <div class="col-auto"><button class="btn btn-primary" type="submit">Turn on</button></div>
-      </form>
+        {% if recovery_codes|default(null) %}
+          {{ ui.alert('success', 'Two-factor sign-in is on.') }}
+          <h3 class="h6 fw-semibold mt-3">Save your recovery codes</h3>
+          <p class="text-body-secondary small">Each code signs you in once if you lose your phone. They are shown only now: store them in your password manager.</p>
+          <div class="lp-codes" id="lp-recovery">
+            {% for c in recovery_codes %}<code>{{ c }}</code>{% endfor %}
+          </div>
+          <button type="button" class="btn btn-outline-secondary btn-sm mt-3 lp-btn-icon" data-lp-copy="#lp-recovery">{{ ui.icon('copy') }}<span>Copy codes</span></button>
 
-    {% elseif enabled %}
-      <p>On. {{ remaining }} recovery code{{ remaining == 1 ? '' : 's' }} left.</p>
-      <form method="post" action="{{ urls_security.disable }}" class="row g-2">
-        <input type="hidden" name="_token" value="{{ token }}">
-        <div class="col-auto"><input class="form-control" name="code" inputmode="numeric" required maxlength="16" placeholder="Current code" aria-label="Current code"></div>
-        <div class="col-auto"><button class="btn btn-outline-danger" type="submit">Turn off</button></div>
-      </form>
+        {% elseif enrolment|default(null) %}
+          <ol class="lp-steps">
+            <li>
+              <div class="lp-steps__title">Scan this QR code</div>
+              <p class="text-body-secondary small mb-3">With Google Authenticator, 1Password, Authy or any TOTP app.</p>
+              <div class="lp-enrol">
+                <div class="lp-qr">{{ enrolment.qr|raw }}</div>
+                <div class="small">
+                  <div class="text-body-secondary mb-1">Can't scan? Enter this key:</div>
+                  <code class="lp-secret" id="lp-secret">{{ enrolment.secret }}</code>
+                  <button type="button" class="btn btn-link btn-sm px-0 lp-btn-icon" data-lp-copy="#lp-secret">{{ ui.icon('copy') }}<span>Copy key</span></button>
+                </div>
+              </div>
+            </li>
+            <li>
+              <div class="lp-steps__title">Enter the code it shows</div>
+              <form method="post" action="{{ urls_security.confirm }}" class="d-flex flex-wrap gap-2 mt-2">
+                {{ ui.csrf(token) }}
+                <input class="form-control lp-otp lp-otp--inline" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="16" placeholder="000000" aria-label="Code from your app" autofocus>
+                <button class="btn btn-primary" type="submit">Turn on</button>
+              </form>
+            </li>
+          </ol>
 
-    {% else %}
-      <p>Off. Two-factor sign-in is optional, and recommended for anyone who can change servers.</p>
-      <form method="post" action="{{ urls_security.begin }}">
-        <input type="hidden" name="_token" value="{{ token }}">
-        <button class="btn btn-primary" type="submit">Set up two-factor sign-in</button>
-      </form>
-    {% endif %}
+        {% elseif enabled %}
+          <div class="lp-kv">
+            <div><span>Status</span><strong>Protecting your account</strong></div>
+            <div><span>Recovery codes left</span><strong>{{ remaining }} of 10</strong></div>
+          </div>
+          {% if remaining <= 3 %}{{ ui.alert('warning', 'You are running out of recovery codes. Turn two-factor off and on again to get a new set.') }}{% endif %}
+          <hr class="my-4">
+          <h3 class="h6 fw-semibold">Turn off two-factor sign-in</h3>
+          <p class="text-body-secondary small">Enter a current code from your app to confirm it is you.</p>
+          <form method="post" action="{{ urls_security.disable }}" class="d-flex flex-wrap gap-2" data-lp-confirm="Your account will be protected by your password alone." data-lp-confirm-title="Turn off two-factor sign-in?" data-lp-confirm-ok="Turn off">
+            {{ ui.csrf(token) }}
+            <input class="form-control lp-otp lp-otp--inline" name="code" inputmode="numeric" autocomplete="one-time-code" required maxlength="16" placeholder="000000" aria-label="Current code">
+            <button class="btn btn-outline-danger" type="submit">Turn off</button>
+          </form>
+
+        {% else %}
+          <div class="lp-cta">
+            <div>
+              <p class="mb-1 fw-semibold">Two-factor sign-in is off</p>
+              <p class="text-body-secondary small mb-0">It's optional, and strongly recommended for anyone who can change servers or users.</p>
+            </div>
+            <form method="post" action="{{ urls_security.begin }}">
+              {{ ui.csrf(token) }}
+              <button class="btn btn-primary lp-btn-icon" type="submit">{{ ui.icon('shield') }}Set up</button>
+            </form>
+          </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card lp-card">
+      <div class="lp-card__header">
+        <div class="lp-card__heading">
+          <span class="lp-chip lp-chip--violet">{{ ui.icon('lock') }}</span>
+          <div>
+            <h2 class="lp-card__title">Password</h2>
+            <p class="lp-card__subtitle">{{ user.kind == 'system' ? 'Root uses the server\'s own password.' : 'Changing it signs out your other sessions.' }}</p>
+          </div>
+        </div>
+      </div>
+      <div class="card-body">
+        {% if user.kind == 'system' %}
+          <div class="lp-callout">
+            {{ ui.icon('terminal') }}
+            <div>Root's password is checked on the server by PAM and is never stored by the panel. Change it on the server with <code>passwd</code>.</div>
+          </div>
+        {% else %}
+          {% if password_error %}{{ ui.alert('danger', password_error) }}{% endif %}
+          <form method="post" action="{{ urls_security.password }}" class="row g-3" novalidate>
+            {{ ui.csrf(token) }}
+            <div class="col-12 col-md-6">{{ ui.password('current_password', 'current_password', 'Current password', 'current-password') }}</div>
+            <div class="col-12"></div>
+            <div class="col-md-6">{{ ui.password('password', 'new_password', 'New password', 'new-password', 12) }}<div class="form-text">At least 12 characters.</div></div>
+            <div class="col-md-6">{{ ui.password('password_confirmation', 'new_password_confirmation', 'Repeat new password', 'new-password', 12) }}</div>
+            <div class="col-12"><button class="btn btn-primary" type="submit">Change password</button></div>
+          </form>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <div class="col-xl-4">
+    <section class="card lp-card">
+      <div class="card-body">
+        <div class="d-flex align-items-center gap-3 mb-4">
+          {{ ui.avatar(profile.name, profile.initials, 'lg') }}
+          <div class="min-w-0">
+            <div class="fw-semibold fs-5 text-truncate">{{ user.name }}</div>
+            <div class="text-body-secondary font-monospace small">{{ user.login }}</div>
+          </div>
+        </div>
+        <dl class="lp-dl">
+          <dt>Roles</dt><dd>{% for r in user.effectiveRoles %}{{ ui.role_badge(r) }} {% else %}<span class="text-body-tertiary">None</span>{% endfor %}</dd>
+          <dt>Email</dt><dd>{{ user.email ?: '—' }}</dd>
+          <dt>Last sign-in</dt><dd>{{ ui.time(user.lastLoginAt) }}</dd>
+          <dt>Member since</dt><dd>{{ ui.time(user.createdAt, '—') }}</dd>
+        </dl>
+      </div>
+    </section>
   </div>
 </div>
 {% endblock %}

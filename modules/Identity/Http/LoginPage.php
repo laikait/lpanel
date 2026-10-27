@@ -10,9 +10,9 @@ use App\Engine\Http\RedirectResponse;
 use App\Engine\Http\Request;
 use App\Engine\Http\Response;
 use App\Engine\Security\Secret;
-use App\Engine\Session\Session;
 use App\Modules\Identity\Auth\LoginResult;
 use App\Modules\Identity\Auth\LoginService;
+use App\Modules\Shared\Ui\Pages;
 
 /**
  * GET/POST /login, GET/POST /login/code, POST /logout.
@@ -31,13 +31,13 @@ final class LoginPage
         private readonly TwoFactor $twoFactor,
     ) {}
 
-    public function show(Request $request, Session $session): Response
+    public function show(Request $request): Response
     {
         if ($this->auth->check()) {
             return new RedirectResponse($this->pages->url('home'), 303);
         }
 
-        return $this->pages->render($request, '@Identity/login', ['error' => $session->get('login.error'), 'old' => '']);
+        return $this->pages->render($request, '@Identity/login', ['error' => null, 'old' => '']);
     }
 
     public function submit(Request $request): Response
@@ -71,7 +71,7 @@ final class LoginPage
         return $this->pages->render($request, '@Identity/code', ['error' => null]);
     }
 
-    public function submitCode(Request $request, Session $session): Response
+    public function submitCode(Request $request): Response
     {
         $code = $request->input('code');
 
@@ -81,7 +81,7 @@ final class LoginPage
 
         if (!$this->twoFactor->pending()) {
             // Five wrong codes, or the five minutes ran out: the password again.
-            $session->flash('login.error', 'Sign in again.');
+            $this->pages->flash('warning', 'Sign in again.');
 
             return new RedirectResponse($this->pages->url('login.show'), 303);
         }

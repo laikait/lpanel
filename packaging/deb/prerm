@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+has_systemd() { [ -d /run/systemd/system ]; }
+
+case "$1" in
+upgrade)
+	# ARCHITECTURE.md §6: stop the scheduled work, put the panel in maintenance,
+	# then the new files go in. lpanel-setup brings it back up after migrating.
+	if has_systemd; then
+		systemctl stop lpanel-scheduler.timer lpanel-scheduler.service >/dev/null 2>&1 || true
+	fi
+	if [ -d /var/lib/lpanel/Runtime ] && [ -x /usr/sbin/lpanel ]; then
+		touch /var/lib/lpanel/Runtime/lpanel-upgrading
+		/usr/sbin/lpanel down >/dev/null 2>&1 || true
+	fi
+	;;
+remove | deconfigure)
+	if has_systemd; then
+		systemctl disable --now lpanel-scheduler.timer lpanel-nginx.service lpanel-php-fpm.service \
+			lpanel-authd.socket lpanel-authd.service >/dev/null 2>&1 || true
+		systemctl stop lpanel-scheduler.service >/dev/null 2>&1 || true
+	fi
+	;;
+esac
+
+exit 0

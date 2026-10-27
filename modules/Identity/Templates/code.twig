@@ -1,20 +1,20 @@
-{% extends "layout.twig" %}
+{% extends "auth.twig" %}
+{% import "macros/ui.twig" as ui %}
 
 {% block title %}Two-factor code{% endblock %}
+{% block icon %}<div class="lp-auth__badge">{{ ui.icon('phone') }}</div>{% endblock %}
+{% block heading %}Two-factor sign-in{% endblock %}
+{% block lead %}Open your authenticator app and enter the 6-digit code for LPanel.{% endblock %}
 
-{% block content %}
-<div class="row justify-content-center">
-  <div class="col-sm-8 col-md-5 col-lg-4">
-    <h1 class="h4 mb-3">Enter your code</h1>
-    {% if error %}<div class="alert alert-danger" role="alert">{{ error }}</div>{% endif %}
-    <form method="post" action="{{ urls.login_code }}" class="card card-body shadow-sm">
-      <input type="hidden" name="_token" value="{{ token }}">
-      <div class="mb-3">
-        <label class="form-label" for="code">Code from your authenticator app, or a recovery code</label>
-        <input class="form-control" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus maxlength="64">
-      </div>
-      <button class="btn btn-primary w-100" type="submit">Continue</button>
-    </form>
+{% block form %}
+<form method="post" action="{{ urls.login_code }}" class="lp-form" novalidate>
+  {{ ui.csrf(token) }}
+  <div class="mb-4">
+    <label class="form-label" for="code">Code</label>
+    <input class="form-control form-control-lg lp-otp" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" required autofocus maxlength="64" placeholder="000000">
+    <div class="form-text">Lost your phone? Enter one of your recovery codes instead.</div>
   </div>
-</div>
+  <button class="btn btn-primary btn-lg w-100" type="submit">Verify and continue</button>
+</form>
+<p class="text-center mt-4 mb-0"><a class="lp-link small" href="{{ urls.login }}">{{ ui.icon('arrow-left') }} Back to sign in</a></p>
 {% endblock %}

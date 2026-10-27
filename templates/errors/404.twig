@@ -17,10 +17,10 @@
 {% block title %}Page not found{% endblock %}
 
 {% block content %}
-<section class="error-page">
-    <p class="status">404</p>
-    <h1>That page is not here</h1>
-    <p>The link may be out of date, or the address may have a typo in it.</p>
-    <p><a class="button" href="{{ home|default('/') }}">Back to the home page</a></p>
+<section class="lp-error">
+  <p class="lp-error__status">404</p>
+  <h1 class="lp-error__title">That page is not here</h1>
+  <p class="lp-error__text">The link may be out of date, or the address may have a typo in it.</p>
+  <a class="btn btn-primary" href="{{ home|default('/') }}">Back to the dashboard</a>
 </section>
 {% endblock %}

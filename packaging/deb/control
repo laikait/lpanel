@@ -1,0 +1,15 @@
+Package: lpanel
+Version: @VERSION@
+Architecture: amd64
+Maintainer: Laika IT <packages@laika.invalid>
+Depends: nginx, php-fpm, php-cli, php-mysql, php-intl, php-mbstring, mariadb-server, mariadb-client, openssl, iproute2, passwd, libpam0g, libc6
+Recommends: systemd, logrotate
+Section: admin
+Priority: optional
+Homepage: https://github.com/laikait/lpanel
+Description: LPanel hosting control panel
+ The panel: people sign in on port 8443, and the LPanel agents on managed
+ servers connect to port 8444 with mutual TLS. It runs on its own Nginx and
+ PHP-FPM masters, separate from any hosting Nginx or PHP-FPM on the machine,
+ keeps its data in a local MariaDB database, and lets root sign in with this
+ machine's root password through a small PAM helper.

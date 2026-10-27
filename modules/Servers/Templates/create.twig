@@ -1,0 +1,55 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+
+{% block title %}Add server{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Administration</span>{{ ui.icon('chevron-right') }}<a href="{{ index_url }}">Servers</a>{{ ui.icon('chevron-right') }}<span>Add server</span>{% endblock %}
+
+{% block content %}
+{{ ui.page_header('Add server', 'Name it here, then run one command on the machine to pair it.') }}
+
+<div class="row g-4">
+  <div class="col-xl-7">
+    {% if error %}{{ ui.alert('danger', error) }}{% endif %}
+
+    {% if problems is not empty %}
+    <section class="card lp-card mb-4 lp-card--warn">
+      <div class="lp-card__header">
+        <div class="lp-card__heading">
+          <span class="lp-chip lp-chip--amber">{{ ui.icon('alert') }}</span>
+          <div><h2 class="lp-card__title">Finish setting up the panel first</h2><p class="lp-card__subtitle">Agents need to know where the panel is and how to recognise it.</p></div>
+        </div>
+      </div>
+      <div class="card-body">
+        <ol class="lp-checklist">{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ol>
+      </div>
+    </section>
+    {% endif %}
+
+    <form method="post" action="{{ store_url }}" class="card lp-card" novalidate>
+      {{ ui.csrf(token) }}
+      <div class="card-body">
+        <label class="form-label" for="name">Server name</label>
+        <input class="form-control{{ error and problems is empty ? ' is-invalid' : '' }}" id="name" name="name" value="{{ name }}" maxlength="100" required autofocus placeholder="e.g. web-01 or London shared hosting"{{ problems is not empty ? ' disabled' : '' }}>
+        <div class="form-text">For people. The agent reports the machine's real hostname itself.</div>
+      </div>
+      <div class="lp-card__footer lp-card__footer--actions gap-2">
+        <a class="btn btn-light" href="{{ index_url }}">Cancel</a>
+        <button class="btn btn-primary lp-btn-icon" type="submit"{{ problems is not empty ? ' disabled' : '' }}>{{ ui.icon('key') }}Create and get the command</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-xl-5">
+    <section class="card lp-card">
+      <div class="card-body">
+        <h2 class="h6 fw-semibold mb-3">How pairing works</h2>
+        <ol class="lp-steps lp-steps--compact">
+          <li><div class="lp-steps__title">Install the agent</div><p class="small text-body-secondary mb-0">The <code>lpa</code> package on Ubuntu 24.04 / 26.04 or Debian 12 / 13.</p></li>
+          <li><div class="lp-steps__title">Run the command, as root</div><p class="small text-body-secondary mb-0">It makes the agent's keys and pins this panel's TLS key, so it cannot be pointed elsewhere.</p></li>
+          <li><div class="lp-steps__title">The server comes online</div><p class="small text-body-secondary mb-0">The token works once, for {{ minutes }} minutes. The agent reports in every minute after that.</p></li>
+        </ol>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

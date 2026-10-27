@@ -12,9 +12,9 @@
 {% block title %}Down for maintenance{% endblock %}
 
 {% block content %}
-<section class="error-page">
-    <p class="status">{{ error.status }}</p>
-    <h1>Down for maintenance</h1>
-    <p>{{ error.message != error.title ? error.message : 'We are making some changes and will be back shortly.' }}</p>
+<section class="lp-error">
+  <p class="lp-error__status">{{ error.status }}</p>
+  <h1 class="lp-error__title">Down for maintenance</h1>
+  <p class="lp-error__text">{{ error.message != error.title ? error.message : 'The panel is being updated and will be back shortly. Your websites keep running.' }}</p>
 </section>
 {% endblock %}

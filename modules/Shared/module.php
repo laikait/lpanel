@@ -11,6 +11,8 @@ use App\Engine\Database\SqlSource;
 use App\Engine\Module\ModuleContext;
 use App\Engine\Routing\RouteCollector;
 use App\Modules\Shared\Health\HealthCheck;
+use App\Modules\Shared\Ui\Navigation;
+use App\Modules\Shared\Ui\Pages;
 
 /**
  * The shared module.
@@ -20,8 +22,10 @@ use App\Modules\Shared\Health\HealthCheck;
  * module really needs it, and it registers first so that everything else can
  * rely on it.
  *
- * Right now it holds two things: where repositories store their data, and the
- * health check. The front page belongs to the module that owns the dashboard.
+ * It holds where repositories store their data, the health check, and the
+ * page shell every screen renders in (Ui\Pages, and Ui\Navigation, which each
+ * module fills with its own sidebar entries). The front page belongs to the
+ * module that owns the dashboard.
  */
 return static function (ModuleContext $module): void {
     $module
@@ -57,6 +61,9 @@ return static function (ModuleContext $module): void {
                 ? new SqlSource($connections->connection())
                 : new ArraySource();
         });
+
+        $services->singleton(Navigation::class);
+        $services->singleton(Pages::class);
     });
 
     $module->routes(static function (RouteCollector $routes): void {

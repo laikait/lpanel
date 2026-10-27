@@ -41,6 +41,12 @@ final class UserStore
         return $this->hydrate($this->db()->table('users')->where('uid', $uid)->first());
     }
 
+    /** By the internal id, which never leaves the panel (a token row names its user this way). */
+    public function byId(int $id): ?User
+    {
+        return $this->hydrate($this->db()->table('users')->where('id', $id)->first());
+    }
+
     public function byLogin(string $login): ?User
     {
         return $this->hydrate($this->db()->table('users')->where('login', self::normalize($login))->first());
@@ -105,9 +111,73 @@ final class UserStore
         $this->update($uid, ['last_login_at' => self::now()]);
     }
 
+    /** A new password ends every other session: they started under the old one. */
     public function setPasswordHash(string $uid, string $hash): void
     {
-        $this->update($uid, ['password_hash' => $hash], kind: User::KIND_PANEL);
+        $this->db()->transaction(function () use ($uid, $hash): void {
+            $this->update($uid, ['password_hash' => $hash], kind: User::KIND_PANEL);
+            $this->endSessions($uid);
+        });
+    }
+
+    /** Sign this user out everywhere, on each session's next request. */
+    public function endSessions(string $uid): void
+    {
+        $user = $this->byUid($uid);
+
+        if ($user !== null) {
+            $this->update($uid, ['session_epoch' => $user->sessionEpoch + 1]);
+        }
+    }
+
+    /** Name and address. Never root's row: root is the server's account, not the panel's. */
+    public function updateProfile(string $uid, string $name, ?string $email): void
+    {
+        $this->update($uid, ['name' => $name, 'email' => $email], kind: User::KIND_PANEL);
+    }
+
+    /** @param list<string> $roles names from Roles::ASSIGNABLE */
+    public function setRoles(string $uid, array $roles): void
+    {
+        $user = $this->byUid($uid);
+
+        if ($user === null || $user->kind !== User::KIND_PANEL) {
+            return;
+        }
+
+        $this->db()->transaction(function (Connection $db) use ($user, $roles): void {
+            $db->table('user_roles')->where('user_id', $user->id)->delete();
+
+            foreach (\array_unique($roles) as $role) {
+                $db->table('user_roles')->insert(['user_id' => $user->id, 'role' => $role]);
+            }
+
+            $db->table('users')->where('id', $user->id)->update(['updated_at' => self::now()]);
+        });
+    }
+
+    /** active or suspended. A suspended user is nobody from their next request on. */
+    public function setStatus(string $uid, string $status): void
+    {
+        if (!\in_array($status, [User::ACTIVE, User::SUSPENDED], true)) {
+            throw new \InvalidArgumentException(\sprintf('Unknown user status "%s".', $status));
+        }
+
+        $this->update($uid, ['status' => $status], kind: User::KIND_PANEL);
+    }
+
+    /** @return array{total: int, admins: int, customers: int, two_factor: int, suspended: int} */
+    public function counts(): array
+    {
+        $db = $this->db();
+
+        return [
+            'total' => $db->table('users')->count(),
+            'admins' => $db->table('user_roles')->where('role', Roles::ADMIN)->count(),
+            'customers' => $db->table('user_roles')->where('role', Roles::CUSTOMER)->count(),
+            'two_factor' => $db->table('users')->whereNotNull('totp_secret')->count(),
+            'suspended' => $db->table('users')->where('status', User::SUSPENDED)->count(),
+        ];
     }
 
     public function totpSecret(User $user): ?string
@@ -151,8 +221,9 @@ final class UserStore
     {
         $query = $this->db()->table('users')->where('uid', $uid);
 
+        // The builder is immutable: the condition is assigned back, or it is silently dropped.
         if ($kind !== null) {
-            $query->where('kind', $kind);
+            $query = $query->where('kind', $kind);
         }
 
         $query->update($changes + ['updated_at' => self::now()]);
@@ -188,6 +259,8 @@ final class UserStore
             totpLastStep: isset($row['totp_last_step']) ? (int) $row['totp_last_step'] : null,
             recoveryHashes: \is_array($recovery) ? \array_values(\array_map('strval', $recovery)) : [],
             lastLoginAt: isset($row['last_login_at']) ? (string) $row['last_login_at'] : null,
+            sessionEpoch: (int) ($row['session_epoch'] ?? 1),
+            createdAt: isset($row['created_at']) ? (string) $row['created_at'] : null,
         );
     }
 

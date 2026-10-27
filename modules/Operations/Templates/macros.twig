@@ -1,0 +1,115 @@
+{# A bar from 0 to 100, coloured by how full it is. #}
+{% macro meter(pct, label) %}
+{%- set level = pct >= 90 ? 'danger' : (pct >= 75 ? 'warning' : 'ok') -%}
+<div class="lp-meter lp-meter--{{ level }}" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ pct }}" aria-label="{{ label }}"><span style="width: {{ pct }}%"></span></div>
+{%- endmacro %}
+
+{# Hidden marker app.js polls: when the operation's state changes, the page reloads. #}
+{% macro watch(url, status) %}
+{%- if url %}<span hidden data-lp-watch="{{ url }}" data-lp-watch-status="{{ status }}"></span>{% endif -%}
+{%- endmacro %}
+
+{# A form that asks the agent for one operation. #}
+{% macro run(url, token, op, version, icon, text, class, back, disabled) %}
+{% import "macros/ui.twig" as ui %}
+<form method="post" action="{{ url }}" class="d-inline">
+  {{ ui.csrf(token) }}<input type="hidden" name="op" value="{{ op }}"><input type="hidden" name="op_version" value="{{ version }}">
+  {% if back %}<input type="hidden" name="return" value="{{ back }}">{% endif %}
+  <button class="btn btn-sm {{ class|default('btn-light') }} lp-btn-icon" type="submit"{{ disabled ? ' disabled' : '' }}>{{ ui.icon(icon, disabled and icon == 'loader' ? 'lp-spin' : '') }}{{ text }}</button>
+</form>
+{%- endmacro %}
+
+{# system.metrics, from OperationViews::metrics() #}
+{% macro metrics(m) %}
+{% import _self as me %}
+{% import "macros/ui.twig" as ui %}
+<div class="lp-gauges">
+  <div class="lp-gauge">
+    <div class="lp-gauge__head"><span>{{ ui.icon('cpu') }}Load</span><strong>{{ m.load.one|number_format(2) }}</strong></div>
+    {% if m.load_pct is not null %}{{ me.meter(m.load_pct, 'Load per CPU') }}{% endif %}
+    <div class="lp-gauge__foot"><b>{{ m.load.five|number_format(2) }} · {{ m.load.fifteen|number_format(2) }}</b><span>5 / 15 min</span>{% if m.cpus %}<span>· {{ m.cpus }} CPU{{ m.cpus == 1 ? '' : 's' }}</span>{% endif %}</div>
+  </div>
+  <div class="lp-gauge">
+    <div class="lp-gauge__head"><span>{{ ui.icon('gauge') }}Memory</span><strong>{{ m.memory.pct }}%</strong></div>
+    {{ me.meter(m.memory.pct, 'Memory in use') }}
+    <div class="lp-gauge__foot">{{ m.memory.used }} <span>of {{ m.memory.total }}</span></div>
+  </div>
+  <div class="lp-gauge">
+    <div class="lp-gauge__head"><span>{{ ui.icon('refresh') }}Swap</span><strong>{{ m.swap ? m.swap.pct ~ '%' : '—' }}</strong></div>
+    {% if m.swap %}{{ me.meter(m.swap.pct, 'Swap in use') }}<div class="lp-gauge__foot">{{ m.swap.used }} <span>of {{ m.swap.total }}</span></div>{% else %}<div class="lp-meter"></div><div class="lp-gauge__foot"><span>No swap configured</span></div>{% endif %}
+  </div>
+  <div class="lp-gauge">
+    <div class="lp-gauge__head"><span>{{ ui.icon('clock') }}Uptime</span><strong title="{{ m.uptime_full }}">{{ m.uptime ?: '—' }}</strong></div>
+    <div class="lp-gauge__foot"><b>{{ m.uptime_full }}</b><span>since boot</span></div>
+  </div>
+</div>
+{% if m.disks is not empty %}
+<div class="lp-disks">
+  {% for d in m.disks %}
+  <div class="lp-disk">
+    <div class="lp-disk__name">{{ ui.icon('disk') }}<code>{{ d.mount }}</code><span class="lp-mono-chip small">{{ d.fs }}</span></div>
+    <div class="lp-disk__bar">{{ me.meter(d.pct, 'Disk ' ~ d.mount ~ ' in use') }}</div>
+    <div class="lp-disk__nums"><strong>{{ d.pct }}%</strong> <span>{{ d.used }} of {{ d.total }}</span>{% if d.inode_pct is not null %}<span class="lp-disk__inodes" title="Inodes in use">inodes {{ d.inode_pct }}%</span>{% endif %}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+{%- endmacro %}
+
+{# service.list_status, from OperationViews::services() #}
+{% macro services(rows) %}
+{% if rows is empty %}
+  <div class="card-body small text-body-secondary">The agent found none of the services LPanel manages on this server.</div>
+{% else %}
+<ul class="lp-services">
+  {% for s in rows %}
+  <li class="lp-service lp-service--{{ s.state }}">
+    <span class="lp-service__dot" aria-hidden="true"></span>
+    <code class="lp-service__unit">{{ s.unit|replace({'.service': ''}) }}</code>
+    <span class="lp-service__state">{{ s.label }}{% if s.state == 'running' and s.sub and s.sub != 'running' %} <span class="text-body-tertiary">({{ s.sub }})</span>{% endif %}</span>
+    {% if s.enabled and s.state != 'absent' %}<span class="lp-service__enabled">{{ s.enabled == 'enabled' ? 'starts at boot' : s.enabled }}</span>{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{%- endmacro %}
+
+{# The result of any operation, the way it reads best. #}
+{% macro result(op, r, metrics, services) %}
+{% import _self as me %}
+{% import "macros/ui.twig" as ui %}
+{% if op == 'system.metrics' and metrics %}
+  <div class="card-body">{{ me.metrics(metrics) }}</div>
+{% elseif op == 'service.list_status' and services is not null %}
+  {{ me.services(services) }}
+{% elseif op == 'system.info' %}
+  <div class="card-body"><div class="lp-facts">
+    <div><span>Operating system</span><strong>{{ r.os.pretty_name ?: (r.os.id ~ ' ' ~ r.os.version_id) }}</strong></div>
+    <div><span>Codename</span><strong>{{ r.os.version_codename ?: '—' }}</strong></div>
+    <div><span>Kernel</span><strong class="font-monospace">{{ r.kernel }}</strong></div>
+    <div><span>Hostname</span><strong class="font-monospace">{{ r.hostname }}</strong></div>
+    <div><span>CPUs</span><strong>{{ r.cpu_count }}</strong></div>
+    <div><span>Memory</span><strong>{{ (r.memory_total_bytes / 1073741824)|number_format(1) }} GiB</strong></div>
+    <div><span>Architecture</span><strong class="font-monospace">{{ r.architecture }}</strong></div>
+  </div></div>
+{% elseif op == 'agent.health' %}
+  <div class="card-body">
+    <dl class="lp-dl">
+      <dt>Running since</dt><dd>{{ r.started_at > 0 ? ui.time(r.started_at|date('Y-m-d H:i:s', 'UTC')) : '—' }}</dd>
+      <dt>Results to send</dt><dd>{{ r.pending_results }}</dd>
+      <dt>Recent errors</dt><dd>{% if r.last_errors is empty %}<span class="lp-yes">{{ ui.icon('check') }}None</span>{% else %}{% for e in r.last_errors|reverse %}<div><code>{{ e.code }}</code> <span class="text-body-tertiary small">{{ ui.time(e.at|date('Y-m-d H:i:s', 'UTC')) }}</span></div>{% endfor %}{% endif %}</dd>
+    </dl>
+  </div>
+{% elseif op == 'agent.capabilities' %}
+  <div class="card-body">
+    <dl class="lp-dl mb-3">
+      <dt>Agent version</dt><dd class="font-monospace">{{ r.agent_version }}</dd>
+      <dt>Build</dt><dd class="font-monospace">{{ r.commit }} · {{ r.go_version }}</dd>
+      <dt>Protocol</dt><dd>{{ r.protocols is empty ? '—' : 'v' ~ r.protocols|join(', v') }}</dd>
+    </dl>
+    <div class="lp-caps lp-caps--flat">
+      {% for name, versions in r.capabilities ?? {} %}<div class="lp-cap"><code>{{ name }}</code><span>{% for v in versions %}<span class="lp-mono-chip">v{{ v }}</span>{% endfor %}</span></div>{% endfor %}
+    </div>
+  </div>
+{% endif %}
+{%- endmacro %}

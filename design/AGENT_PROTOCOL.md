@@ -1,6 +1,6 @@
 # LPA ↔ LPanel protocol, version 1
 
-Status: **Draft**. Changes to it require an ADR once Phase 1 code exists.
+Status: **Draft, implemented through M4** (enrollment, heartbeat, rotation, revocation in M3; claim, lease, result and cancellation in M4). Changes to it require an ADR.
 Decisions this rests on: [ADR-0001](adr/0001-lpa-in-go.md),
 [ADR-0002](adr/0002-agent-pull-transport.md),
 [ADR-0006](adr/0006-operations-separate-from-queue.md),
@@ -25,9 +25,9 @@ The agent opens every connection. The panel never contacts a managed server.
 
 ## 2. Transport
 
-- HTTPS to `https://<panel-host>:8443/agent/v1/...`. TLS 1.2 is the minimum and 1.3 is preferred.
-- The agent pins the panel's SPKI fingerprint.
-- Panel Nginx does `ssl_verify_client optional_no_ca` on `location /agent/`, and passes `$ssl_client_escaped_cert` and `$ssl_client_verify` as FastCGI params. It does **not** pass `$ssl_client_fingerprint`, which is SHA-1. LPanel decodes the PEM, computes the SHA-256 DER fingerprint, and rejects any `/agent/v1/*` request whose fingerprint doesn't match the agent named in its signature. Enrollment is the exception: there the fingerprint is recorded, not checked.
+- HTTPS to `https://<panel-host>:8444/agent/v1/...`, a listener for agents only ([ADR-0012](adr/0012-panel-package-php-fpm-and-agent-port.md)); people use 8443, where `/agent/` is 404. TLS 1.2 is the minimum and 1.3 is preferred.
+- The agent pins the SPKI fingerprint of the agent listener's key (`/etc/lpanel/tls/agent.key`), which is never replaced. The browser certificate on 8443 can be, without affecting agents.
+- Panel Nginx does `ssl_verify_client optional_no_ca` on the agent listener, and passes `$ssl_client_escaped_cert` and `$ssl_client_verify` as FastCGI params. It does **not** pass `$ssl_client_fingerprint`, which is SHA-1. LPanel decodes the PEM, computes the SHA-256 DER fingerprint, and rejects any `/agent/v1/*` request whose fingerprint doesn't match the agent named in its signature. Enrollment is the exception: there the fingerprint is recorded, not checked.
 - These routes are a group with `'csrf' => false` and `'rate_limit'` per agent. The session cookie is never read, because a route with `csrf` off authenticates nothing by cookie (`docs/reference/security.md:61-66`).
 - Request bodies are capped at 1 MiB. Result payloads above 256 KiB are refused, so an agent truncates and flags the result instead.
 
@@ -80,8 +80,10 @@ All are `POST`, with JSON bodies, answering in LPHP's error shape (`{"error":{..
 | `/agent/v1/enroll` | one-time pairing (§5) | `{token, agent_public_key, tls_cert_sha256, facts}` → `{agent_id, panel_operation_key, poll}` |
 | `/agent/v1/heartbeat` | liveness, version, capability document | `{agent_version, protocols:[1], capabilities:{op:[versions]}, health}` → `{server_time, poll, rotate_requested}` |
 | `/agent/v1/operations/claim` | take up to `max` queued operations | `{max:1}` → `{operations:[SignedOperation]}` (empty if none) |
-| `/agent/v1/operations/{id}/lease` | extend the lease while running | `{attempt, progress?}` → `{lease_until, cancel_requested}` |
+| `/agent/v1/operations/{id}/lease` | extend the lease while running | `{attempt}` → `{lease_until, cancel_requested}` |
 | `/agent/v1/operations/{id}/result` | final result | Result (§7) → `{accepted:true}` |
+
+An agent only ever learns of its own server's operations: a lease or result for any other id is `404 operation_not_found`.
 | `/agent/v1/keys/rotate` | register a new agent key (signed by the **old** key) | `{new_public_key, new_tls_cert_sha256}` → `{kid}` |
 
 Poll timing: when idle, poll every `poll.idle` seconds (5) ± 20% jitter. After a claim, poll again at once. On panel errors, back off exponentially to `poll.max` (300s).
@@ -92,7 +94,7 @@ Poll timing: when idle, poll every `poll.idle` seconds (5) ± 20% jitter. After 
    - generates a 32-byte random token;
    - stores only `sha256(token)`, with a 15-minute expiry, the creator and `single_use`;
    - shows the token once, together with the panel's SPKI fingerprint and a ready-made command:
-     `lpa enroll --panel https://panel.example:8443 --pin sha256/<spki> --token <token>`
+     `lpa enroll --panel https://panel.example:8444 --pin sha256/<spki> --token <token>`
 2. On the server (as root), `lpa enroll`:
    - generates the agent key and TLS cert;
    - connects with the pin;
@@ -108,7 +110,26 @@ Poll timing: when idle, poll every `poll.idle` seconds (5) ± 20% jitter. After 
 
 **Revocation** marks the agent's credentials revoked. Every later request fails at check 1, and queued operations for that server become `cancelled`. Re-adding the server needs a new enrollment.
 
-**Rotation:** the panel can set `rotate_requested`, or the agent rotates by itself every 90 days. Old and new keys are both accepted for 24 hours, then the old one is revoked.
+**Rotation** (built in M3). The panel sets `rotate_requested` in the heartbeat answer, or the agent rotates by itself once its identity is 90 days old.
+
+1. The agent makes a new signing key and TLS certificate. It saves them under its state directory, `/var/lib/lpa/keys/<kid>/`, and writes that kid to `keys/pending`.
+   - `/etc/lpa` stays read-only to the running agent, because it holds the trust anchors (the panel pin and the panel operation key).
+2. It posts `/agent/v1/keys/rotate`, signed and sent over mTLS with the **current** key and certificate:
+   - body: `{"new_public_key": "<b64url>", "new_tls_cert_sha256": "<hex>", "proof": "<b64url>"}`;
+   - `proof` is the **new** key's Ed25519 signature over `LPA-ROTATE-v1\n<agent_id>\n<new kid>\n<new_tls_cert_sha256>`, which shows the agent holds the key it registers.
+3. The panel accepts it only from the agent's `active` key. A key in its overlap gets `409`.
+   - The new kid must be unused and the proof must verify (`bad_signature` otherwise).
+   - In one transaction the old key becomes `rotating` with `retire_at` = now + 24 h, the new key becomes `active`, and `rotate_requested` is cleared.
+   - Answer: `{"kid": "<new kid>"}`.
+4. The agent writes the new kid to `keys/current` (one atomic write) and switches clients. From then on it loads `keys/current` in preference to `/etc/lpa`.
+5. During the overlap the panel accepts both keys, each only with its own certificate. `servers:sweep` (every minute) revokes the old key at `retire_at`.
+
+**If the answer is lost**, a `pending` file stays behind. At the next heartbeat (and at start-up) the agent asks the panel with the pending identity itself:
+- accepted: it becomes `current`;
+- refused with a 4xx: it is discarded;
+- no answer: it is kept, and the agent asks again later.
+
+It never starts a second rotation while one is pending, since that could orphan a key the panel has already taken. `lpa enroll` removes `/var/lib/lpa/keys`, so a new enrollment is never overridden by an older rotated key.
 
 ## 6. Operations
 
@@ -185,6 +206,20 @@ Every operation exists twice, with the same contract: in LPA's registry (Go) and
 
 There is no `exec`, `shell`, `file.read`, or any operation that takes a command, a path outside a validated scope, or an environment.
 
+The two sides are kept in step by a file: the agent's tests write `internal/ops/testdata/catalogue.json` (every definition plus a real result of each operation), and the panel's `OperationCatalogueTest` checks its catalogue against a copy of it, including that each real result passes the PHP result schema.
+
+### 6.3 Lifecycle on the panel (built in M4)
+
+States, per [ADR-0006](adr/0006-operations-separate-from-queue.md): `queued → claimed → running → succeeded | failed | needs_attention`, plus `cancelled` and `expired`. "Claimed" is an agent holding the lease; the first lease extension makes it "running".
+
+- **Claim.** Oldest queued first, for the claiming agent's server only, with `not_after` in the future. Each is taken with a guarded `UPDATE` (on status and attempt), so a concurrent claim cannot take it twice. `attempt` goes up by one per delivery, so the agent's journal never takes a redelivery for a duplicate. The envelope is built and signed before the claim, so nothing is claimed that cannot be sent; with no operation key the claim answers `503`.
+- **Lease.** `lease_seconds` = the operation's timeout + 30 s (30 to 3600). The agent extends it every third of that. A lease call for an attempt that no longer counts (finished, cancelled, or superseded after a lapse) is answered `cancel_requested: true`.
+- **Result.** The first result for an attempt up to the current one wins, even an earlier attempt's after a lapse (that work did happen). A resent copy of the result already taken is answered `{accepted:true}` and changes nothing. Anything else is `409 result_conflict`, which the agent drops. A `succeeded` result that fails the result schema is stored as `failed / invalid_result`, keeps nothing of the result, and is audited (`operation.invalid_result`).
+- **Sweeper** (`operations:sweep`, every minute): queued past `not_after` → `expired`. A lapsed lease → back to `queued` if the operation is idempotent with attempts left; else `failed / lease_expired` if it is read-only, `needs_attention / lease_expired` if it may have changed the server; `cancelled` if a cancel had been asked for.
+- **Cancel.** A queued operation is cancelled at once. A claimed or running one gets `cancel_requested`, which the agent reads at its next lease extension; it stops and reports `failed / cancelled`, stored as `cancelled`. If it finished first, its real result is kept.
+- **Revocation** cancels every live operation of that server in the same transaction (`agent_revoked`).
+- **Refused at creation**, not queued to fail later: an operation the panel does not define, a person without its capability, a payload that does not fit, a server that is not paired, revoked or online, and an agent whose heartbeat lacks protocol 1 or the `op`/`op_version`. An identical read-only request still live is joined instead of queued twice.
+
 ## 7. Result (agent → panel)
 
 ```json
@@ -235,6 +270,11 @@ Stable, lower_snake_case, shared by both sides:
 | `output_limit` | §6.2 |
 | `adapter_unavailable` | §6.2 |
 | `invalid_result` | §7 |
+| `cancelled` | the agent stopped because a lease answer asked it to (§6.3) |
+| `lease_expired` | the panel's sweeper: the agent stopped extending the lease (§6.3) |
+| `operation_not_found` | a lease or result for an operation that is not this agent's |
+| `result_conflict` | a result the operation will not take (§6.3) |
+| `agent_revoked`, `operation_expired` | also stored on operations the panel ended for those reasons |
 | `internal` | anything else (details only in the local log) |
 
 ## 9. Versioning

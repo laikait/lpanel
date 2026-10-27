@@ -1,0 +1,40 @@
+; /etc/lpanel/php-fpm.conf -- written by lpanel-setup from
+; /usr/share/lpanel/php-fpm.conf.in on every install, upgrade and run.
+;
+; The panel's own PHP-FPM master (ADR-0012), run by systemd as the lpanel
+; user. Customer pools are the distro php-fpm's business, never this one's.
+
+[global]
+pid = /run/lpanel-php-fpm/php-fpm.pid
+error_log = /var/log/lpanel/php/php-fpm.log
+daemonize = no
+
+[lpanel]
+listen = /run/lpanel-php-fpm/php-fpm.sock
+listen.owner = lpanel
+listen.group = lpanel-web
+listen.mode = 0660
+
+pm = dynamic
+pm.max_children = 10
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+pm.max_requests = 500
+request_terminate_timeout = 120s
+
+; Nothing from the service's environment: the application reads /opt/lpanel/.env.
+clear_env = yes
+catch_workers_output = yes
+decorate_workers_output = no
+security.limit_extensions = .php
+
+php_admin_flag[display_errors] = off
+php_admin_flag[log_errors] = on
+php_admin_value[error_log] = /var/log/lpanel/php/errors.log
+php_admin_value[memory_limit] = 256M
+php_admin_value[post_max_size] = 9M
+php_admin_value[upload_max_filesize] = 8M
+; What the panel's PHP may open: its code, its data, its own settings and the
+; files it was given, and the root-login socket. Not the rest of /etc.
+php_admin_value[open_basedir] = /opt/lpanel/:/var/lib/lpanel/:/etc/lpanel/lpanel.env:/etc/lpanel/keys/:/etc/lpanel/tls/agent.crt:/run/lpanel-authd/:/tmp/:/usr/share/zoneinfo/

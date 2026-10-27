@@ -29,7 +29,7 @@ a clean container on every run (2026-10-27):
 | MariaDB | 10.11.14 | 11.8.6 | 10.11.19 | 11.8.6 |
 | systemd | 255 | 259 | 252 | 257 |
 
-LPHP's PHPStan range is `80200`–`80500` (`phpstan.neon`), so every distro default (8.2–8.5) is inside it. Ubuntu 26.04's 8.5 is at the top edge: run LPanel's suite on it before calling the panel host supported there.
+LPHP's PHPStan range is `80200`–`80500` (`phpstan.neon`), so every distro default (8.2–8.5) is inside it. Ubuntu 26.04's 8.5 is at the top edge. *Checked 2026-10-27 (M5):* LPanel's PHPUnit suite passes on Ubuntu 26.04's PHP 8.5.4, and the panel package passes its full test there (`test/packages/run.sh`).
 
 Customer PHP is only the distro default in MVP. Multi-version PHP becomes a later ADR.
 
