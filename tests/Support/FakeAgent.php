@@ -91,7 +91,7 @@ final class FakeAgent
     }
 
     /** Everything this release's agent can do, as its heartbeat says it. */
-    public const ALL_OPS = ['agent.capabilities' => [1], 'agent.health' => [1], 'service.list_status' => [1], 'system.info' => [1], 'system.metrics' => [1]];
+    public const ALL_OPS = ['account.create' => [1], 'account.delete' => [1], 'account.suspend' => [1], 'account.unsuspend' => [1], 'agent.capabilities' => [1], 'agent.health' => [1], 'service.list_status' => [1], 'system.info' => [1], 'system.metrics' => [1]];
 
     /**
      * @param array<string, mixed> $tamper

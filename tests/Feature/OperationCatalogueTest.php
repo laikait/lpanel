@@ -70,18 +70,39 @@ final class OperationCatalogueTest extends TestCase
         }
     }
 
-    /** THREAT_MODEL.md test 4, the panel's half: this release changes nothing, and no operation takes anything. */
-    public function test_every_operation_is_read_only_and_takes_no_payload(): void
+    /**
+     * THREAT_MODEL.md test 4, the panel's half: the read-only operations take
+     * nothing; the account operations take exactly a user name the panel
+     * chose, checked by pattern, and nothing that could be a command or a path.
+     */
+    public function test_no_operation_takes_a_command_a_path_or_an_environment(): void
     {
-        foreach ((new Catalogue())->all() as $d) {
-            self::assertFalse($d->mutating, $d->op);
-            self::assertSame('servers.read', $d->capability, $d->op);
-            self::assertNull($d->payload->check(new \stdClass()), $d->op);
+        $hostile = ['{"command":"id"}', '{"path":"/etc/shadow"}', '{"env":{"A":"1"}}', '[]', '"x"', 'null', '1'];
+        $accounts = [];
 
-            foreach (['{"command":"id"}', '{"path":"/etc/shadow"}', '{"env":{"A":"1"}}', '[]', '"x"', 'null', '1'] as $payload) {
+        foreach ((new Catalogue())->all() as $d) {
+            foreach ($hostile as $payload) {
+                self::assertNotNull($d->payload->check(\json_decode($payload, false)), \sprintf('%s accepted %s', $d->op, $payload));
+            }
+
+            if (!$d->mutating) {
+                self::assertSame(['servers.read', 'server'], [$d->capability, $d->scope], $d->op);
+                self::assertNull($d->payload->check(new \stdClass()), $d->op);
+
+                continue;
+            }
+
+            $accounts[] = $d->op;
+            self::assertSame(['accounts.manage', 'account', true], [$d->capability, $d->scope, $d->idempotent], $d->op);
+            self::assertNull($d->payload->check(\json_decode('{"system_user":"lpabcdefgh"}', false)), $d->op);
+
+            foreach (['{}', '{"system_user":"root"}', '{"system_user":"lpabcdefgh","home":"/"}', '{"system_user":"../etc/x"}', '{"system_user":"lpabcdefg1"}', '{"system_user":"lpABCDEFGH"}'] as $payload) {
                 self::assertNotNull($d->payload->check(\json_decode($payload, false)), \sprintf('%s accepted %s', $d->op, $payload));
             }
         }
+
+        \sort($accounts);
+        self::assertSame(['account.create', 'account.delete', 'account.suspend', 'account.unsuspend'], $accounts);
     }
 
     public function test_results_are_checked_strictly(): void

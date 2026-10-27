@@ -50,7 +50,7 @@ final class PanelPagesTest extends ApplicationTestCase
         $home = $customer->get('/');
 
         self::assertSame(200, $home->status());
-        self::assertStringContainsString('Your websites will live here', $home->body());
+        self::assertStringContainsString('No hosting yet', $home->body());
         self::assertStringNotContainsString('>Users</span>', $home->body());
         self::assertStringNotContainsString('>Audit log</span>', $home->body());
         self::assertSame(403, $customer->get('/audit')->status());

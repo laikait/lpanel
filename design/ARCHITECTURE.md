@@ -47,8 +47,8 @@ read-only (status only).
    - inserts `audit_events`.
 4. The API answers `202 Accepted` with the operation's URL. The UI polls `GET /api/v1/operations/{id}`.
 5. The server's agent polls `/agent/v1/operations/claim`. The panel leases the next eligible operation (guarded `UPDATE`) and returns it signed with the operation key.
-6. `lpa-agent` verifies the signature and the payload schema, and checks its journal (§7 of the protocol). For a privileged operation it forwards to `lpa-exec`, which re-validates and runs the adapter. While the work runs, the agent extends the lease.
-7. The agent posts the result. The panel validates it against `result_schema`, stores it, updates the resource state, and writes `operation_events` and an audit event — in one transaction.
+6. `lpa-agent` verifies the signature and the payload schema, and checks its journal (§7 of the protocol). For a privileged operation it forwards the signed operation, untouched, to `lpa-exec` (built in M6a), which checks the signature and everything else again itself, then runs the adapter ([AGENT_PROTOCOL.md §6.2.1](AGENT_PROTOCOL.md)). While the work runs, the agent extends the lease.
+7. The agent posts the result. The panel validates it against `result_schema`, stores it, updates the resource state (the `operations.finished` hook, which Hosting listens to), and writes `operation_events` and an audit event — in one transaction.
 8. A per-minute scheduled task sweeps lapsed leases ([ADR-0006](adr/0006-operations-separate-from-queue.md)). It also marks agents with no heartbeat for 3 × the poll interval as `offline`; new operations for an offline server are refused at creation.
 9. Reconciliation (later milestone) is just more operations: `*.drift_check` operations report differences. They correct nothing unless a policy for that operation explicitly enables it.
 
@@ -72,8 +72,8 @@ Dependencies are declared with `->requires()`. Proposed names (plan §4 Phase 2)
 | Audit | `audit_events`; one `AuditLog` service other modules call | — |
 | Servers | servers, enrollments, agent credentials, `/agent/v1/*`, the Ed25519 verifier and signer | Identity, Audit |
 | Operations | `operations`, `operation_events`, the operation catalogue, the lease sweeper, the `/api/v1/operations` API | Servers, Audit |
-| Dashboard | `/` and the admin and customer home screens | Identity, Servers, Operations |
-| Hosting | hosting accounts, limits, customer ↔ account ownership | Identity, Servers, Operations |
+| Dashboard | `/` and the admin and customer home screens (a customer's own accounts) | Identity, Servers, Operations, Hosting |
+| Hosting | **built (M6a):** `hosting_accounts`, `AccountAccess` (who sees which), `AccountActions` (ask, and settle on `operations.finished`), `/accounts` screens, `/api/v1/accounts`, `accounts:*` | Identity, Servers, Operations, Audit |
 | Websites | domains, websites, managed web settings, PHP pools, config history | Hosting |
 | Databases, Certificates, Files, Cron, Backups, Monitoring, DNS, Mail | later milestones | Hosting (and others as needed) |
 

@@ -6,6 +6,7 @@ namespace App\Modules\Operations\Store;
 
 use App\Engine\Database\Connection;
 use App\Engine\Database\ConnectionManager;
+use App\Engine\Hook\HookEngine;
 use App\Modules\Operations\Catalogue\Definition;
 use App\Modules\Servers\Agent\Protocol;
 use App\Modules\Servers\Store\Server;
@@ -17,6 +18,10 @@ use App\Modules\Servers\Store\Server;
  * attempt) it expects to change, so a claim, a lease, a result, a cancel and
  * the sweeper can race and exactly one of them wins. Each change also writes
  * an operation_events row in the same transaction.
+ *
+ * Reaching a final status fires `operations.finished` with the operation as
+ * stored, inside that same transaction: whatever another module keeps about
+ * the operation's target (an account's state) changes with it or not at all.
  *
  * The query builder is immutable: every condition is chained or assigned back.
  */
@@ -33,7 +38,12 @@ final class OperationStore
         'cancelled' => [Operation::CANCELLED],
     ];
 
-    public function __construct(private readonly ConnectionManager $connections) {}
+    public const FINAL = [Operation::SUCCEEDED, Operation::FAILED, Operation::CANCELLED, Operation::NEEDS_ATTENTION, Operation::EXPIRED];
+
+    public function __construct(
+        private readonly ConnectionManager $connections,
+        private readonly HookEngine $hooks,
+    ) {}
 
     private function db(): Connection
     {
@@ -59,20 +69,25 @@ final class OperationStore
 
     // ---- creating and reading -------------------------------------------------
 
-    /** A new queued operation for $server's agent, valid until $ttlSeconds from now. */
-    public function queue(Server $server, Definition $definition, string $payloadJson, ?string $requestedBy, ?string $requestedByName, string $actor, int $ttlSeconds): Operation
+    /**
+     * A new queued operation for $server's agent, valid until $ttlSeconds from
+     * now. $target names what it acts on when that is not the server itself.
+     *
+     * @param array{type: string, uid: string}|null $target
+     */
+    public function queue(Server $server, Definition $definition, string $payloadJson, ?string $requestedBy, ?string $requestedByName, string $actor, int $ttlSeconds, ?array $target = null): Operation
     {
         $uid = Protocol::uuid();
         $now = self::now();
 
-        $this->db()->transaction(static function (Connection $db) use ($server, $definition, $payloadJson, $requestedBy, $requestedByName, $actor, $ttlSeconds, $uid, $now): void {
+        $this->db()->transaction(static function (Connection $db) use ($server, $definition, $payloadJson, $requestedBy, $requestedByName, $actor, $ttlSeconds, $uid, $now, $target): void {
             $id = $db->table('operations')->insert([
                 'uid' => $uid,
                 'server_id' => $server->id,
                 'op' => $definition->op,
                 'op_version' => $definition->version,
-                'target_type' => 'server',
-                'target_uid' => $server->uid,
+                'target_type' => $target['type'] ?? 'server',
+                'target_uid' => $target['uid'] ?? $server->uid,
                 'payload' => $payloadJson,
                 // A mutation is retried only with its key, so the agent's journal can recognise it.
                 'idempotency_key' => $definition->mutating ? Protocol::uuid() : null,
@@ -121,6 +136,23 @@ final class OperationStore
             ->whereIn('status', Operation::LIVE)
             ->orderByDesc('id')
             ->first());
+    }
+
+    /**
+     * The newest operations on one target (an account), newest first.
+     *
+     * @return list<Operation>
+     */
+    public function forTarget(string $type, string $uid, int $limit = 20): array
+    {
+        $rows = $this->db()->table('operations')
+            ->where('target_type', $type)
+            ->where('target_uid', $uid)
+            ->orderByDesc('id')
+            ->limit(\max(1, \min(100, $limit)))
+            ->get();
+
+        return \array_values(\array_filter(\array_map(self::hydrate(...), $rows)));
     }
 
     /** The newest successful run of $op on $server, whose result the server screen shows. */
@@ -359,7 +391,9 @@ final class OperationStore
                 }
 
                 self::event($db, $op->id, $op->status, $final, $attempt, 'agent', $now, $errorCode === null ? [] : ['error_code' => $errorCode]);
-                $then($this->byUid($op->uid) ?? throw new \LogicException('unreachable'));
+                $stored = $this->byUid($op->uid) ?? throw new \LogicException('unreachable');
+                $then($stored);
+                $this->hooks->do('operations.finished', $stored);
 
                 return true;
             });
@@ -385,7 +419,7 @@ final class OperationStore
     {
         $now = self::now();
 
-        return $this->db()->transaction(static function (Connection $db) use ($op, $actor, $now): string {
+        return $this->db()->transaction(function (Connection $db) use ($op, $actor, $now): string {
             $cancelled = $db->table('operations')->where('id', $op->id)->where('status', Operation::QUEUED)->update([
                 'status' => Operation::CANCELLED,
                 'error_code' => 'cancelled',
@@ -396,6 +430,7 @@ final class OperationStore
 
             if ($cancelled === 1) {
                 self::event($db, $op->id, Operation::QUEUED, Operation::CANCELLED, $op->attempt, $actor, $now);
+                $this->hooks->do('operations.finished', $this->byUid($op->uid) ?? throw new \LogicException('unreachable'));
 
                 return 'cancelled';
             }
@@ -477,7 +512,7 @@ final class OperationStore
      */
     private function transition(Operation $op, string $to, string $actor, \DateTimeImmutable $now, ?string $code, ?string $message): int
     {
-        return $this->db()->transaction(static function (Connection $db) use ($op, $to, $actor, $now, $code, $message): int {
+        return $this->db()->transaction(function (Connection $db) use ($op, $to, $actor, $now, $code, $message): int {
             $changes = $to === Operation::QUEUED
                 ? ['status' => $to, 'lease_until' => null, 'updated_at' => $now]
                 : ['status' => $to, 'error_code' => $code, 'message' => $message, 'lease_until' => null, 'completed_at' => $now, 'updated_at' => $now];
@@ -486,6 +521,10 @@ final class OperationStore
 
             if ($moved === 1) {
                 self::event($db, $op->id, $op->status, $to, $op->attempt, $actor, $now, $code === null ? [] : ['error_code' => $code]);
+
+                if (\in_array($to, self::FINAL, true)) {
+                    $this->hooks->do('operations.finished', $this->byUid($op->uid) ?? throw new \LogicException('unreachable'));
+                }
             }
 
             return $moved;

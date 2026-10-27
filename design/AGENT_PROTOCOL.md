@@ -194,7 +194,7 @@ Every operation exists twice, with the same contract: in LPA's registry (Go) and
 | `pre`, `post` | preconditions checked before acting, postconditions verified after |
 | `compensation` | the rollback step, or `none` with a documented recovery |
 
-**Phase 1 registry (all read-only, idempotent, server scope):**
+**Read-only operations (idempotent, server scope; the agent runs them itself):**
 
 | op | Result (summary) |
 |---|---|
@@ -204,7 +204,35 @@ Every operation exists twice, with the same contract: in LPA's registry (Go) and
 | `system.metrics` | load 1/5/15, memory used/available, swap, per-mount disk and inode usage (allowlisted mount types) |
 | `service.list_status` | state of an **allowlisted** set of units (`nginx`, `apache2`, `php*-fpm`, `mariadb`, `lpanel-nginx`, `lpa-agent`); **no** arbitrary unit names |
 
+**Account operations (M6a, [ADR-0013](adr/0013-hosting-accounts-on-a-server.md); mutating, idempotent, account scope; only `lpa-exec` runs them):**
+
+| op | Payload | Result |
+|---|---|---|
+| `account.create` | `{system_user}` | `{system_user, uid, gid, home, php_version, pool_socket, state: "active"}` |
+| `account.suspend` | `{system_user}` | `{system_user, state: "suspended"}` |
+| `account.unsuspend` | `{system_user}` | `{system_user, state: "active"}` |
+| `account.delete` | `{system_user}` | `{system_user, state: "deleted"}` |
+
+`system_user` is `lp` and 8 characters of `[a-z2-7]`. The target names the server and the account: `{"server_id": "…", "account_id": "<ULID>"}`. The panel needs `accounts.manage` to ask for them, and asks only from an account's screen, never a server's.
+
 There is no `exec`, `shell`, `file.read`, or any operation that takes a command, a path outside a validated scope, or an environment.
+
+### 6.2.1 Privileged operations: the `lpa-exec` socket (built in M6a)
+
+The agent never runs an account operation itself ([ADR-0009](adr/0009-lpa-privilege-split.md)). After its own checks (§6.1), it hands the **signed operation, as the panel sent it,** to `lpa-exec` over `/run/lpa/exec.sock` (`0660 root:lpa`, systemd socket activation):
+
+```json
+{"v": 1, "operation": {"operation": "<base64url bytes>", "kid": "…", "signature": "…"}}
+```
+
+One request per connection, at most 256 KiB, read within 10 s. `lpa-exec` answers `{"status": "succeeded", "result": {…}}` or `{"status": "failed", "error_code": "…", "message": "…"}`. It trusts nothing from the agent:
+
+1. The peer must be the `lpa` uid (`SO_PEERCRED`). Anyone else gets no answer at all, and is logged.
+2. It verifies the panel's signature itself, with the key in `/etc/lpa/enrollment.json`, then decodes strictly and applies §6.1's checks (addressed to this agent, within `not_after`, in **its** registry, target fits the scope, idempotency key present).
+3. A succeeded idempotency key is remembered for 7 days (`/var/lib/lpa-exec/journal`), and a repeat gets the stored result without running again. So a compromised agent can't replay an old `account.create` to undo a later delete.
+4. It runs one operation at a time, to the end, even if the agent hangs up. A cancel does not stop it; its real result is reported.
+
+If the agent loses `lpa-exec`'s answer after sending the request, it reports `needs_attention / adapter_unavailable`: the server may have changed. Retrying is safe, because every account operation converges.
 
 The two sides are kept in step by a file: the agent's tests write `internal/ops/testdata/catalogue.json` (every definition plus a real result of each operation), and the panel's `OperationCatalogueTest` checks its catalogue against a copy of it, including that each real result passes the PHP result schema.
 
@@ -270,6 +298,7 @@ Stable, lower_snake_case, shared by both sides:
 | `output_limit` | §6.2 |
 | `adapter_unavailable` | §6.2 |
 | `invalid_result` | §7 |
+| `config_rejected` | a service's own check (`php-fpm -t`, later `nginx -t`) refused generated configuration; the file was put back and nothing was reloaded (§6.2.1) |
 | `cancelled` | the agent stopped because a lease answer asked it to (§6.3) |
 | `lease_expired` | the panel's sweeper: the agent stopped extending the lease (§6.3) |
 | `operation_not_found` | a lease or result for an operation that is not this agent's |

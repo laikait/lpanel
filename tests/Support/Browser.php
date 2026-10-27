@@ -55,6 +55,19 @@ final class Browser
     }
 
     /**
+     * A JSON request with any method (DELETE, say), sent as the panel's scripts send it.
+     *
+     * @param array<string, mixed> $json
+     */
+    public function sendJson(string $method, string $uri, array $json = []): Response
+    {
+        return $this->send($method, $uri, [
+            'body' => \json_encode($json, \JSON_THROW_ON_ERROR),
+            'headers' => ['Content-Type' => 'application/json', 'Accept' => 'application/json', 'X-CSRF-TOKEN' => $this->token()],
+        ]);
+    }
+
+    /**
      * A script's request: a bearer token, and this browser's cookies too unless told not to,
      * to prove a route answers to the token alone.
      *

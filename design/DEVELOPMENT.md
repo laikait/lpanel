@@ -60,7 +60,7 @@ test/mariadb/run.sh                  # the same tests on MariaDB 10.11 and 11.8,
 test/e2e/run.sh                      # the real lpa agent against panel Nginx + PHP-FPM, in Docker (LPA_DIR=../lpa): pairing, operations, rotation, revocation
 helpers/authd/test/run.sh            # lpanel-authd against real PAM, in Docker
 packaging/build-deb.sh 0.1.0         # dist/lpanel_0.1.0_amd64.deb, built in Docker
-test/packages/run.sh                 # the package on all four OSes, with a real agent (LPA_DIR=../lpa)
+test/packages/run.sh                 # the package on all four OSes, with a real agent and lpa-exec making a real account (LPA_DIR=../lpa)
 php laika security:check             # deployment checks
 ```
 
@@ -116,6 +116,30 @@ in the lpa repository, copy `internal/ops/testdata/catalogue.json` to
 Other modules add cards to a server's page through the
 `servers.detail.panels` filter (see `ServersPage`). Revoking an agent fires
 `servers.revoked` inside the revoking transaction.
+
+## Hosting accounts
+
+`modules/Hosting` (M6a, [ADR-0013](adr/0013-hosting-accounts-on-a-server.md)) asks the agent for
+`account.create`, `account.suspend`, `account.unsuspend` and `account.delete`, and settles each
+account when its operation finishes: Operations fires `operations.finished` inside the
+operation's own transaction, and `AccountActions::settle()` listens. Only the account's current
+operation (`operation_uid`) can settle it, so a late result of an older one changes nothing.
+
+- Every account id from a person goes through `AccountAccess::find()`. Another customer's id is
+  answered exactly like an unknown one (404) and audited. Keep it that way for every new route;
+  `HostingAccountsTest` tries them all (THREAT_MODEL test 1).
+- Routes take `accounts.own` as the floor; `AccountActions` checks `accounts.manage` itself and
+  audits the refusal. That is why a customer's POST is a 403 with an audit record, not a bare
+  route refusal.
+- Without a real agent, `HostingAccountsTest` drives everything with `FakeAgent`. With one,
+  `test/packages/run.sh` does it on a real server, with the real `lpa-exec`.
+
+```bash
+php laika accounts:create web-01 carol "Acme Ltd" --wait
+php laika accounts:list --status=current --json
+php laika accounts:suspend lpq3x7k2ma --wait
+php laika accounts:delete lpq3x7k2ma --confirm=lpq3x7k2ma --wait
+```
 
 **The query builder is immutable.** `$query->where(…)` returns a new builder.
 Write `$query = $query->where(…)`, or the condition is silently dropped. This
@@ -175,6 +199,7 @@ Sign-in screens use `templates/auth.twig`, and both extend `templates/base.twig`
 | `modules/Audit` | `audit_events`, `AuditLog`, auth hooks → audit, `audit:prune`, `/audit`, `/api/v1/audit`, `/api/token/v1/audit` |
 | `modules/Identity` | users, roles, `PanelUserProvider` (sessions, tokens, resets), root verifiers, `UserAdmin` (who may change whom), sign-in / reset / security / tokens / users screens, `/api/v1` and `/api/token/v1` |
 | `modules/Servers` | servers, agent keys, enrollment, `/agent/v1` (`RequestVerifier` is the §3 checks), `/servers` screens, `/api/v1/servers`, `servers:*` commands |
+| `modules/Hosting` | `hosting_accounts`, `AccountAccess` (who may see which), `AccountActions` (ask the agent, settle on `operations.finished`), `/accounts` screens, `/api/v1/accounts`, `accounts:*` commands |
 | `modules/Operations` | the catalogue (`Catalogue`, strict `Shape`s), `OperationStore` (the state machine), `OperationRequests` (checks before queueing), `/agent/v1/operations/*`, `/operations` screens and server-page cards, `/api/v1/operations`, `operations:*` commands |
 | `modules/Dashboard` | `/`, and the placeholder sidebar entries for milestones not built yet |
 | `templates/` | `base`, `layout`, `auth`, `macros/ui`, error pages, emails |

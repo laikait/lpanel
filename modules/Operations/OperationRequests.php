@@ -40,13 +40,14 @@ final class OperationRequests
      * Queue $op for $server's agent. A read-only request already queued or
      * running for the same server is returned instead of a second one.
      *
-     * @param mixed $payload as json_decode(..., false) gives it: \stdClass for an object
+     * @param mixed                                 $payload as json_decode(..., false) gives it: \stdClass for an object
+     * @param array{type: string, uid: string}|null $target  what it acts on, for an operation whose scope is not the server
      *
      * @return array{Operation, bool} the operation, and whether it is new
      *
      * @throws OperationException
      */
-    public function request(Identity $by, Server $server, string $op, ?int $version, mixed $payload): array
+    public function request(Identity $by, Server $server, string $op, ?int $version, mixed $payload, ?array $target = null): array
     {
         $definition = $version === null ? $this->catalogue->latest($op) : $this->catalogue->find($op, $version);
 
@@ -58,6 +59,10 @@ final class OperationRequests
             $this->audit->record('operation.request', 'denied', $by, 'server', $server->uid, ['op' => $definition->op]);
 
             throw new OperationException('forbidden', 'You may not ask for this operation.', 403);
+        }
+
+        if (($target === null) !== ($definition->scope === 'server') || ($target !== null && $target['type'] !== $definition->scope)) {
+            throw new OperationException('payload_invalid', \sprintf('%s acts on a %s, so it is asked for from that %s\'s screen.', $definition->op, $definition->scope, $definition->scope), 422);
         }
 
         $invalid = $definition->payload->check($payload, 'payload');
@@ -78,7 +83,7 @@ final class OperationRequests
 
         $payloadJson = \json_encode($payload, \JSON_THROW_ON_ERROR | \JSON_UNESCAPED_SLASHES | \JSON_UNESCAPED_UNICODE);
 
-        $queued = $this->operations->transaction(function () use ($by, $server, $definition, $payloadJson): Operation {
+        $queued = $this->operations->transaction(function () use ($by, $server, $definition, $payloadJson, $target): Operation {
             $queued = $this->operations->queue(
                 $server,
                 $definition,
@@ -87,11 +92,13 @@ final class OperationRequests
                 $by->name,
                 self::isConsole($by) ? 'system' : 'user',
                 $this->ttl(),
+                $target,
             );
-            $this->audit->record('operation.request', 'succeeded', $by, 'operation', $queued->uid, [
+            $this->audit->record('operation.request', 'succeeded', $by, 'operation', $queued->uid, \array_filter([
                 'op' => $definition->op . '@' . $definition->version,
                 'server' => $server->uid,
-            ]);
+                $target === null ? '' : $target['type'] => $target['uid'] ?? null,
+            ]));
 
             return $queued;
         });

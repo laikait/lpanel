@@ -11,6 +11,8 @@ use App\Engine\Http\Request;
 use App\Engine\Http\Response;
 use App\Modules\Audit\AuditLog;
 use App\Modules\Audit\Http\AuditPage;
+use App\Modules\Hosting\Accounts\AccountStore;
+use App\Modules\Hosting\Http\AccountViews;
 use App\Modules\Identity\Users\UserStore;
 use App\Modules\Operations\Store\OperationStore;
 use App\Modules\Servers\Agent\AgentSettings;
@@ -32,6 +34,8 @@ final class Home
         private readonly ServerStore $servers,
         private readonly AgentSettings $agents,
         private readonly OperationStore $operations,
+        private readonly AccountStore $accounts,
+        private readonly AccountViews $accountViews,
     ) {}
 
     public function __invoke(Request $request, Identity $identity): Response
@@ -44,11 +48,14 @@ final class Home
         $canUsers = $this->authorizer->allows($identity, 'users.read');
         $canAudit = $this->authorizer->allows($identity, 'audit.read');
         $canServers = $this->authorizer->allows($identity, 'servers.read');
+        $customer = $this->authorizer->allows($identity, 'panel.customer');
         $day = new \DateTimeImmutable('-24 hours', new \DateTimeZone('UTC'));
 
         return $this->pages->render($request, '@Dashboard/home', [
             'admin' => $this->authorizer->allows($identity, 'panel.admin'),
-            'customer' => $this->authorizer->allows($identity, 'panel.customer'),
+            'customer' => $customer,
+            // A customer's own hosting accounts; an administrator sees them all under Hosting accounts.
+            'my_accounts' => $customer ? $this->accountViews->rows($this->accounts->page($identity->id)) : [],
             'user' => $user,
             'counts' => $canUsers ? $this->users->counts() : null,
             'servers' => $canServers ? $this->servers->counts($this->agents->offlineAfter()) : null,

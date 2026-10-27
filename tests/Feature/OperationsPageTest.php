@@ -157,7 +157,12 @@ final class OperationsPageTest extends OperationsTestCase
 
         self::assertSame(1, \count($admin->data('/api/v1/operations?status=succeeded')));
         self::assertSame([], $admin->data('/api/v1/operations?status=active'));
-        self::assertSame(5, \count($admin->data('/api/v1/operations/catalogue')));
+        self::assertSame(9, \count($admin->data('/api/v1/operations/catalogue')));
+
+        // An account operation is not asked for from a server: it has no account to act on.
+        $direct = $admin->postJson($url, ['op' => 'account.delete', 'payload' => ['system_user' => 'lpabcdefgh']]);
+        self::assertSame(422, $direct->status());
+        self::assertSame('payload_invalid', \json_decode($direct->body(), true)['error']['code']);
 
         // A finished one cannot be cancelled; a queued one can.
         self::assertSame(409, $admin->postJson('/api/v1/operations/' . $data['id'] . '/cancel', [])->status());

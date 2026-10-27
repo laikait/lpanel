@@ -1,6 +1,6 @@
 # ADR-0009: LPA is two processes, an unprivileged network agent and a privileged executor
 
-- **Status:** Accepted (product owner, 2026-10-26)
+- **Status:** Accepted (product owner, 2026-10-26). Built in M6a; the socket protocol is [ADR-0013](0013-hosting-accounts-on-a-server.md), which also has `lpa-exec` verify the panel's signature itself, so a compromised `lpa-agent` gets less than this ADR allowed for.
 - **Context:** LPA must parse network input: TLS, JSON and signatures. It must also, later, create users, write `/etc/nginx` and reload services. If one root process does both, a parser bug becomes root.
 
 ## Decision

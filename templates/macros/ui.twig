@@ -49,6 +49,8 @@
   'trash': '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M9 7V4h6v3"/>',
   'crown': '<path d="m3 8 4.5 4L12 5l4.5 7L21 8l-2 11H5z"/>',
   'sparkle': '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/>',
+  'folder': '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6H9l2 2.5h8.5A1.5 1.5 0 0 1 21 10v8.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/>',
+  'pause': '<path d="M9 5.5v13M15 5.5v13"/>',
   'list-check': '<path d="M10 6h10M10 12h10M10 18h10"/><path d="m3.5 6 1.2 1.2L7 5M3.5 12l1.2 1.2L7 11M3.5 18l1.2 1.2L7 17"/>',
   'gauge': '<path d="M3.5 17.5a9 9 0 1 1 17 0"/><path d="m12 14 4-5"/><circle cx="12" cy="14" r="1.2"/>',
   'play': '<path d="M7.5 4.5v15l11.5-7.5z"/>',
@@ -102,6 +104,12 @@
 {%- elseif status == 'online' -%}<span class="lp-badge lp-badge--success lp-badge--dot lp-badge--pulse">Online</span>
 {%- elseif status == 'offline' -%}<span class="lp-badge lp-badge--danger lp-badge--dot">Offline</span>
 {%- elseif status == 'pending' -%}<span class="lp-badge lp-badge--warning lp-badge--dot">Waiting for agent</span>
+{#- hosting accounts -#}
+{%- elseif status == 'provisioning' -%}<span class="lp-badge lp-badge--info lp-badge--dot lp-badge--pulse">Setting up</span>
+{%- elseif status == 'suspending' -%}<span class="lp-badge lp-badge--warning lp-badge--dot lp-badge--pulse">Suspending</span>
+{%- elseif status == 'resuming' -%}<span class="lp-badge lp-badge--info lp-badge--dot lp-badge--pulse">Unsuspending</span>
+{%- elseif status == 'deleting' -%}<span class="lp-badge lp-badge--danger lp-badge--dot lp-badge--pulse">Deleting</span>
+{%- elseif status == 'deleted' -%}<span class="lp-badge lp-badge--secondary">{{ _self.icon('trash') }}Deleted</span>
 {%- elseif status == 'rotating' -%}<span class="lp-badge lp-badge--info lp-badge--dot">Rotating out</span>
 {#- operations -#}
 {%- elseif status == 'queued' -%}<span class="lp-badge lp-badge--secondary lp-badge--dot lp-badge--pulse">Queued</span>

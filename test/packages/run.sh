@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# The M5 package test: install, use, upgrade, remove, reinstall and purge the
+# The package test: install, use, upgrade, remove, reinstall and purge the
 # panel package on every supported OS (ADR-0004), each in a throwaway
-# container booted with systemd, with a real agent paired over port 8444.
+# container booted with systemd, with a real agent paired over port 8444 that
+# makes, suspends and deletes a hosting account through lpa-exec (M6a).
 #
 #   test/packages/run.sh                 # all four
 #   test/packages/run.sh debian:13       # one
@@ -46,7 +47,7 @@ for image in "${IMAGES[@]}"; do
 		RESULT[$image]=PASS
 	else
 		RESULT[$image]=FAIL
-		docker exec "$name" bash -c 'journalctl -u "lpanel-*" -u lpa-agent --no-pager -n 40; tail -20 /var/log/lpanel/php/*.log /var/log/lpanel/nginx/error.log 2>/dev/null' || true
+		docker exec "$name" bash -c 'journalctl -u "lpanel-*" -u lpa-agent -u lpa-exec --no-pager -n 60; tail -20 /var/log/lpanel/php/*.log /var/log/lpanel/nginx/error.log 2>/dev/null' || true
 	fi
 	docker rm -f "$name" >/dev/null
 done

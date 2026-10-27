@@ -15,7 +15,8 @@ return static function (ModuleContext $module): void {
         ->description('The front page for administrators and customers.')
         ->requires('Identity')
         ->requires('Servers')
-        ->requires('Operations');
+        ->requires('Operations')
+        ->requires('Hosting');
 
     $module->routes(static function (RouteCollector $routes): void {
         $routes->get('/', Home::class)->name('home');
@@ -26,6 +27,6 @@ return static function (ModuleContext $module): void {
 
         // Screens that are planned, so the sidebar shows where they will be.
         // Each module replaces its entry with a live one when it ships.
-        $nav->add('hosting', 'websites', 'Websites', null, 'globe', can: 'panel.customer', order: 10, soon: 'M6');
+        $nav->add('hosting', 'websites', 'Websites', null, 'globe', can: 'panel.customer', order: 10, soon: 'M6b');
     });
 };

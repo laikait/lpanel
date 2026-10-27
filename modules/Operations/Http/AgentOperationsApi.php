@@ -208,7 +208,7 @@ final class AgentOperationsApi
             'agent_id' => (string) $server->agentId,
             'op' => $op->op,
             'op_version' => $op->opVersion,
-            'target' => ['server_id' => $op->targetUid],
+            'target' => $op->targetType === 'server' ? ['server_id' => $server->uid] : ['server_id' => $server->uid, $op->targetType . '_id' => $op->targetUid],
             'idempotency_key' => $op->idempotencyKey,
             'attempt' => $attempt,
             'issued_at' => $issuedAt,

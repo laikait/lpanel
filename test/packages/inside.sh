@@ -121,6 +121,34 @@ check "the panel sees it online, with its operations" online
 check "system.info runs on it, through the panel" quiet lpanel operations:run pkgtest system.info --wait --timeout=40
 check "the scheduler's run succeeds" bash -c 'systemctl start lpanel-scheduler.service && [ "$(systemctl show -p Result --value lpanel-scheduler.service)" = success ]'
 
+echo "-- hosting accounts, from the panel through the agent and lpa-exec (ADR-0013)"
+PANEL_CONF=$(find /etc/lpanel -type f -exec sha256sum {} + | sort | sha256sum)
+hosting_snapshot() { snapshot | grep -v '/fpm/pool.d/lpanel-lp'; }
+CSRF=$(curl -sk -b $JAR -c $JAR $URL/ | sed -n 's/.*name="csrf-token" content="\([^"]*\)".*/\1/p')
+api() { curl -sk -b $JAR -c $JAR -H "X-CSRF-TOKEN: $CSRF" -H 'Content-Type: application/json' -H 'Accept: application/json' "$@"; }
+is "root makes a customer through the API" "$(api -o /dev/null -w '%{http_code}' -X POST $URL/api/v1/users -d '{"login":"carol","name":"Carol Pkg","password":"Carol-Pkg-Test-1","roles":["customer"]}')" 201
+check "lpa-exec's socket is ready" systemctl is-active --quiet lpa-exec.socket
+check "accounts:create sets one up, and the panel sees it active" quiet lpanel accounts:create pkgtest carol "Acme Ltd" --wait --timeout=90
+U=$(lpanel accounts:list --json | grep -o '"system_user":"lp[a-z2-7]*"' | head -1 | cut -d'"' -f4)
+echo "  info  account user: ${U:-none}"
+check "  ...a Linux user in the account range" bash -c "u=\$(id -u '$U') && [ \$u -ge 20000 ] && [ \$u -le 59999 ]"
+is "  ...whose home is root's, the account's group only" "$(mode_of /home/$U)" "750 root:$U"
+is "  ...with its own PHP-FPM pool" "$(stat -c '%a %U:%G %F' /run/php/lpanel-$U.sock 2>&1)" "660 $U:www-data socket"
+is "  ...whose uid the panel recorded" "$(db "SELECT system_uid FROM hosting_accounts WHERE system_user='$U'")" "$(id -u $U)"
+is "the panel's own configuration is byte-identical" "$(find /etc/lpanel -type f -exec sha256sum {} + | sort | sha256sum)" "$PANEL_CONF"
+is "nothing else under /etc/nginx, /etc/php or /etc/mysql changed" "$(hosting_snapshot | sha256sum)" "$(echo "$BEFORE" | sha256sum)"
+is "the panel answers while the hosting PHP-FPM reloads" "$(code $URL/login)" 200
+check "accounts:suspend" quiet lpanel accounts:suspend "$U" --wait --timeout=90
+check "  ...switches its pool off" test ! -e /run/php/lpanel-$U.sock
+check "accounts:unsuspend" quiet lpanel accounts:unsuspend "$U" --wait --timeout=90
+check "  ...brings it back" test -S /run/php/lpanel-$U.sock
+check "accounts:delete refuses without the typed user name" bash -c "! lpanel accounts:delete '$U' --confirm=wrong"
+check "accounts:delete, confirmed" quiet lpanel accounts:delete "$U" --confirm="$U" --wait --timeout=180
+check "  ...removes the user, its group, home and pool" bash -c "! getent passwd '$U' && ! getent group '$U' && [ ! -e /home/$U ] && [ ! -e /run/php/lpanel-$U.sock ]"
+is "  ...and the panel keeps the record as deleted" "$(db "SELECT status FROM hosting_accounts WHERE system_user='$U'")" deleted
+is "every account change is in the audit log" "$(db "SELECT COUNT(*) FROM audit_events WHERE action LIKE 'account.%' AND outcome='succeeded'")" 4
+is "afterwards, /etc/nginx, /etc/php and /etc/mysql are as they were" "$(snapshot | sha256sum)" "$(echo "$BEFORE" | sha256sum)"
+
 echo "-- upgrade to $NEW"
 APP_KEY=$(grep ^APP_KEY= /etc/lpanel/lpanel.env)
 KEYS=$(sha256sum /etc/lpanel/keys/operations.key /etc/lpanel/tls/*)

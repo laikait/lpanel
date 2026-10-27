@@ -1,0 +1,176 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+{% import "@Operations/macros.twig" as ops %}
+
+{% block title %}{{ a.label }}{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Hosting</span>{{ ui.icon('chevron-right') }}<a href="{{ index_url }}">Hosting accounts</a>{{ ui.icon('chevron-right') }}<span>{{ a.label }}</span>{% endblock %}
+
+{% set tone = a.status == 'active' ? 'success' : (a.status in ['failed', 'deleting'] ? 'danger' : (a.status in ['suspended', 'suspending'] ? 'amber' : (a.status == 'deleted' ? 'muted' : 'primary'))) %}
+{% set doing = {'provisioning': 'Setting up the account on the server', 'suspending': 'Suspending the account', 'resuming': 'Unsuspending the account', 'deleting': 'Deleting the account and its files'} %}
+
+{% block content %}
+{{ ops.watch(watch, a.status) }}
+<div class="lp-profile-head">
+  <span class="lp-chip lp-chip--{{ tone }} lp-chip--xl">{{ ui.icon('folder') }}</span>
+  <div class="min-w-0">
+    <h1 class="lp-page-title mb-1 text-truncate">{{ a.label }}</h1>
+    <div class="lp-profile-head__meta">
+      {{ ui.status_badge(a.status) }}
+      <span class="font-monospace">{{ a.systemUser }}</span>
+      {% if info.server %}<span>· {{ info.server.name }}</span>{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if a.busy %}
+<div class="lp-banner lp-banner--info mb-4">
+  <span class="lp-chip lp-chip--info">{{ ui.icon('loader', 'lp-spin') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">{{ doing[a.status] }}…</div>
+    <div class="small text-body-secondary">The server's agent does this, usually within seconds. This page updates by itself.{% if server_status == 'offline' %} <strong>The server is offline right now</strong>, so it waits for the agent to come back.{% endif %}</div>
+  </div>
+</div>
+{% elseif a.status == 'failed' %}
+<div class="lp-banner lp-banner--danger mb-4">
+  <span class="lp-chip lp-chip--danger">{{ ui.icon('alert') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Setting up the account did not finish</div>
+    <div class="small text-body-secondary">{{ a.lastError ?: 'The operation failed.' }}{% if a.lastErrorCode %} <code class="ms-1">{{ a.lastErrorCode }}</code>{% endif %}</div>
+  </div>
+  {% if can_manage %}
+  <form method="post" action="{{ actions.retry }}">{{ ui.csrf(token) }}<button class="btn btn-sm btn-primary lp-btn-icon" type="submit">{{ ui.icon('refresh') }}Try again</button></form>
+  {% endif %}
+</div>
+{% elseif a.lastError %}
+<div class="lp-banner lp-banner--warning mb-4">
+  <span class="lp-chip lp-chip--amber">{{ ui.icon('alert') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">The last {{ {'suspend': 'suspension', 'unsuspend': 'unsuspension', 'delete': 'deletion', 'create': 'setup'}[a.lastAction] ?? a.lastAction }} did not finish</div>
+    <div class="small text-body-secondary">{{ a.lastError }}{% if a.lastErrorCode %} <code class="ms-1">{{ a.lastErrorCode }}</code>{% endif %} The account is back as it was{{ admin ? '; you can try again.' : '.' }}</div>
+  </div>
+</div>
+{% elseif a.status == 'suspended' %}
+<div class="lp-banner lp-banner--warning mb-4">
+  <span class="lp-chip lp-chip--amber">{{ ui.icon('pause') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Suspended <span class="fw-normal text-body-secondary">· {{ ui.time(a.suspendedAt) }}</span></div>
+    <div class="small text-body-secondary">Its PHP is switched off, it cannot log in, and nothing runs as it. Every file is kept.{{ admin ? '' : ' Contact your administrator to have it unsuspended.' }}</div>
+  </div>
+</div>
+{% elseif a.status == 'deleted' %}
+<div class="lp-banner mb-4">
+  <span class="lp-chip lp-chip--muted">{{ ui.icon('trash') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Deleted <span class="fw-normal text-body-secondary">· {{ ui.time(a.deletedAt) }}</span></div>
+    <div class="small text-body-secondary">The user, its home and every file in it, and its PHP pool were removed from {{ info.server ? info.server.name : 'the server' }}. This record stays for the history.</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-xl-8 d-flex flex-column gap-4">
+    <section class="card lp-card">
+      <div class="lp-card__header"><div><h2 class="lp-card__title">On the server</h2><p class="lp-card__subtitle">{{ info.meaning }}</p></div></div>
+      <div class="card-body">
+        <div class="lp-facts">
+          <div><span>Server</span><strong>{% if info.server and admin %}<a href="{{ info.server.url }}">{{ info.server.name }}</a>{% else %}{{ info.server ? info.server.name : '—' }}{% endif %}</strong></div>
+          <div><span>Linux user</span><strong class="font-monospace">{{ a.systemUser }}{% if a.systemUid %} <span class="text-body-tertiary small">uid {{ a.systemUid }}</span>{% endif %}</strong></div>
+          <div><span>Home</span><strong class="font-monospace">{{ a.home }}</strong></div>
+          <div><span>PHP</span><strong>{{ a.phpVersion ? 'PHP ' ~ a.phpVersion ~ ', its own pool' : '—' }}</strong></div>
+          <div><span>Customer</span><strong>{{ owner ? owner.name : '—' }}{% if owner and admin %} <span class="text-body-tertiary small">{{ owner.login }}</span>{% endif %}</strong></div>
+          <div><span>Created</span><strong>{{ ui.time(a.createdAt) }}</strong></div>
+        </div>
+      </div>
+    </section>
+
+    {% if a.status != 'deleted' %}
+    <section class="card lp-card">
+      <div class="lp-card__header"><div><h2 class="lp-card__title">Inside the home</h2><p class="lp-card__subtitle">Owned by root, so the account cannot be tricked into moving it. Other accounts cannot list it.</p></div></div>
+      <div class="lp-dirs">
+        <div class="lp-dir"><span class="lp-chip lp-chip--primary lp-chip--sm">{{ ui.icon('globe') }}</span><div class="min-w-0"><code>web/</code><div class="small text-body-secondary">Website files. The web server reads them; PHP runs them as the account.</div></div></div>
+        <div class="lp-dir"><span class="lp-chip lp-chip--muted lp-chip--sm">{{ ui.icon('lock') }}</span><div class="min-w-0"><code>tmp/</code><div class="small text-body-secondary">PHP sessions, uploads and temporary files. Only the account reads them.</div></div></div>
+        <div class="lp-dir"><span class="lp-chip lp-chip--muted lp-chip--sm">{{ ui.icon('activity') }}</span><div class="min-w-0"><code>logs/</code><div class="small text-body-secondary">PHP's error log for this account.</div></div></div>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if sees_operations %}
+    <section class="card lp-card">
+      <div class="lp-card__header"><div><h2 class="lp-card__title">History</h2><p class="lp-card__subtitle">What the panel asked the server's agent to do for this account.</p></div></div>
+      {% if history is empty %}
+        {{ ui.empty('list-check', 'Nothing yet', 'Operations on this account appear here.') }}
+      {% else %}
+      <div class="table-responsive">
+        <table class="table lp-table lp-table--hover align-middle mb-0">
+          <thead><tr><th>Operation</th><th>State</th><th class="d-none d-md-table-cell">Asked by</th><th>When</th><th class="text-end"><span class="visually-hidden">Open</span></th></tr></thead>
+          <tbody>
+          {% for row in history %}
+            {% set o = row.op %}
+            <tr>
+              <td><a class="stretched-link text-reset text-decoration-none fw-medium" href="{{ row.url }}">{{ row.label }}</a>{% if o.attempt > 1 %}<div class="small text-body-tertiary">attempt {{ o.attempt }}</div>{% endif %}</td>
+              <td>{{ ui.status_badge(o.status) }}{% if o.errorCode %}<div class="small text-body-tertiary font-monospace mt-1">{{ o.errorCode }}</div>{% endif %}</td>
+              <td class="d-none d-md-table-cell small">{{ o.requestedByName ?: '—' }}</td>
+              <td class="small text-nowrap">{{ ui.time(o.queuedAt) }}</td>
+              <td class="text-end">{{ ui.icon('chevron-right', 'lp-row-chev') }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="col-xl-4 d-flex flex-column gap-4">
+    {% if can_manage and a.status != 'deleted' %}
+    <section class="card lp-card">
+      <div class="lp-card__header"><h2 class="lp-card__title">Manage</h2></div>
+      <div class="lp-actions">
+        {% if a.status == 'suspended' or a.status == 'resuming' %}
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold">Unsuspend</div>
+            <div class="small text-body-secondary">Logins and PHP come back; the pool is written afresh.</div>
+          </div>
+          <form method="post" action="{{ actions.unsuspend }}">{{ ui.csrf(token) }}<button class="btn btn-primary btn-sm lp-btn-icon" type="submit"{{ a.allows('unsuspend') ? '' : ' disabled' }}>{{ ui.icon('play') }}Unsuspend</button></form>
+        </div>
+        {% else %}
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold">Suspend</div>
+            <div class="small text-body-secondary">PHP stops, logins are refused and its processes end. Files stay.</div>
+          </div>
+          <form method="post" action="{{ actions.suspend }}" data-lp-confirm="{{ a.label }} stops serving PHP, and everything running as {{ a.systemUser }} is stopped. Its files are kept, and you can unsuspend it at any time." data-lp-confirm-title="Suspend this account?" data-lp-confirm-ok="Suspend">
+            {{ ui.csrf(token) }}<button class="btn btn-outline-secondary btn-sm lp-btn-icon" type="submit"{{ a.allows('suspend') ? '' : ' disabled' }}>{{ ui.icon('pause') }}Suspend</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card lp-card lp-card--danger">
+      <div class="lp-card__header"><h2 class="lp-card__title">Delete account</h2></div>
+      <form method="post" action="{{ actions.delete }}" class="card-body">
+        {{ ui.csrf(token) }}
+        <p class="small text-body-secondary">Removes the Linux user, its PHP pool, and its home with <strong>every file in it</strong>. There are no backups yet, so this cannot be undone.</p>
+        <label class="form-label small" for="confirm">Type <code class="user-select-all">{{ a.systemUser }}</code> to confirm</label>
+        <input class="form-control form-control-sm font-monospace mb-3" id="confirm" name="confirm" autocomplete="off" spellcheck="false" pattern="{{ a.systemUser }}" required{{ a.allows('delete') ? '' : ' disabled' }}>
+        <button class="btn btn-danger btn-sm w-100 lp-btn-icon justify-content-center" type="submit"{{ a.allows('delete') ? '' : ' disabled' }}>{{ ui.icon('trash') }}Delete account and files</button>
+      </form>
+    </section>
+    {% endif %}
+
+    <section class="card lp-card">
+      <div class="card-body">
+        <h2 class="h6 fw-semibold mb-3">Kept apart</h2>
+        <ul class="lp-assurance">
+          <li>{{ ui.icon('check') }}<span>PHP runs as <code>{{ a.systemUser }}</code>, never as the web server.</span></li>
+          <li>{{ ui.icon('check') }}<span>Other accounts cannot list the home, read its files or reach its PHP.</span></li>
+          {% if admin %}<li>{{ ui.icon('check') }}<span>The agent made it only after checking the panel's signature, as root's separate half.</span></li>{% endif %}
+        </ul>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

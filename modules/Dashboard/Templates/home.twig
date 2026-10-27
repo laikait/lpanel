@@ -148,9 +148,28 @@
 </div>
 
 {% elseif customer %}
+{% if my_accounts is empty %}
 <section class="card lp-card">
-  {{ ui.empty('globe', 'Your websites will live here', 'Once your provider sets up hosting for you, your websites, databases and email will appear on this page.') }}
+  {{ ui.empty('folder', 'No hosting yet', 'Once your administrator sets up a hosting account for you, it appears here, and your websites after it.') }}
 </section>
+{% else %}
+<h2 class="lp-section-title">Your hosting accounts</h2>
+<div class="row g-3">
+  {% for row in my_accounts %}
+  {% set a = row.account %}
+  <div class="col-md-6 col-xl-4">
+    <a class="lp-stat lp-stat--link h-100" href="{{ row.url }}">
+      <div class="lp-stat__top">
+        <span class="lp-stat__label text-truncate">{{ a.label }}</span>
+        <span class="lp-chip lp-chip--{{ a.status == 'active' ? 'success' : (a.status in ['suspended', 'suspending'] ? 'amber' : (a.status == 'failed' ? 'danger' : 'muted')) }}">{{ ui.icon('folder') }}</span>
+      </div>
+      <div>{{ ui.status_badge(a.status) }}</div>
+      <div class="lp-stat__foot"><span class="font-monospace">{{ a.systemUser }}</span>{% if row.server %} · {{ row.server.name }}{% endif %}{% if a.phpVersion %} · PHP {{ a.phpVersion }}{% endif %}</div>
+    </a>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 {% else %}
 <section class="card lp-card">

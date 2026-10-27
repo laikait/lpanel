@@ -48,12 +48,12 @@ Status: **D** = designed (in these docs), **T** = needs a named test before the 
 
 | Threat | Mitigation | Status |
 |---|---|---|
-| T2 IDOR: change an id to reach another customer's resource | ownership checked in services through the `authorization.decision` filter (refuse-only); every repository lookup scoped by account | D, **T** (a test per resource type) |
+| T2 IDOR: change an id to reach another customer's resource | every account id goes through `AccountAccess`: not yours is answered exactly like "does not exist" (404) and audited (`account.access`); acting needs `accounts.manage`, refused with 403 and audited; lists are scoped to the owner | D, **T** (built for accounts, M6a; a test per resource type as each arrives) |
 | T2 mass assignment (`"role":"admin"`) | `Schema::deserialize()` drops unknown fields; privileged fields never in customer schemas | D, T |
-| T2 reading another account's files on the server | distinct uid per account; homes `0750 <acct>:<acct>`; PHP-FPM pool per account running as that uid; the web server reads through group membership only where needed | D, **T** |
-| T2 reading LPA keys | `/etc/lpa` is `0700 lpa`; `exec.sock` is `0660 root:lpa`, and customers aren't in group `lpa` | D, T |
-| T2 talking to `lpa-exec` | `SO_PEERCRED` must equal the `lpa` uid; anything else is refused and logged | D, T |
-| T2 process snooping | `hidepid=invisible` on `/proc`, if compatible with PHP-FPM and systemd on both OSes | **O** |
+| T2 reading another account's files on the server | distinct uid per account (20000–59999); homes `0750 root:<acct>` with `web/` `0750`, `tmp/` `0700`, `logs/` `0750` owned by the account; PHP-FPM pool per account running as that uid, `open_basedir` = its home, sessions in its `tmp/`; `www-data` reads through group membership only ([ADR-0013](adr/0013-hosting-accounts-on-a-server.md)) | D, **T** (built, M6a) |
+| T2 reading LPA keys | `/etc/lpa` is `0700 lpa`; `exec.sock` is `0660 root:lpa`, and customers aren't in group `lpa` | D, T (built, M6a) |
+| T2 talking to `lpa-exec` | `SO_PEERCRED` must equal the `lpa` uid; anything else gets no answer and is logged | D, T (built, M6a) |
+| T2 process snooping | `hidepid=invisible` on `/proc`. Until then, A sees that B's PHP workers exist (their names); the kernel already keeps their memory, environment and open files from A | **O** — deferred to M13 (product owner, 2026-10-28) |
 | T2 config injection through managed web settings | structured settings only; allowlisted keys and value grammars; LPA renders templates; values are escaped for Nginx syntax; `include`, `load_module`, `http`/`events` directives and absolute paths are refused | D, **T** |
 | T2 symlink tricks in the document root (e.g. pointing at `/etc/lpa`) | Nginx `disable_symlinks if_not_owner`; LPA resolves paths with `openat`-style containment before any privileged file operation | D, T |
 | T2 database reach | one DB user per database, granted only on it; a deny list for the `lpanel` schema and accounts | D, T |
@@ -68,6 +68,8 @@ Status: **D** = designed (in these docs), **T** = needs a named test before the 
 | Stolen enrollment token | single use, 15 min, stored hashed, rate-limited, audited; the agent pins the panel | D, T |
 | T5 forged results for its own server | results validated against `result_schema`; resource is marked active only after a postcondition check; anomalies → `needs_attention` | D |
 | T5 acting for another server | `agent_id` in both the signature and the mTLS fingerprint; operations are leased per agent | D, T |
+| T5 making up privileged work | `lpa-exec` verifies the panel's signature itself and runs each idempotency key at most once ([ADR-0013](adr/0013-hosting-accounts-on-a-server.md)): a compromised agent can only pass on what the panel signed, until its `not_after`, and cannot replay it | D, T (built, M6a) |
+| T5 claiming another account's result | a result is checked against the account's own `system_user`; one about another user settles nothing and is kept as `invalid_result` | D, T (built, M6a) |
 | Compromised agent key | revoke in the UI; queued operations cancelled; 90-day rotation | D |
 
 ### Privilege and blast radius
@@ -76,7 +78,8 @@ Status: **D** = designed (in these docs), **T** = needs a named test before the 
 |---|---|---|
 | T6 RCE in the panel → shell on the panel host | `system.enabled=false` (ADR-0005); `lpanel` has no sudo; only `system/` is writable | D, T |
 | T6 RCE in the panel → all servers | the attacker gets allowlisted operations, not a shell. **But A1 is readable by `lpanel`**, so they can sign anything in the registry. Destructive operations (`*.delete`) need a recent re-auth at the API layer; the agent can't verify that | **O** — consider a separate signing service or hardware key after MVP |
-| T5 parser bug → root | network code runs as `lpa`; root code is reachable only over the socket ([ADR-0009](adr/0009-lpa-privilege-split.md)) | D |
+| T5 parser bug → root | network code runs as `lpa`; root code is reachable only over the socket ([ADR-0009](adr/0009-lpa-privilege-split.md)); `lpa-exec` keeps 6 capabilities, no network, `NoNewPrivileges` | D (built, M6a) |
+| T7 / T6 deleting a user that is not an account | `lpa-exec` acts only on `lp[a-z2-7]{8}` users in the account uid range, with its own record naming the same account id; anything else is `precondition_failed` | D, T (built, M6a) |
 | T7 admin edits panel config through hosting operations | no hosting operation can name `lpanel-nginx` or `/etc/lpanel` (ADR-0003); the LPA deny list is compiled in | D, T |
 | Generic command execution | none exists: no `exec`/`shell` operation; adapters use fixed binaries + argv; the protocol rejects unknown fields | D, **T** (a registry test lists every op) |
 | Cron as an escalation route | cron operations install into the **customer's** crontab only, running as the customer uid. That is code execution at customer level, which is by design | D |
@@ -106,11 +109,11 @@ Status: **D** = designed (in these docs), **T** = needs a named test before the 
 
 ## 4. Tests this model requires (release-blocking ones in bold)
 
-1. **A customer changes every id in every customer API → 403/404, and an audit record for each attempt.**
+1. **A customer changes every id in every customer API → 403/404, and an audit record for each attempt.** *Built for hosting accounts (M6a): `tests/Feature/HostingAccountsTest.php` tries another customer's account id and an unknown one on every page and API route (404, one `account.access` denial each), and the owner's own account on every action (403, audited). Each new resource type adds its own.*
 2. **Replayed, expired, wrong-signature, wrong-cert, wrong-agent and malformed agent requests are rejected with the right error code.** *Built (M3): `tests/Feature/AgentRequestTest.php`; the real agent through panel Nginx in `test/e2e/run.sh`.*
 3. **An operation with a bad signature, an unknown op, unknown fields or an expired `not_after` is refused by LPA without acting.**
 4. **A registry test fails if any operation takes a free-form command, executable path or environment.** *Built: the agent's `TestTheRegistryIsExactlyTheReadOnlyAllowlist` and `TestEveryOperationRefusesPayloadFields` (M1); the panel's `OperationCatalogueTest` (M4) checks its catalogue is exactly the agent's and that no payload takes a field.*
-5. **As customer A's uid on a test server: can't read B's home, B's PHP session files, `/etc/lpa`, or connect to `exec.sock`.**
+5. **As customer A's uid on a test server: can't read B's home, B's PHP session files, `/etc/lpa`, or connect to `exec.sock`.** *Built (M6a): the lpa repository's `test/packages/run.sh`, on all four OSes, with accounts made by the real `lpa-exec`. It also checks that A's PHP runs as A and reaches neither B's files nor `/etc/lpa`, that A can't connect to B's PHP-FPM pool, and that root gets no answer from `exec.sock`.*
 6. **Invalid or prohibited web settings → no file changes, no reload; a failed reload → rollback verified by a health probe.**
 7. Enrollment token: second use, after expiry, and wrong token all give the same answer to the caller and different audit reasons. *Built (M3): `tests/Feature/AgentEnrollmentTest.php`.*
 8. `config/system.php` has `enabled => false`; no module imports `App\Engine\System\*`.
@@ -119,5 +122,5 @@ Status: **D** = designed (in these docs), **T** = needs a named test before the 
 ## 5. Open items for the product owner
 
 - **O-1:** Should the operation-signing key move out of the web process's reach (a signing helper on a Unix socket, or a TPM/HSM) before the public beta?
-- **O-2:** Is `hidepid` on `/proc` acceptable for the hosting servers?
+- **O-2:** Is `hidepid` on `/proc` acceptable for the hosting servers? *Deferred to M13 (product owner, 2026-10-28).*
 - **O-3:** What is the audit retention period?

@@ -10,13 +10,18 @@ namespace App\Modules\Operations\Catalogue;
  * cannot be requested. Adding one is a change on both sides, reviewed
  * together (THREAT_MODEL.md test 4).
  *
- * Phase 1 is read-only: nothing here changes a server.
+ * The read-only operations need servers.read. The account operations
+ * (ADR-0013) change the server: they need accounts.manage, act on one
+ * account, and are asked for by the Hosting module, never from a server's screen.
  */
 final class Catalogue
 {
     private const TEXT = '/^[^\x00-\x1f\x7f]*$/u';
 
     private const STATE = '/^[a-z-]*$/';
+
+    /** An account's Linux user, as the panel chooses it (ADR-0013). */
+    public const SYSTEM_USER = '/^lp[a-z2-7]{8}$/';
 
     /** @var array<string, Definition> by op@version */
     private array $definitions = [];
@@ -99,6 +104,42 @@ final class Catalogue
                     'unit_file_state' => Shape::string(32, self::STATE),
                 ]), 64)->orNull(),
             ])),
+        ] as $definition) {
+            $this->definitions[$definition->op . '@' . $definition->version] = $definition;
+        }
+
+        $user = Shape::string(10, self::SYSTEM_USER);
+        $account = static fn(string $op, string $label, string $summary, int $timeout, string $audit, Shape $result): Definition => new Definition(
+            op: $op,
+            version: 1,
+            label: $label,
+            summary: $summary,
+            mutating: true,
+            idempotent: true,
+            capability: 'accounts.manage',
+            scope: 'account',
+            timeoutSeconds: $timeout,
+            maxResultBytes: 4096,
+            maxAttempts: 3,
+            audit: $audit,
+            payload: Shape::object(['system_user' => $user]),
+            result: $result,
+        );
+        $changed = static fn(string $state): Shape => Shape::object(['system_user' => $user, 'state' => Shape::string(16, '/^' . $state . '$/')]);
+
+        foreach ([
+            $account('account.create', 'Create account', 'A Linux user and group, a root-owned home with web, tmp and logs, and a PHP-FPM pool that runs as the account.', 120, Definition::AUDIT_NOTICE, Shape::object([
+                'system_user' => $user,
+                'uid' => Shape::int(20000, 59999),
+                'gid' => Shape::int(20000, 59999),
+                'home' => Shape::string(16, '/^\/home\/lp[a-z2-7]{8}$/'),
+                'php_version' => Shape::string(8, '/^[0-9]+\.[0-9]+$/'),
+                'pool_socket' => Shape::string(40, '/^\/run\/php\/lpanel-lp[a-z2-7]{8}\.sock$/'),
+                'state' => Shape::string(16, '/^active$/'),
+            ])),
+            $account('account.suspend', 'Suspend account', 'No logins, no PHP and no running processes for the account. Its files stay.', 120, Definition::AUDIT_NOTICE, $changed('suspended')),
+            $account('account.unsuspend', 'Unsuspend account', 'Lets the account in again and writes its PHP-FPM pool afresh.', 120, Definition::AUDIT_NOTICE, $changed('active')),
+            $account('account.delete', 'Delete account', 'Removes the account\'s user, group, PHP-FPM pool and home, with every file in it.', 300, Definition::AUDIT_CRITICAL, $changed('deleted')),
         ] as $definition) {
             $this->definitions[$definition->op . '@' . $definition->version] = $definition;
         }
