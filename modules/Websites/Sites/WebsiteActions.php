@@ -37,7 +37,11 @@ final class WebsiteActions
         private readonly ServerStore $servers,
         private readonly Authorizer $authorizer,
         private readonly AuditLog $audit,
+        private readonly CertificateStore $certificates,
     ) {}
+
+    /** Audit names of the actions that are not website.<action>. */
+    private const AUDIT = ['certify' => 'website.certificate.issue', 'uncertify' => 'website.certificate.remove'];
 
     /**
      * A new website for $account.
@@ -160,6 +164,97 @@ final class WebsiteActions
     }
 
     /**
+     * Get the website a certificate now, or renew it ("issue"), or serve it
+     * over HTTP only again ("remove"), which also stops LPanel asking on its
+     * own (ADR-0015). The owner may do either, like its settings.
+     *
+     * @throws OperationException
+     */
+    public function certificate(Identity $by, Website $website, string $what): Website
+    {
+        $action = ['issue' => 'certify', 'remove' => 'uncertify'][$what] ?? throw new OperationException('unknown_action', 'A certificate can be issued or removed.', 422);
+
+        if (!$this->manages($by) && !($this->authorizer->allows($by, 'websites.configure') && $website->ownerUid === $by->id)) {
+            $this->deny($by, $action, $website, 'websites.configure');
+        }
+
+        if (!$website->allows($action)) {
+            throw self::busy($website, $action);
+        }
+
+        if ($website->isEdited()) {
+            throw new OperationException('config_edited', $this->manages($by)
+                ? 'Its Nginx file was edited outside LPanel. Restore LPanel\'s version first.'
+                : 'An administrator is looking at this website\'s configuration. Try again once they are done.', 409);
+        }
+
+        $account = $this->accountOf($website);
+        self::accountReady($account);
+        $server = $this->serverOf($account);
+
+        $this->websites->transaction(function () use ($by, $server, $account, $website, $action): void {
+            if ($action === 'certify') {
+                // Asked for by a person: LPanel tries on its own again, from the start.
+                $this->certificates->wanted($website->id, null);
+            }
+            $this->start($by, $server, $account, $website, $action, []);
+        });
+
+        return $this->websites->byUid($website->uid) ?? $website;
+    }
+
+    /**
+     * Ask for the certificates that are due (certificates:renew, every few
+     * minutes): first ones, renewals, and reissues for new domains, at most
+     * $limit of them. Websites busy or edited by hand wait for the next run.
+     *
+     * @return array{started: list<string>, failed: array<string, string>} website ids
+     */
+    public function renewDue(Identity $by, int $limit = 20): array
+    {
+        $now = CertificateStore::now();
+        $started = [];
+        $failed = [];
+
+        // Websites served before LPanel had certificates get their first now.
+        $served = \array_map(static fn(Website $w): int => $w->id, $this->websites->page(null, 'active', limit: 500));
+        foreach ($this->certificates->unknown($served) as $id) {
+            $this->certificates->wanted($id, $now);
+        }
+
+        foreach ($this->certificates->due($now, $limit) as $cert) {
+            $website = $this->websites->byId($cert->websiteId);
+
+            if ($website === null || $website->status === Website::DELETED) {
+                $this->certificates->cleared($cert->websiteId, false);
+
+                continue;
+            }
+
+            // A first certificate only for a website people can reach; a renewal while suspended too.
+            if ($website->isBusy() || $website->isEdited() || !$website->allows('certify') || (!$cert->exists() && $website->status !== Website::ACTIVE)) {
+                continue;
+            }
+
+            try {
+                $account = $this->accountOf($website);
+                self::accountReady($account);
+                $server = $this->serverOf($account);
+                $this->websites->transaction(function () use ($by, $server, $account, $website): void {
+                    $this->start($by, $server, $account, $website, 'certify', []);
+                });
+                $started[] = $website->uid;
+            } catch (OperationException $e) {
+                // Not now (the agent is offline, too old, or the account is busy): the usual wait.
+                $this->certificates->failed($website->id, $e->errorCode, $e->getMessage());
+                $failed[$website->uid] = $e->getMessage();
+            }
+        }
+
+        return ['started' => $started, 'failed' => $failed];
+    }
+
+    /**
      * Ask $server's agent to compare every website's Nginx file with what
      * LPanel wrote. One already queued or running is returned instead.
      *
@@ -227,7 +322,8 @@ final class WebsiteActions
             $domains = $action === 'delete' ? null : \array_values((array) ($settings['domains'] ?? []));
 
             if ($this->websites->settle($website, $op->uid, $to, $changes, $domains)) {
-                $this->audit->record('website.' . $action, 'succeeded', null, 'website', $website->uid, ['operation' => $op->uid]);
+                $this->settleCertificate($website, $action, $result, $domains ?? []);
+                $this->audit->record(self::AUDIT[$action] ?? 'website.' . $action, 'succeeded', null, 'website', $website->uid, ['operation' => $op->uid]);
             }
 
             return;
@@ -250,9 +346,47 @@ final class WebsiteActions
         // What stays reserved: the domains it is served with (none, if it never was).
         /** @var list<string> $domains */
         $domains = \array_values((array) ($website->settings['domains'] ?? []));
+        // A certificate the authority did not issue is the certificate's
+        // story, not the website's, which is served as before.
+        $quiet = $action === 'certify' && !$forged && \in_array($code, ['certificate_failed', 'precondition_failed'], true);
+        $errors = $quiet ? [] : ['last_error_code' => $code, 'last_error' => \mb_substr($message, 0, 500)];
 
-        if ($this->websites->settle($website, $op->uid, $back, ['last_error_code' => $code, 'last_error' => \mb_substr($message, 0, 500)], $domains)) {
-            $this->audit->record('website.' . $action, 'failed', null, 'website', $website->uid, ['operation' => $op->uid, 'error' => $code]);
+        if ($this->websites->settle($website, $op->uid, $back, $errors, $domains)) {
+            if ($action === 'certify') {
+                $this->certificates->failed($website->id, $code, $message);
+            }
+            $this->audit->record(self::AUDIT[$action] ?? 'website.' . $action, 'failed', null, 'website', $website->uid, ['operation' => $op->uid, 'error' => $code]);
+        }
+    }
+
+    /**
+     * What a website's operation says about its certificate. Every result
+     * carries the one the server serves it with; issuing and removing
+     * change it, a new website and a new domain make LPanel ask for one.
+     *
+     * @param array<string, mixed> $result
+     * @param list<string>         $domains the website's, now
+     */
+    private function settleCertificate(Website $website, string $action, array $result, array $domains): void
+    {
+        $served = \is_array($result['certificate'] ?? null) ? $result['certificate'] : null;
+        $known = $this->certificates->forWebsite($website->id);
+
+        match (true) {
+            $action === 'delete' => $this->certificates->cleared($website->id, false),
+            $action === 'uncertify' => $this->certificates->cleared($website->id, false),
+            $action === 'certify' && $served !== null => $this->certificates->installed($website->id, $served),
+            $served !== null && ($served['serial'] ?? null) !== $known->serial => $this->certificates->installed($website->id, $served),
+            $served === null && $known->exists() => $this->certificates->cleared($website->id, $known->auto),
+            default => null,
+        };
+
+        $known = $this->certificates->forWebsite($website->id);
+
+        if ($action === 'create' && !$known->stored) {
+            $this->certificates->wanted($website->id);
+        } elseif ($known->auto && $known->exists() && !$known->covers($domains)) {
+            $this->certificates->wanted($website->id);
         }
     }
 
@@ -264,6 +398,17 @@ final class WebsiteActions
 
         $result = $op->resultArray() ?? [];
         $ids = static fn(mixed $list): array => \array_values(\array_filter(\is_array($list) ? $list : [], 'is_string'));
+
+        // A certificate file missing or changed on the server: a new one
+        // replaces it (under a new name, so Nginx loads again), soon.
+        foreach ($ids($result['certificates'] ?? null) as $uid) {
+            $website = $this->websites->byUid($uid);
+
+            if ($website !== null && $website->serverId === $op->serverId && $website->status !== Website::DELETED) {
+                $this->certificates->wanted($website->id);
+                $this->audit->record('website.certificate.drift', 'failed', null, 'website', $website->uid, ['found_by' => 'websites.check', 'operation' => $op->uid]);
+            }
+        }
 
         foreach ($this->websites->recordCheck($op->serverId, $ids($result['edited'] ?? null), $ids($result['missing'] ?? null)) as $website) {
             $state = \in_array($website->uid, $ids($result['missing'] ?? null), true) ? Website::CONFIG_MISSING : Website::CONFIG_EDITED;
@@ -294,7 +439,7 @@ final class WebsiteActions
             throw new OperationException('website_busy', 'The website changed meanwhile, or a domain was just given to another website. Look again, then try.', 409);
         }
 
-        $this->audit->record('website.' . ($action === 'update' && ($payload['replace_edits'] ?? false) === true ? 'restore' : $action), 'allowed', $by, 'website', $website->uid, [
+        $this->audit->record(self::AUDIT[$action] ?? 'website.' . ($action === 'update' && ($payload['replace_edits'] ?? false) === true ? 'restore' : $action), 'allowed', $by, 'website', $website->uid, [
             'server' => $server->uid,
             'domain' => $website->domain,
             'account' => $account->uid,
@@ -305,7 +450,7 @@ final class WebsiteActions
     /**
      * @param array<string, mixed> $raw
      *
-     * @return array{domains: list<string>, document_root: string, php: bool, index: list<string>, redirects: list<array{from: string, to: string, code: int}>, headers: list<array{name: string, value: string}>}
+     * @return array{domains: list<string>, document_root: string, php: bool, index: list<string>, redirects: list<array{from: string, to: string, code: int}>, headers: list<array{name: string, value: string}>, https_redirect: bool}
      *
      * @throws OperationException
      */
@@ -330,7 +475,7 @@ final class WebsiteActions
     {
         return new OperationException('website_busy', $website->isBusy()
             ? 'Something is already under way for this website. Wait for it to finish.'
-            : \sprintf('A website that is %s cannot be %s.', $website->status, ['create' => 'created again', 'update' => 'changed', 'suspend' => 'suspended', 'unsuspend' => 'unsuspended', 'delete' => 'deleted'][$action] ?? $action), 409);
+            : \sprintf('A website that is %s cannot be %s.', $website->status, ['create' => 'created again', 'update' => 'changed', 'suspend' => 'suspended', 'unsuspend' => 'unsuspended', 'delete' => 'deleted', 'certify' => 'given a certificate', 'uncertify' => 'served without its certificate'][$action] ?? $action), 409);
     }
 
     /** @throws OperationException */
@@ -367,7 +512,7 @@ final class WebsiteActions
     /** @throws OperationException */
     private function deny(Identity $by, string $action, ?Website $website, string $reason): never
     {
-        $this->audit->record('website.' . $action, 'denied', $by, 'website', $website?->uid, ['reason' => $reason]);
+        $this->audit->record(self::AUDIT[$action] ?? 'website.' . $action, 'denied', $by, 'website', $website?->uid, ['reason' => $reason]);
 
         throw new OperationException('forbidden', $reason === 'domains'
             ? 'Domains and the website\'s folder are set by an administrator.'

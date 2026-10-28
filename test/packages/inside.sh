@@ -144,6 +144,21 @@ check "accounts:unsuspend" quiet lpanel accounts:unsuspend "$U" --wait --timeout
 check "  ...brings it back" test -S /run/php/lpanel-$U.sock
 
 echo "-- websites, through the hosting Nginx (ADR-0014)"
+# Certificates come from Pebble, a test ACME server, never the real authority (ADR-0015).
+# Pebble checks site.test over HTTP-01 on port 80 like Let's Encrypt would; here the names are this machine.
+echo "127.0.0.1 site.test www.site.test" >> /etc/hosts
+cat > /opt/pebble/config.json <<'JSON'
+{"pebble": {"listenAddress": "0.0.0.0:14000", "managementListenAddress": "0.0.0.0:15000",
+  "certificate": "/opt/pebble/certs/localhost/cert.pem", "privateKey": "/opt/pebble/certs/localhost/key.pem",
+  "httpPort": 80, "tlsPort": 5001, "ocspResponderURL": "", "externalAccountBindingRequired": false}}
+JSON
+PEBBLE_VA_NOSLEEP=1 PEBBLE_WFE_NONCEREJECT=0 nohup pebble -config /opt/pebble/config.json >/var/log/pebble.log 2>&1 &
+PEBBLE_PID=$!
+for _ in $(seq 50); do curl -sf https://localhost:14000/dir >/dev/null && break; sleep 0.2; done
+mkdir -p /etc/systemd/system/lpa-exec.service.d
+printf '[Service]\nExecStart=\nExecStart=/usr/bin/lpa exec --acme-directory https://localhost:14000/dir\n' > /etc/systemd/system/lpa-exec.service.d/pebble.conf
+systemctl daemon-reload && systemctl stop lpa-exec.service 2>/dev/null
+curl -sf https://localhost:15000/roots/0 > /opt/pkgtest/pebble-root.pem
 site_status() { db "SELECT CONCAT(status, '/', config_state) FROM websites WHERE uid='$W'"; }
 wait_site() { for _ in $(seq 90); do [ "$(site_status)" = "$1" ] && return 0; sleep 1; done; return 1; }
 get() { curl -s -o /dev/null -w '%{http_code}' -H "Host: $1" "http://127.0.0.1$2"; }
@@ -157,6 +172,26 @@ is "the panel's own configuration is still byte-identical" "$(find /etc/lpanel -
 site_snapshot() { hosting_snapshot | grep -v '/etc/nginx/lpanel/\|/etc/nginx/conf.d/lpanel-websites.conf'; }
 is "nothing under /etc/nginx changed but LPanel's websites" "$(site_snapshot | sha256sum)" "$(echo "$BEFORE" | sha256sum)"
 is "the panel answers while the hosting Nginx reloads" "$(code $URL/login)" 200
+
+echo "-- certificates, from the panel through lpa-exec to Pebble (ADR-0015)"
+cert_serial() { db "SELECT COALESCE(c.serial, '') FROM website_certificates c JOIN websites w ON w.id = c.website_id WHERE w.uid='$W'"; }
+wait_cert() { for _ in $(seq 120); do s=$(cert_serial); [ -n "$s" ] && [ "$s" != "$1" ] && [ "$(site_status)" = active/ok ] && return 0; sleep 1; done; return 1; }
+https_get() { curl -s -o /dev/null -w '%{http_code}' --cacert /opt/pkgtest/pebble-root.pem --resolve "$1:443:127.0.0.1" "https://$1$2"; }
+is "a new website is waiting for its certificate" "$(db "SELECT CONCAT(c.auto, '/', c.serial IS NULL) FROM website_certificates c JOIN websites w ON w.id = c.website_id WHERE w.uid='$W'")" "1/1"
+check "certificates:renew asks for it on its own, and the panel records it" bash -c "lpanel certificates:renew >/dev/null; $(declare -f db site_status cert_serial wait_cert); W=$W; wait_cert ''"
+SERIAL1=$(cert_serial)
+echo "  info  certificate serial: ${SERIAL1:-none}; $(db "SELECT CONCAT(issuer, ', until ', not_after) FROM website_certificates c JOIN websites w ON w.id = c.website_id WHERE w.uid='$W'")"
+is "  ...the website is served over HTTPS, with a certificate that chains to the authority's root" "$(https_get site.test /)" 200
+is "  ...PHP too, as the account" "$(curl -s --cacert /opt/pkgtest/pebble-root.pem --resolve www.site.test:443:127.0.0.1 https://www.site.test/uid.php)" "$(id -u $U)"
+is "  ...and HTTP redirects there: on by default" "$(curl -s -o /dev/null -w '%{redirect_url}' -H 'Host: site.test' http://127.0.0.1/a?b=1)" "https://site.test/a?b=1"
+is "  ...the key is root's alone" "$(stat -c '%a %U:%G' /etc/nginx/lpanel/tls/$W-*.pem 2>&1)" "600 root:root"
+is "the panel's own configuration is still byte-identical" "$(find /etc/lpanel -type f -exec sha256sum {} + | sort | sha256sum)" "$PANEL_CONF"
+is "the panel answers on 8443 with its own certificate meanwhile" "$(code $URL/login)" 200
+check "websites:certificate renews it" bash -c "lpanel websites:certificate site.test --wait --timeout=120 >/dev/null && $(declare -f db site_status cert_serial wait_cert); W=$W; wait_cert '$SERIAL1'"
+is "  ...one key on the server, the new one" "$(ls /etc/nginx/lpanel/tls | wc -l)" 1
+is "  ...still served over HTTPS" "$(https_get site.test /)" 200
+is "the HTTPS card shows it secured" "$(curl -sk -b $JAR $URL/websites/$W | grep -c 'Renew now')" 1
+
 is "a redirect, through the API" "$(api -o /dev/null -w '%{http_code}' -X PUT $URL/api/v1/websites/$W/settings -d '{"redirects":[{"from":"/old","to":"/new","code":301}],"headers":[{"name":"X-Frame-Options","value":"SAMEORIGIN"}]}')" 202
 check "  ...is served once Nginx took it" bash -c "$(declare -f db site_status wait_site); W=$W; wait_site active/ok && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: site.test' http://127.0.0.1/old)\" = 301 ]"
 is "a header with a variable is refused by the panel, nothing queued" "$(api -o /dev/null -w '%{http_code}' -X PUT $URL/api/v1/websites/$W/settings -d '{"headers":[{"name":"X-A","value":"$request_uri"}]}')" 422
@@ -167,11 +202,11 @@ check "  ...which passed nginx -t, so it is served" bash -c "for _ in \$(seq 20)
 check "  ...and the panel will not change the website over it" bash -c "! lpanel websites:suspend site.test >/dev/null"
 check "websites:restore puts LPanel's version back" bash -c "lpanel websites:restore site.test --wait --timeout=90 >/dev/null && ! grep -q X-Admin /etc/nginx/lpanel/sites/$W.conf && [ \"\$($(declare -f db site_status); W=$W; site_status)\" = active/ok ]"
 check "websites:suspend answers 503" bash -c "lpanel websites:suspend site.test --wait --timeout=90 >/dev/null && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: site.test' http://127.0.0.1/)\" = 503 ]"
-check "websites:unsuspend serves it again" bash -c "lpanel websites:unsuspend site.test --wait --timeout=90 >/dev/null && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: site.test' http://127.0.0.1/)\" = 200 ]"
+check "websites:unsuspend serves it again, over HTTPS" bash -c "lpanel websites:unsuspend site.test --wait --timeout=90 >/dev/null && [ \"\$(curl -s -o /dev/null -w '%{http_code}' --cacert /opt/pkgtest/pebble-root.pem --resolve site.test:443:127.0.0.1 https://site.test/)\" = 200 ]"
 check "an account with a website is not deleted" bash -c "! lpanel accounts:delete '$U' --confirm='$U' >/dev/null && id '$U' >/dev/null"
 check "websites:delete, confirmed" quiet lpanel websites:delete site.test --confirm=site.test --wait --timeout=90
-check "  ...Nginx no longer serves it, and its files are kept" bash -c "[ ! -e /etc/nginx/lpanel/sites/$W.conf ] && ! curl -s -H 'Host: site.test' http://127.0.0.1/ | grep -q '<h1>site.test</h1>' && [ -f /home/$U/web/site.test/uid.php ]"
-is "every website change is in the audit log" "$(db "SELECT COUNT(*) FROM audit_events WHERE action LIKE 'website.%' AND action <> 'website.drift' AND outcome='succeeded'")" 6
+check "  ...Nginx no longer serves it, its key is gone, and its files are kept" bash -c "[ -z \"\$(ls -A /etc/nginx/lpanel/tls)\" ] && [ ! -e /etc/nginx/lpanel/sites/$W.conf ] && ! curl -s -H 'Host: site.test' http://127.0.0.1/ | grep -q '<h1>site.test</h1>' && [ -f /home/$U/web/site.test/uid.php ]"
+is "every website change is in the audit log" "$(db "SELECT COUNT(*) FROM audit_events WHERE action LIKE 'website.%' AND action <> 'website.drift' AND outcome='succeeded'")" 8
 check "accounts:delete refuses without the typed user name" bash -c "! lpanel accounts:delete '$U' --confirm=wrong"
 check "accounts:delete, confirmed" quiet lpanel accounts:delete "$U" --confirm="$U" --wait --timeout=180
 check "  ...removes the user, its group, home and pool" bash -c "! getent passwd '$U' && ! getent group '$U' && [ ! -e /home/$U ] && [ ! -e /run/php/lpanel-$U.sock ]"

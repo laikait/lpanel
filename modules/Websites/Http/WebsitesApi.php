@@ -37,7 +37,7 @@ use App\Modules\Websites\Sites\WebsiteStore;
  */
 final class WebsitesApi
 {
-    private const SETTINGS = ['domains', 'document_root', 'php', 'index', 'redirects', 'headers'];
+    private const SETTINGS = ['domains', 'document_root', 'php', 'index', 'redirects', 'headers', 'https_redirect'];
 
     public function __construct(
         private readonly WebsiteStore $websites,
@@ -110,6 +110,29 @@ final class WebsitesApi
 
         try {
             return ApiResponse::accepted($this->views->present($this->actions->update($identity, $website, $website->settings, true)));
+        } catch (OperationException $e) {
+            return $e->toResponse();
+        }
+    }
+
+    /** POST /websites/{id}/certificate: get or renew its certificate now (ADR-0015). */
+    public function certify(Identity $identity, string $id): Response
+    {
+        return $this->certificate($identity, $id, 'issue');
+    }
+
+    /** DELETE /websites/{id}/certificate: HTTP only again; LPanel stops asking on its own. */
+    public function uncertify(Identity $identity, string $id): Response
+    {
+        return $this->certificate($identity, $id, 'remove');
+    }
+
+    private function certificate(Identity $identity, string $id, string $what): Response
+    {
+        $website = $this->access->find($identity, $id, $what === 'issue' ? 'certify' : 'uncertify');
+
+        try {
+            return ApiResponse::accepted($this->views->present($this->actions->certificate($identity, $website, $what)));
         } catch (OperationException $e) {
             return $e->toResponse();
         }

@@ -74,7 +74,7 @@ Dependencies are declared with `->requires()`. Proposed names (plan §4 Phase 2)
 | Operations | `operations`, `operation_events`, the operation catalogue, the lease sweeper, the `/api/v1/operations` API | Servers, Audit |
 | Dashboard | `/` and the admin and customer home screens (a customer's own accounts) | Identity, Servers, Operations, Hosting |
 | Hosting | **built (M6a):** `hosting_accounts`, `AccountAccess` (who sees which), `AccountActions` (ask, and settle on `operations.finished`), `/accounts` screens, `/api/v1/accounts`, `accounts:*` | Identity, Servers, Operations, Audit |
-| Websites | **built (M6b):** `websites`, `website_domains`, `WebsiteAccess`, `WebsiteActions` (ask, settle on `operations.finished`, record `websites.check`), `/websites` screens with the settings editor, `/api/v1/websites`, `websites:*`, the hourly check; cards on account and server pages | Identity, Servers, Operations, Hosting, Audit |
+| Websites | **built (M6b, M7):** `websites`, `website_domains`, `website_certificates`, `WebsiteAccess`, `WebsiteActions` (ask, settle on `operations.finished`, record `websites.check`, ask for due certificates), `/websites` screens with the settings editor and HTTPS card, `/api/v1/websites`, `websites:*`, `certificates:renew`, the hourly check; cards on account and server pages | Identity, Servers, Operations, Hosting, Audit |
 | Databases, Certificates, Files, Cron, Backups, Monitoring, DNS, Mail | later milestones | Hosting (and others as needed) |
 
 Rules:

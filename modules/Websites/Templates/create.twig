@@ -75,6 +75,13 @@
           <label class="form-check-label" for="php">PHP</label>
           <div class="form-text mt-0">Runs <code>.php</code> files as the account, through its own pool. Off: static files only, and <code>.php</code> files are never handed out.</div>
         </div>
+
+        <div class="form-check form-switch mt-3">
+          <input type="hidden" name="https_redirect" value="0">
+          <input class="form-check-input" type="checkbox" role="switch" id="https_redirect" name="https_redirect" value="1"{{ input.https_redirect ?? true ? ' checked' : '' }}>
+          <label class="form-check-label" for="https_redirect">Redirect HTTP to HTTPS</label>
+          <div class="form-text mt-0">LPanel gets the website a Let's Encrypt certificate on its own once its domains point at the server; then <code>http://</code> sends visitors to <code>https://</code>.</div>
+        </div>
       </div>
       <div class="lp-card__footer lp-card__footer--actions gap-2">
         <a class="btn btn-light" href="{{ index_url }}">Cancel</a>

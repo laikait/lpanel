@@ -184,15 +184,25 @@ final class Catalogue
                 'name' => Shape::string(64, self::HEADER_NAME),
                 'value' => Shape::string(1024, self::HEADER_VALUE),
             ]), 20),
+            'https_redirect' => Shape::bool(),
         ];
+        // The certificate a website is served with over HTTPS (ADR-0015), or null.
+        $certificate = Shape::object([
+            'domains' => Shape::list(Shape::string(253, self::DOMAIN), 10),
+            'issuer' => Shape::string(80, self::TEXT),
+            'serial' => Shape::string(64, '/^[0-9a-f]{0,64}$/'),
+            'not_before' => Shape::int(),
+            'not_after' => Shape::int(),
+        ])->orNull();
         $served = Shape::object([
             'website_id' => $ulid,
             'system_user' => $user,
             'state' => Shape::string(16, '/^(active|suspended)$/'),
             'revision' => Shape::string(16, '/^[0-9a-f]{16}$/'),
             'document_root' => Shape::string(300, '/^\/home\/lp[a-z2-7]{8}\/web\/[A-Za-z0-9._\/-]{1,255}$/'),
+            'certificate' => $certificate,
         ]);
-        $website = static fn(string $op, string $label, string $summary, string $capability, string $audit, Shape $payload, Shape $result): Definition => new Definition(
+        $website = static fn(string $op, string $label, string $summary, string $capability, string $audit, Shape $payload, Shape $result, int $timeout = 120): Definition => new Definition(
             op: $op,
             version: 1,
             label: $label,
@@ -201,7 +211,7 @@ final class Catalogue
             idempotent: true,
             capability: $capability,
             scope: 'website',
-            timeoutSeconds: 120,
+            timeoutSeconds: $timeout,
             maxResultBytes: 4096,
             maxAttempts: 3,
             audit: $audit,
@@ -219,7 +229,11 @@ final class Catalogue
                 'website_id' => $ulid,
                 'system_user' => $user,
                 'state' => Shape::string(16, '/^deleted$/'),
+                'certificate' => $certificate,
             ])),
+            // The owner may secure its own website, as with its settings; the Websites module checks whose it is.
+            $website('website.certificate.issue', 'Get certificate', 'Gets a certificate for every domain of the website from Let\'s Encrypt (HTTP-01), then serves it over HTTPS through the same tested change. Also renews.', 'websites.configure', Definition::AUDIT_NOTICE, Shape::object($owner), $served, 300),
+            $website('website.certificate.remove', 'Remove certificate', 'Serves the website over HTTP only again and deletes its key.', 'websites.configure', Definition::AUDIT_NOTICE, Shape::object($owner), $served),
             new Definition(
                 op: 'websites.check',
                 version: 1,
@@ -239,6 +253,7 @@ final class Catalogue
                     'edited' => Shape::list($ulid, 2000)->orNull(),
                     'missing' => Shape::list($ulid, 2000)->orNull(),
                     'unknown_files' => Shape::list(Shape::string(80, self::TEXT), 20)->orNull(),
+                    'certificates' => Shape::list($ulid, 2000)->orNull(),
                     'include' => Shape::string(8, '/^(ok|edited|missing|none)$/'),
                     'nginx_test' => Shape::string(8, '/^(passed|failed|not_run)$/'),
                     'reloaded' => Shape::bool(),

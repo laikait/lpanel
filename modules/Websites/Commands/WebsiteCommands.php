@@ -11,15 +11,17 @@ use App\Modules\Operations\OperationException;
 use App\Modules\Servers\Store\Server;
 use App\Modules\Servers\Store\ServerStore;
 use App\Modules\Websites\Http\WebsiteViews;
+use App\Modules\Websites\Sites\CertificateStore;
 use App\Modules\Websites\Sites\Website;
 use App\Modules\Websites\Sites\WebsiteActions;
 use App\Modules\Websites\Sites\WebsiteStore;
 
 /**
  * websites:create, websites:list, websites:suspend, websites:unsuspend,
- * websites:restore, websites:delete and websites:check -- for an
- * administrator with a shell on the panel host, the scheduler (the hourly
- * check) and the package test. Audited as the console.
+ * websites:restore, websites:delete, websites:check, websites:certificate
+ * and certificates:renew -- for an administrator with a shell on the panel
+ * host, the scheduler (the hourly check, the five-minute renewals) and the
+ * package test. Audited as the console.
  */
 final class WebsiteCommands
 {
@@ -29,6 +31,7 @@ final class WebsiteCommands
         private readonly WebsiteViews $views,
         private readonly AccountStore $accounts,
         private readonly ServerStore $servers,
+        private readonly CertificateStore $certificates,
     ) {}
 
     public function create(Output $output, string $account, string $domains, ?string $root = null, bool $static = false, bool $wait = false, int $timeout = 120): int
@@ -115,6 +118,61 @@ final class WebsiteCommands
         }
 
         return $this->finish($output, $found, $wait, $timeout, $found->previousStatus ?? Website::ACTIVE);
+    }
+
+    /** Get, renew or (--remove) take away a website's certificate (ADR-0015). */
+    public function certificate(Output $output, string $website, bool $remove = false, bool $wait = false, int $timeout = 300): int
+    {
+        $found = $this->find($website);
+
+        if ($found === null) {
+            $output->line(\sprintf('No website "%s" (give its id or its domain).', $website));
+
+            return 1;
+        }
+
+        $before = $this->certificates->forWebsite($found->id)->serial;
+
+        try {
+            $found = $this->actions->certificate(self::console(), $found, $remove ? 'remove' : 'issue');
+        } catch (OperationException $e) {
+            $output->line(\sprintf('%s: %s', $e->errorCode, $e->getMessage()));
+
+            return 1;
+        }
+
+        $status = $this->finish($output, $found, $wait, $timeout, $found->previousStatus ?? Website::ACTIVE);
+        $cert = $this->certificates->forWebsite($found->id);
+
+        if (!$wait) {
+            return $status;
+        }
+
+        if ($cert->exists()) {
+            $output->line(\sprintf('certificate %s  %s  until %s', $cert->serial, \implode(' ', $cert->domains), $cert->notAfter?->format('Y-m-d H:i') . ' UTC'));
+        } elseif ($cert->lastError !== null) {
+            $output->line(\sprintf('no certificate: %s: %s', $cert->lastErrorCode, $cert->lastError));
+        }
+
+        $worked = $remove ? !$cert->exists() : ($cert->exists() && $cert->serial !== $before);
+
+        return $status === 0 && $worked ? 0 : 1;
+    }
+
+    /** The scheduler's run: ask for every certificate that is due. */
+    public function renew(Output $output, int $limit = 20): int
+    {
+        $done = $this->actions->renewDue(self::console(), \max(1, \min(200, $limit)));
+
+        foreach ($done['started'] as $uid) {
+            $output->line(\sprintf('%s  asked', $uid));
+        }
+
+        foreach ($done['failed'] as $uid => $why) {
+            $output->line(\sprintf('%s  not now: %s', $uid, $why));
+        }
+
+        return 0;
     }
 
     /** Queue websites.check on $server, or on every paired server with websites. */

@@ -11,6 +11,8 @@ use App\Modules\Operations\Http\OperationViews;
 use App\Modules\Operations\Store\Operation;
 use App\Modules\Servers\Store\ServerStore;
 use App\Modules\Shared\Ui\Pages;
+use App\Modules\Websites\Sites\Certificate;
+use App\Modules\Websites\Sites\CertificateStore;
 use App\Modules\Websites\Sites\Website;
 
 /** What the website screens and the API show: a website with its account, server and owner by name. */
@@ -27,7 +29,21 @@ final class WebsiteViews
         Website::DELETING => 'Its Nginx configuration is being removed.',
         Website::DELETED => 'No longer served. Its files stayed in the account\'s web folder.',
         Website::FAILED => 'Setting it up did not finish.',
+        Website::SECURING => 'Served as before while a certificate is issued, then over HTTPS too.',
     ];
+
+    /** Each certificate state on screen: label and tone. */
+    public const CERTIFICATE_STATES = [
+        Certificate::ACTIVE => ['Secured', 'success'],
+        Certificate::EXPIRING => ['Expires soon', 'warning'],
+        Certificate::EXPIRED => ['Expired', 'danger'],
+        Certificate::PENDING => ['Waiting for one', 'info'],
+        Certificate::FAILED => ['Not secured', 'danger'],
+        Certificate::NONE => ['HTTP only', 'muted'],
+    ];
+
+    /** @var array<int, Certificate> */
+    private array $certificateCache = [];
 
     /** @var array<int, ?Account> */
     private array $accountCache = [];
@@ -44,6 +60,7 @@ final class WebsiteViews
         private readonly UserStore $users,
         private readonly OperationViews $operations,
         private readonly Pages $pages,
+        private readonly CertificateStore $certificates,
     ) {}
 
     /**
@@ -53,7 +70,48 @@ final class WebsiteViews
      */
     public function rows(array $websites): array
     {
-        return \array_map($this->row(...), $websites);
+        // One query for the list's certificates, kept only while it is drawn.
+        $this->certificateCache = $this->certificates->forWebsites(\array_map(static fn(Website $w): int => $w->id, $websites));
+
+        try {
+            return \array_map($this->row(...), $websites);
+        } finally {
+            $this->certificateCache = [];
+        }
+    }
+
+    /**
+     * The website's certificate, as its screens show it (ADR-0015).
+     *
+     * @return array<string, mixed>
+     */
+    public function certificate(Website $w): array
+    {
+        $c = $this->certificateCache[$w->id] ?? $this->certificates->forWebsite($w->id);
+        $now = CertificateStore::now();
+        $state = $c->state($now, $w->domains());
+        $uncovered = $c->uncovered($w->domains());
+        [$label, $tone] = self::CERTIFICATE_STATES[$state];
+
+        if ($w->status === Website::SECURING) {
+            [$label, $tone] = [$c->exists() ? 'Renewing' : 'Getting one', 'info'];
+        } elseif ($uncovered !== [] && $state === Certificate::EXPIRING && $c->notAfter > $now->modify('+' . Certificate::EXPIRING_DAYS . ' days')) {
+            [$label, $tone] = ['Missing a domain', 'warning'];
+        }
+
+        return [
+            'c' => $c,
+            'state' => $state,
+            'label' => $label,
+            'tone' => $tone,
+            'exists' => $c->exists(),
+            'uncovered' => $uncovered,
+            'renew_at' => $c->renewAt(),
+            'days_left' => $c->notAfter === null ? null : (int) \floor(($c->notAfter->getTimestamp() - $now->getTimestamp()) / 86400),
+            // A first certificate LPanel stopped asking for on its own.
+            'gave_up' => !$c->exists() && $c->auto && $c->attempts > 0 && $c->nextAttemptAt === null,
+            'redirect' => ($w->settings['https_redirect'] ?? true) === true,
+        ];
     }
 
     /** @return array<string, mixed> */
@@ -80,6 +138,7 @@ final class WebsiteViews
             'aliases' => \array_slice($w->domains(), 1),
             'document_root' => $account === null ? null : $w->documentRoot($account->systemUser),
             'php' => ($w->settings['php'] ?? false) === true,
+            'certificate' => $w->status === Website::DELETED ? null : $this->certificate($w),
         ];
     }
 
@@ -95,6 +154,7 @@ final class WebsiteViews
             'account' => $account === null ? null : ['id' => $account->uid, 'label' => $account->label, 'system_user' => $account->systemUser, 'status' => $account->status],
             'server' => $server === null ? null : ['id' => $server['uid'], 'name' => $server['name']],
             'owner' => $owner === null ? null : ['id' => $w->ownerUid, 'login' => $owner['login'], 'name' => $owner['name']],
+            'certificate' => $this->certificates->forWebsite($w->id)->toArray(CertificateStore::now(), $w->domains()),
         ];
     }
 

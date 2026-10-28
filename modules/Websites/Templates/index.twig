@@ -66,7 +66,7 @@
   {% else %}
   <div class="table-responsive">
     <table class="table lp-table lp-table--hover align-middle mb-0">
-      <thead><tr><th>Website</th><th>Status</th><th class="d-none d-md-table-cell">Account</th><th class="d-none d-sm-table-cell">Server</th><th class="d-none d-lg-table-cell">PHP</th><th class="d-none d-lg-table-cell">Created</th><th class="text-end"><span class="visually-hidden">Open</span></th></tr></thead>
+      <thead><tr><th>Website</th><th>Status</th><th class="d-none d-sm-table-cell">HTTPS</th><th class="d-none d-md-table-cell">Account</th><th class="d-none d-sm-table-cell">Server</th><th class="d-none d-lg-table-cell">PHP</th><th class="d-none d-lg-table-cell">Created</th><th class="text-end"><span class="visually-hidden">Open</span></th></tr></thead>
       <tbody>
       {% for row in rows %}
         {% set w = row.website %}
@@ -84,6 +84,16 @@
             {% if row.account_suspended and w.status == 'active' %}<span class="lp-badge lp-badge--warning lp-badge--dot">Account suspended</span>{% else %}{{ ui.status_badge(w.status) }}{% endif %}
             {% if w.configState != 'ok' and w.status != 'deleted' %}<div class="small text-warning-emphasis mt-1 lp-cell-note">{{ ui.icon('alert') }} {{ w.configState == 'missing' ? 'File missing on the server' : 'Edited outside LPanel' }}</div>
             {% elseif w.lastError and not w.busy %}<div class="small text-danger-emphasis mt-1 text-truncate lp-cell-note" title="{{ w.lastError }}">{{ ui.icon('alert') }} Last {{ w.lastAction == 'update' ? 'change' : w.lastAction }} failed</div>{% endif %}
+          </td>
+          <td class="d-none d-sm-table-cell small">
+            {%- set cert = row.certificate -%}
+            {%- if cert is null -%}<span class="text-body-tertiary">—</span>
+            {%- elseif cert.exists -%}
+              <span class="lp-https lp-https--{{ cert.tone }}">{{ ui.icon(cert.state == 'expired' ? 'alert' : 'lock') }}{{ cert.state == 'active' ? 'Secured' : cert.label }}</span>
+              <div class="text-body-tertiary text-nowrap">{{ cert.days_left < 0 ? 'expired' : 'until ' ~ cert.c.notAfter|date('j M Y') }}</div>
+            {%- else -%}
+              <span class="lp-https lp-https--{{ cert.tone }}">{{ ui.icon(cert.state == 'pending' ? 'clock' : 'shield-off') }}{{ cert.label }}</span>
+            {%- endif -%}
           </td>
           <td class="d-none d-md-table-cell small">{% if row.account %}<span class="lp-cell-strong">{{ row.account.label }}</span><div class="text-body-tertiary font-monospace">{{ row.account.system_user }}</div>{% else %}<span class="text-body-tertiary">—</span>{% endif %}</td>
           <td class="d-none d-sm-table-cell small">{{ row.server ? row.server.name : '—' }}</td>

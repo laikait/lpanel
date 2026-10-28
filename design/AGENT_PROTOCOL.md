@@ -215,17 +215,19 @@ Every operation exists twice, with the same contract: in LPA's registry (Go) and
 
 `system_user` is `lp` and 8 characters of `[a-z2-7]`. The target names the server and the account: `{"server_id": "…", "account_id": "<ULID>"}`. The panel needs `accounts.manage` to ask for them, and asks only from an account's screen, never a server's.
 
-**Website operations (M6b, [ADR-0014](adr/0014-websites-through-the-hosting-nginx.md); mutating, idempotent; only `lpa-exec` runs them):**
+**Website operations (M6b, [ADR-0014](adr/0014-websites-through-the-hosting-nginx.md); certificates M7, [ADR-0015](adr/0015-website-certificates-with-acme-http-01.md); mutating, idempotent; only `lpa-exec` runs them):**
 
 | op | Scope | Payload | Result |
 |---|---|---|---|
-| `website.create` | website | `{account_id, system_user, domains, document_root, php, index, redirects, headers}` | `{website_id, system_user, state: "active"\|"suspended", revision, document_root}` |
+| `website.create` | website | `{account_id, system_user, domains, document_root, php, index, redirects, headers, https_redirect}` | `{website_id, system_user, state: "active"\|"suspended", revision, document_root, certificate}` |
 | `website.update` | website | the same, and `replace_edits` | the same |
 | `website.suspend`, `website.unsuspend` | website | `{account_id, system_user}` | the same |
-| `website.delete` | website | `{account_id, system_user}` | `{website_id, system_user, state: "deleted"}` |
-| `websites.check` | server | `{}` | `{checked, edited: [ids], missing: [ids], unknown_files, include, nginx_test, reloaded}` |
+| `website.delete` | website | `{account_id, system_user}` | `{website_id, system_user, state: "deleted", certificate: null}` |
+| `website.certificate.issue` | website | `{account_id, system_user}` | as `website.create`; 300 s |
+| `website.certificate.remove` | website | `{account_id, system_user}` | as `website.create`, `certificate: null` |
+| `websites.check` | server | `{}` | `{checked, edited: [ids], missing: [ids], unknown_files, certificates: [ids], include, nginx_test, reloaded}` |
 
-A website's target is `{"server_id": "…", "website_id": "<ULID>"}`; its account is in the payload, and `lpa-exec` checks both its own records agree. Every value has a grammar (ADR-0014); none is configuration text. `website.update` needs `websites.configure` (the Websites module checks the website is the customer's own, and keeps domains and the document root an administrator's); the others need `websites.manage`. `revision` is what the website's probe location answers with once Nginx serves the change.
+A website's target is `{"server_id": "…", "website_id": "<ULID>"}`; its account is in the payload, and `lpa-exec` checks both its own records agree. Every value has a grammar (ADR-0014); none is configuration text. `website.update` needs `websites.configure` (the Websites module checks the website is the customer's own, and keeps domains and the document root an administrator's); the others need `websites.manage`. `revision` is what the website's probe location answers with once Nginx serves the change. `certificate` is what the website is served with over HTTPS, `{domains, issuer, serial, not_before, not_after}` (Unix seconds), or `null`; the key never leaves the server. The certificate operations need `websites.configure`, like `website.update`; the certificate authority is `lpa-exec`'s `--acme-directory`, never a payload's. `certificates` in `websites.check` are websites whose certificate file is missing or changed.
 
 There is no `exec`, `shell`, `file.read`, or any operation that takes a command, a path outside a validated scope, or an environment.
 
@@ -313,6 +315,7 @@ Stable, lower_snake_case, shared by both sides:
 | `config_rejected` | a service's own check (`php-fpm -t`, `nginx -t` on the staged candidate) refused generated configuration, or Nginx warned that another site answers for one of its domains; nothing live was changed or reloaded (§6.2.1, ADR-0014) |
 | `config_edited` | a website's Nginx file (or LPanel's `conf.d` include) was edited outside LPanel; it is left as it is until an administrator restores LPanel's version (ADR-0014) |
 | `rolled_back` | Nginx did not take a new configuration after the reload; the previous files are back and, unless the status is `needs_attention`, confirmed serving (ADR-0014) |
+| `certificate_failed` | the certificate authority did not issue (a domain failed its HTTP-01 check, a rate limit, a refusal), or what it issued was not for LPanel's key and every domain; nothing on the server changed (ADR-0015) |
 | `cancelled` | the agent stopped because a lease answer asked it to (§6.3) |
 | `lease_expired` | the panel's sweeper: the agent stopped extending the lease (§6.3) |
 | `operation_not_found` | a lease or result for an operation that is not this agent's |

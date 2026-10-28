@@ -20,7 +20,7 @@ final class WebsiteStore
 {
     /** List filters, as the screens and the API name them. */
     public const GROUPS = [
-        'current' => [Website::PROVISIONING, Website::ACTIVE, Website::UPDATING, Website::SUSPENDING, Website::SUSPENDED, Website::RESUMING, Website::DELETING, Website::FAILED],
+        'current' => [Website::PROVISIONING, Website::ACTIVE, Website::UPDATING, Website::SUSPENDING, Website::SUSPENDED, Website::RESUMING, Website::DELETING, Website::FAILED, Website::SECURING],
         'active' => [Website::ACTIVE],
         'suspended' => [Website::SUSPENDED],
         'busy' => Website::BUSY,
@@ -29,7 +29,7 @@ final class WebsiteStore
     ];
 
     /** Statuses whose Nginx file exists on the server. */
-    public const SERVED = [Website::ACTIVE, Website::UPDATING, Website::SUSPENDING, Website::SUSPENDED, Website::RESUMING, Website::DELETING];
+    public const SERVED = [Website::ACTIVE, Website::UPDATING, Website::SUSPENDING, Website::SUSPENDED, Website::RESUMING, Website::DELETING, Website::SECURING];
 
     public function __construct(private readonly ConnectionManager $connections) {}
 
@@ -90,6 +90,11 @@ final class WebsiteStore
         $this->reserve($website, $domains);
 
         return $website;
+    }
+
+    public function byId(int $id): ?Website
+    {
+        return self::hydrate($this->db()->table('websites')->where('id', $id)->first());
     }
 
     public function byUid(string $uid): ?Website
@@ -334,6 +339,9 @@ final class WebsiteStore
         $text = static fn(mixed $v): ?string => $v === null || $v === '' ? null : (string) $v;
         $settings = \json_decode((string) ($row['settings'] ?? '{}'), true);
         $pending = isset($row['pending_settings']) && $row['pending_settings'] !== '' ? \json_decode((string) $row['pending_settings'], true) : null;
+        // Websites from before certificates (ADR-0015) redirect to HTTPS once they have one: the default.
+        $settings = \is_array($settings) ? $settings + ['https_redirect' => true] : [];
+        $pending = \is_array($pending) ? $pending + ['https_redirect' => true] : null;
 
         return new Website(
             id: (int) $row['id'],
@@ -342,8 +350,8 @@ final class WebsiteStore
             accountId: (int) $row['account_id'],
             ownerUid: (string) $row['owner_uid'],
             domain: (string) $row['domain'],
-            settings: \is_array($settings) ? $settings : [],
-            pendingSettings: \is_array($pending) ? $pending : null,
+            settings: $settings,
+            pendingSettings: $pending,
             status: (string) $row['status'],
             previousStatus: $text($row['previous_status'] ?? null),
             lastAction: (string) $row['last_action'],

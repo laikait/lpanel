@@ -908,3 +908,13 @@ a.lp-person__name:hover { color: var(--lp-primary); }
 .lp-banner--link:hover { border-color: var(--lp-border-strong); color: inherit; }
 /* A banner's text takes the room it needs before its action wraps under it. */
 .lp-banner > .flex-grow-1 { flex: 1 1 18rem; min-width: 0; }
+
+/* ---- website certificates (ADR-0015) ------------------------------------ */
+
+.lp-https { display: inline-flex; align-items: center; gap: .3rem; font-weight: 600; white-space: nowrap; color: var(--lp-text-2); }
+.lp-https .lp-icon { width: .95em; height: .95em; }
+.lp-https--success { color: var(--lp-green); }
+.lp-https--warning { color: var(--lp-amber); }
+.lp-https--danger { color: var(--lp-red); }
+.lp-https--info { color: var(--lp-blue); }
+.lp-https--muted { color: var(--lp-text-3); font-weight: 500; }

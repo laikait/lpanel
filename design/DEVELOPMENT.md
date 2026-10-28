@@ -158,11 +158,21 @@ php laika accounts:delete lpq3x7k2ma --confirm=lpq3x7k2ma --wait
   suspension (`hosting.account.blockers`), until an administrator restores LPanel's version.
 - Hosting offers two filters other modules use: `hosting.account.blockers` (reasons an account
   action can't happen yet) and `hosting.account.panels` (cards on an account's page).
+- Certificates (M7, [ADR-0015](adr/0015-website-certificates-with-acme-http-01.md)):
+  `website.certificate.issue` / `.remove` are website actions (`certify` holds the website in
+  `securing`). `website_certificates` keeps what the server serves and `next_attempt_at`;
+  `certificates:renew` (every five minutes) asks for the due ones. Every website result carries
+  `certificate`, and `WebsiteActions::settleCertificate()` keeps the row in step. A failed request
+  is recorded on the certificate, not as the website's error. Owners may do both
+  (`websites.configure`). Locally there is no authority: the scheduler's requests fail with
+  `agent_offline` or similar and back off, which is harmless.
 
 ```bash
 php laika websites:create lpq3x7k2ma example.com,www.example.com --wait
 php laika websites:list --json
 php laika websites:check                  # hourly from the scheduler
+php laika websites:certificate example.com --wait   # get or renew one now; --remove for HTTP only
+php laika certificates:renew               # every five minutes from the scheduler
 php laika websites:restore example.com --wait
 php laika websites:delete example.com --confirm=example.com --wait
 ```
@@ -225,7 +235,7 @@ Sign-in screens use `templates/auth.twig`, and both extend `templates/base.twig`
 | `modules/Audit` | `audit_events`, `AuditLog`, auth hooks → audit, `audit:prune`, `/audit`, `/api/v1/audit`, `/api/token/v1/audit` |
 | `modules/Identity` | users, roles, `PanelUserProvider` (sessions, tokens, resets), root verifiers, `UserAdmin` (who may change whom), sign-in / reset / security / tokens / users screens, `/api/v1` and `/api/token/v1` |
 | `modules/Servers` | servers, agent keys, enrollment, `/agent/v1` (`RequestVerifier` is the §3 checks), `/servers` screens, `/api/v1/servers`, `servers:*` commands |
-| `modules/Websites` | `websites`, `website_domains`, `WebsiteSettings` (the grammar), `WebsiteAccess`, `WebsiteActions` (ask, settle, record checks), `/websites` screens, `/api/v1/websites`, `websites:*` commands, the hourly `websites:check` |
+| `modules/Websites` | `websites`, `website_domains`, `website_certificates`, `WebsiteSettings` (the grammar), `WebsiteAccess`, `WebsiteActions` (ask, settle, record checks, renew certificates), `/websites` screens, `/api/v1/websites`, `websites:*` commands, the hourly `websites:check`, the five-minute `certificates:renew` |
 | `modules/Hosting` | `hosting_accounts`, `AccountAccess` (who may see which), `AccountActions` (ask the agent, settle on `operations.finished`), `/accounts` screens, `/api/v1/accounts`, `accounts:*` commands |
 | `modules/Operations` | the catalogue (`Catalogue`, strict `Shape`s), `OperationStore` (the state machine), `OperationRequests` (checks before queueing), `/agent/v1/operations/*`, `/operations` screens and server-page cards, `/api/v1/operations`, `operations:*` commands |
 | `modules/Dashboard` | `/`, and the placeholder sidebar entries for milestones not built yet |

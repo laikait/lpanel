@@ -104,10 +104,12 @@ final class OperationCatalogueTest extends TestCase
 
             if ($d->scope === 'website') {
                 $websites[] = $d->op;
-                self::assertSame([$d->op === 'website.update' ? 'websites.configure' : 'websites.manage', true], [$d->capability, $d->idempotent], $d->op);
+                // An owner changes its own website's settings and certificate; the Websites module checks whose it is.
+                $owners = ['website.update', 'website.certificate.issue', 'website.certificate.remove'];
+                self::assertSame([\in_array($d->op, $owners, true) ? 'websites.configure' : 'websites.manage', true], [$d->capability, $d->idempotent], $d->op);
                 $owner = '"account_id":"01JB2W5Z6X7Y8Z9A0B1C2D3E4F","system_user":"lpabcdefgh"';
                 $settings = static fn(string $domains = '"example.com"', string $root = '"example.com"', string $headers = '[]', string $redirects = '[]'): string => \sprintf(
-                    '"domains":[%s],"document_root":%s,"php":true,"index":[],"redirects":%s,"headers":%s',
+                    '"domains":[%s],"document_root":%s,"php":true,"index":[],"redirects":%s,"headers":%s,"https_redirect":true',
                     $domains,
                     $root,
                     $redirects,
@@ -150,7 +152,7 @@ final class OperationCatalogueTest extends TestCase
         \sort($accounts);
         \sort($websites);
         self::assertSame(['account.create', 'account.delete', 'account.suspend', 'account.unsuspend'], $accounts);
-        self::assertSame(['website.create', 'website.delete', 'website.suspend', 'website.unsuspend', 'website.update', 'websites.check'], $websites);
+        self::assertSame(['website.certificate.issue', 'website.certificate.remove', 'website.create', 'website.delete', 'website.suspend', 'website.unsuspend', 'website.update', 'websites.check'], $websites);
     }
 
     public function test_results_are_checked_strictly(): void

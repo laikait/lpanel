@@ -12,6 +12,8 @@ namespace App\Modules\Websites\Sites;
  *   active -> suspending -> suspended          (back to active if it fails)
  *   suspended -> resuming -> active            (back to suspended if it fails)
  *   active | suspended | failed -> deleting -> deleted   (back if it fails)
+ *   active | suspended -> securing -> back where it was    (a certificate, ADR-0015)
+ *   active | suspended -> updating -> back where it was    (its certificate removed)
  *
  * A status ending in -ing has an operation under way, and nothing else may
  * be asked of the website until it settles. config_state is separate: what
@@ -33,13 +35,16 @@ final class Website
 
     public const DELETING = 'deleting';
 
+    /** A certificate is being issued or renewed (ADR-0015). */
+    public const SECURING = 'securing';
+
     public const DELETED = 'deleted';
 
     public const FAILED = 'failed';
 
-    public const BUSY = [self::PROVISIONING, self::UPDATING, self::SUSPENDING, self::RESUMING, self::DELETING];
+    public const BUSY = [self::PROVISIONING, self::UPDATING, self::SUSPENDING, self::RESUMING, self::DELETING, self::SECURING];
 
-    public const STATUSES = [self::PROVISIONING, self::ACTIVE, self::UPDATING, self::SUSPENDING, self::SUSPENDED, self::RESUMING, self::DELETING, self::DELETED, self::FAILED];
+    public const STATUSES = [self::PROVISIONING, self::ACTIVE, self::UPDATING, self::SUSPENDING, self::SUSPENDED, self::RESUMING, self::DELETING, self::DELETED, self::FAILED, self::SECURING];
 
     /** The Nginx file is LPanel's. */
     public const CONFIG_OK = 'ok';
@@ -61,10 +66,12 @@ final class Website
         'suspend' => ['op' => 'website.suspend', 'during' => self::SUSPENDING, 'from' => [self::ACTIVE]],
         'unsuspend' => ['op' => 'website.unsuspend', 'during' => self::RESUMING, 'from' => [self::SUSPENDED]],
         'delete' => ['op' => 'website.delete', 'during' => self::DELETING, 'from' => [self::ACTIVE, self::SUSPENDED, self::FAILED]],
+        'certify' => ['op' => 'website.certificate.issue', 'during' => self::SECURING, 'from' => [self::ACTIVE, self::SUSPENDED]],
+        'uncertify' => ['op' => 'website.certificate.remove', 'during' => self::UPDATING, 'from' => [self::ACTIVE, self::SUSPENDED]],
     ];
 
     /**
-     * @param array<string, mixed>      $settings        domains, document_root, php, index, redirects, headers
+     * @param array<string, mixed>      $settings        domains, document_root, php, index, redirects, headers, https_redirect
      * @param array<string, mixed>|null $pendingSettings
      */
     public function __construct(

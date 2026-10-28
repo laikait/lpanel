@@ -31,7 +31,7 @@ Every rendered website also gets: `server_tokens off`; `disable_symlinks if_not_
 3. **Reload and probe.** `systemctl reload-or-restart nginx.service`. Every website has `location = /.well-known/lpanel-probe` answering `204` with `X-LPanel-Config: <revision>` to `127.0.0.1` and `::1` only; the revision is a hash of the rest of the file. `lpa-exec` asks `127.0.0.1:80` for each changed website until it sees the new revision (10 s).
 4. **Rollback.** If the reload fails or the probe never shows the new revision, the previous files go back, Nginx is reloaded again, and the probe must see the previous revision before the operation answers `rolled_back` ("the previous one is back and serving"). If even that cannot be confirmed, it answers `rolled_back` as **`needs_attention`**: lpa-exec now passes uncertain failures to the agent as such.
 
-`lpa-exec` now needs `CAP_NET_BIND_SERVICE` and `AF_INET`/`AF_INET6`, because `nginx -t` binds its listeners to test them, and the probe needs `127.0.0.1`. Its unit allows IP traffic to `localhost` only (`IPAddressDeny=any`, `IPAddressAllow=localhost`); `systemd-analyze security` moves from 2.5 to 2.7 ("OK").
+`lpa-exec` now needs `CAP_NET_BIND_SERVICE` and `AF_INET`/`AF_INET6`, because `nginx -t` binds its listeners to test them, and the probe needs `127.0.0.1`. Its unit allows IP traffic to `localhost` only (`IPAddressDeny=any`, `IPAddressAllow=localhost`); `systemd-analyze security` moves from 2.5 to 2.7 ("OK"). ([ADR-0015](0015-website-certificates-with-acme-http-01.md) later opens outbound HTTPS for the certificate authority.)
 
 ### Hand edits (drift)
 

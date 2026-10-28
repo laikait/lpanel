@@ -13,6 +13,8 @@ use App\Modules\Hosting\Accounts\AccountStore;
 use App\Modules\Identity\Users\User;
 use App\Modules\Identity\Users\UserStore;
 use App\Modules\Websites\Commands\WebsiteCommands;
+use App\Modules\Websites\Sites\Certificate;
+use App\Modules\Websites\Sites\CertificateStore;
 use App\Modules\Websites\Sites\Website;
 use App\Modules\Websites\Sites\WebsiteStore;
 use App\Tests\Support\Browser;
@@ -84,7 +86,7 @@ final class WebsitesTest extends OperationsTestCase
      *
      * @return array<string, mixed> the operation as the agent received it
      */
-    private function answer(FakeAgent $agent, Website $website, Account $account, string $status = 'succeeded', ?string $code = null, string $message = 'pretend failure'): array
+    private function answer(FakeAgent $agent, Website $website, Account $account, string $status = 'succeeded', ?string $code = null, string $message = 'pretend failure', ?\Closure $edit = null): array
     {
         $claimed = $this->claimed($agent->claim());
         self::assertCount(1, $claimed);
@@ -92,6 +94,10 @@ final class WebsitesTest extends OperationsTestCase
         $result = self::example((string) $op['op']);
         $result->website_id = $website->uid;
         $result->system_user = $account->systemUser;
+
+        if ($edit !== null) {
+            $edit($result);
+        }
         self::assertSame(200, $agent->result((string) $op['operation_id'], 1, $status, $status === 'succeeded' ? $result : null, $code, $code === null ? '' : $message)->status());
 
         return $op;
@@ -127,6 +133,7 @@ final class WebsitesTest extends OperationsTestCase
             'index' => [],
             'redirects' => [],
             'headers' => [],
+            'https_redirect' => true,
         ], $op['payload']);
 
         $website = $this->website($website->uid);
@@ -434,6 +441,10 @@ final class WebsitesTest extends OperationsTestCase
                 ['POST', '/api/v1/websites/' . $target . '/retry'],
                 ['POST', '/api/v1/websites/' . $target . '/restore'],
                 ['DELETE', '/api/v1/websites/' . $target],
+                ['POST', '/websites/' . $target . '/certificate'],
+                ['POST', '/websites/' . $target . '/certificate/remove'],
+                ['POST', '/api/v1/websites/' . $target . '/certificate'],
+                ['DELETE', '/api/v1/websites/' . $target . '/certificate'],
             ] as [$method, $uri]) {
                 $before = $this->denials();
                 $response = match (true) {
@@ -495,5 +506,229 @@ final class WebsitesTest extends OperationsTestCase
         $this->answer($agent, $website, $account);
         self::assertSame(Website::DELETED, $this->website($website->uid)->status);
         self::assertSame(1, $commands->create($out, 'lpnobodyxx', 'x.example.com'));
+    }
+
+    // ---- certificates (ADR-0015) ------------------------------------------------------------
+
+    private function certificates(): CertificateStore
+    {
+        return $this->service(CertificateStore::class);
+    }
+
+    private function renew(): void
+    {
+        $stream = \fopen('php://memory', 'w+');
+        self::assertIsResource($stream);
+        self::assertSame(0, $this->service(WebsiteCommands::class)->renew(new Output($stream)));
+    }
+
+    /**
+     * The agent issues: a certificate for $domains, valid from $from for 90 days.
+     *
+     * @param list<string> $domains
+     */
+    private static function issued(array $domains, ?\DateTimeImmutable $from = null, string $serial = '0a1b2c'): \Closure
+    {
+        $from ??= new \DateTimeImmutable('-1 hour');
+
+        return static function (\stdClass $result) use ($domains, $from, $serial): void {
+            $result->certificate = (object) [
+                'domains' => $domains,
+                'issuer' => "Let's Encrypt R11",
+                'serial' => $serial,
+                'not_before' => $from->getTimestamp(),
+                'not_after' => $from->getTimestamp() + 90 * 86400,
+            ];
+        };
+    }
+
+    private function dueNow(Website $website): void
+    {
+        $this->service(ConnectionManager::class)->connection()->table('website_certificates')->where('website_id', $website->id)
+            ->update(['next_attempt_at' => new \DateTimeImmutable('-1 minute', new \DateTimeZone('UTC'))]);
+    }
+
+    public function test_a_new_website_gets_its_certificate_on_its_own_and_it_is_renewed_when_due(): void
+    {
+        $agent = $this->onlineAgent();
+        $admin = $this->as('alice', ['admin']);
+        $account = $this->account($agent, $admin);
+        $website = $this->newWebsite($admin, $account);
+        $this->answer($agent, $website, $account);
+        self::assertStringContainsString('Waiting for one', $admin->get('/websites/' . $website->uid)->body());
+
+        // The scheduler asks: the website is busy getting one, and the agent is handed only whose it is.
+        $this->renew();
+        self::assertSame(Website::SECURING, $this->website($website->uid)->status);
+        $op = $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com']));
+        self::assertSame('website.certificate.issue', $op['op']);
+        self::assertSame(['account_id' => $account->uid, 'system_user' => $account->systemUser], $op['payload']);
+
+        $settled = $this->website($website->uid);
+        $cert = $this->certificates()->forWebsite($website->id);
+        self::assertSame([Website::ACTIVE, true, ['example.com', 'www.example.com'], 0], [$settled->status, $cert->exists(), $cert->domains, $cert->attempts]);
+        // Renewed two thirds of the way through its 90 days.
+        self::assertEqualsWithDelta((new \DateTimeImmutable('-1 hour'))->getTimestamp() + 60 * 86400, $cert->nextAttemptAt?->getTimestamp(), 5);
+        $shown = $admin->get('/websites/' . $website->uid)->body();
+        self::assertStringContainsString('Secured', $shown);
+        self::assertStringContainsString('Renew now', $shown);
+        self::assertStringContainsString('https://example.com/', $shown);
+        self::assertSame('active', $admin->data('/api/v1/websites/' . $website->uid)['certificate']['state']);
+        self::assertSame(1, $this->auditCount('website.certificate.issue', 'succeeded'));
+
+        // Not due: nothing is asked.
+        $this->renew();
+        self::assertSame([], $this->claimed($agent->claim()));
+
+        // Two thirds through its life, it is renewed.
+        $this->dueNow($website);
+        $this->renew();
+        $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com'], null, '0d0e0f'));
+        self::assertSame('0d0e0f', $this->certificates()->forWebsite($website->id)->serial);
+    }
+
+    public function test_a_failed_request_waits_longer_each_time_and_a_first_one_is_given_up_on(): void
+    {
+        $agent = $this->onlineAgent();
+        $admin = $this->as('alice', ['admin']);
+        $account = $this->account($agent, $admin);
+        $website = $this->newWebsite($admin, $account);
+        $this->answer($agent, $website, $account);
+
+        foreach ([1 => 3600, 2 => 6 * 3600, 3 => 86400] as $attempt => $wait) {
+            $this->dueNow($website);
+            $this->renew();
+            $this->answer($agent, $website, $account, 'failed', 'certificate_failed', 'the certificate authority did not issue: www.example.com did not pass its check');
+            $settled = $this->website($website->uid);
+            $cert = $this->certificates()->forWebsite($website->id);
+            // The website is served as it was, with no error of its own: the certificate has it.
+            self::assertSame([Website::ACTIVE, null, $attempt, 'certificate_failed'], [$settled->status, $settled->lastError, $cert->attempts, $cert->lastErrorCode]);
+            self::assertEqualsWithDelta(\time() + $wait, $cert->nextAttemptAt?->getTimestamp(), 5);
+        }
+        $shown = $admin->get('/websites/' . $website->uid)->body();
+        self::assertStringContainsString('did not pass its check', $shown);
+        self::assertStringContainsString('Try again now', $shown);
+
+        // After a week of them, LPanel stops asking on its own for a first certificate.
+        $this->service(ConnectionManager::class)->connection()->table('website_certificates')->where('website_id', $website->id)->update(['attempts' => Certificate::GIVE_UP_AFTER - 1]);
+        $this->dueNow($website);
+        $this->renew();
+        $this->answer($agent, $website, $account, 'failed', 'certificate_failed', 'no');
+        self::assertNull($this->certificates()->forWebsite($website->id)->nextAttemptAt);
+        $this->renew();
+        self::assertSame([], $this->claimed($agent->claim()));
+        self::assertStringContainsString('stopped asking on its own', $admin->get('/websites/' . $website->uid)->body());
+
+        // Someone asking starts afresh.
+        self::assertSame(303, $admin->post('/websites/' . $website->uid . '/certificate', [])->status());
+        self::assertSame(0, $this->certificates()->forWebsite($website->id)->attempts);
+        $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com']));
+        self::assertTrue($this->certificates()->forWebsite($website->id)->exists());
+    }
+
+    public function test_the_owner_secures_its_own_website_and_removing_it_stops_lpanel_asking(): void
+    {
+        $agent = $this->onlineAgent();
+        $admin = $this->as('alice', ['admin']);
+        $account = $this->account($agent, $admin);
+        $website = $this->newWebsite($admin, $account);
+        $this->answer($agent, $website, $account);
+        $carol = $this->as('carol', ['customer']);
+
+        self::assertStringContainsString('Get certificate now', $carol->get('/websites/' . $website->uid)->body());
+        self::assertSame(303, $carol->post('/websites/' . $website->uid . '/certificate', [])->status());
+        $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com']));
+        self::assertStringContainsString('Remove certificate', $carol->get('/websites/' . $website->uid)->body());
+
+        // Twice while busy is refused, not queued twice.
+        self::assertSame(202, $carol->sendJson('DELETE', '/api/v1/websites/' . $website->uid . '/certificate', [])->status());
+        self::assertSame(409, $carol->sendJson('DELETE', '/api/v1/websites/' . $website->uid . '/certificate', [])->status());
+        $op = $this->answer($agent, $website, $account, edit: static function (\stdClass $result): void {
+            $result->certificate = null;
+        });
+        self::assertSame('website.certificate.remove', $op['op']);
+        $cert = $this->certificates()->forWebsite($website->id);
+        self::assertSame([false, false, null], [$cert->exists(), $cert->auto, $cert->nextAttemptAt]);
+        $this->renew();
+        self::assertSame([], $this->claimed($agent->claim()), 'removed: LPanel does not ask again on its own');
+        self::assertStringContainsString('HTTP only', $carol->get('/websites/' . $website->uid)->body());
+    }
+
+    public function test_a_new_domain_gets_a_new_certificate_and_an_edited_website_none(): void
+    {
+        $agent = $this->onlineAgent();
+        $admin = $this->as('alice', ['admin']);
+        $account = $this->account($agent, $admin);
+        $website = $this->newWebsite($admin, $account);
+        $this->answer($agent, $website, $account);
+        $admin->post('/websites/' . $website->uid . '/certificate', []);
+        $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com']));
+
+        // A domain the certificate does not cover: asked for at once, and shown meanwhile.
+        $response = $admin->sendJson('PUT', '/api/v1/websites/' . $website->uid . '/settings', ['domains' => ['example.com', 'www.example.com', 'shop.example.com']]);
+        self::assertSame(202, $response->status(), $response->body());
+        $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com']));
+        self::assertStringContainsString('Missing a domain', $admin->get('/websites/' . $website->uid)->body());
+        $this->renew();
+        $op = $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com', 'shop.example.com'], null, '1f'));
+        self::assertSame('website.certificate.issue', $op['op']);
+        self::assertSame(['example.com', 'www.example.com', 'shop.example.com'], $this->certificates()->forWebsite($website->id)->domains);
+
+        // A hand-edited website waits: neither a person nor the scheduler asks.
+        $this->websites()->markEdited($this->website($website->uid));
+        $response = $admin->postJson('/api/v1/websites/' . $website->uid . '/certificate', []);
+        self::assertSame(409, $response->status());
+        self::assertSame('config_edited', \json_decode($response->body(), true)['error']['code']);
+        $this->dueNow($website);
+        $this->renew();
+        self::assertSame([], $this->claimed($agent->claim()));
+    }
+
+    public function test_a_certificate_file_missing_on_the_server_is_replaced_soon(): void
+    {
+        $agent = $this->onlineAgent();
+        $admin = $this->as('alice', ['admin']);
+        $account = $this->account($agent, $admin);
+        $website = $this->newWebsite($admin, $account);
+        $this->answer($agent, $website, $account);
+        $admin->post('/websites/' . $website->uid . '/certificate', []);
+        $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com']));
+
+        $admin->post('/websites/check', ['server' => $this->server()->uid]);
+        $claimed = $this->claimed($agent->claim())[0]['op'];
+        $result = self::example('websites.check');
+        $result->checked = 1;
+        $result->certificates = [$website->uid];
+        $result->nginx_test = 'failed';
+        $agent->result((string) $claimed['operation_id'], 1, 'succeeded', $result);
+
+        self::assertEqualsWithDelta(\time(), $this->certificates()->forWebsite($website->id)->nextAttemptAt?->getTimestamp(), 5);
+        self::assertSame(1, $this->auditCount('website.certificate.drift', 'failed'));
+        $this->renew();
+        self::assertSame('website.certificate.issue', $this->answer($agent, $website, $account, edit: self::issued(['example.com', 'www.example.com'], null, '2b'))['op']);
+    }
+
+    public function test_https_redirect_is_on_unless_turned_off(): void
+    {
+        $agent = $this->onlineAgent();
+        $admin = $this->as('alice', ['admin']);
+        $account = $this->account($agent, $admin);
+        $website = $this->newWebsite($admin, $account, ['https_redirect' => false]);
+        self::assertFalse($this->answer($agent, $website, $account)['payload']['https_redirect']);
+
+        // The form's switch, ticked and unticked.
+        $admin->post('/websites/' . $website->uid . '/settings', ['domains' => 'example.com www.example.com', 'document_root' => 'example.com', 'php' => '1', 'https_redirect' => '1']);
+        self::assertTrue($this->answer($agent, $website, $account)['payload']['https_redirect']);
+        $admin->post('/websites/' . $website->uid . '/settings', ['domains' => 'example.com www.example.com', 'document_root' => 'example.com', 'php' => '1', 'https_redirect' => '0']);
+        self::assertFalse($this->answer($agent, $website, $account)['payload']['https_redirect']);
+
+        // A redirect may not take the certificate checks' path.
+        $response = $admin->sendJson('PUT', '/api/v1/websites/' . $website->uid . '/settings', ['redirects' => [['from' => '/.well-known/acme-challenge/x', 'to' => '/', 'code' => 302]]]);
+        self::assertSame(422, $response->status());
+    }
+
+    private function auditCount(string $action, string $outcome): int
+    {
+        return $this->service(ConnectionManager::class)->connection()->table('audit_events')->where('action', $action)->where('outcome', $outcome)->count();
     }
 }

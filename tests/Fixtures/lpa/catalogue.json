@@ -98,6 +98,12 @@
           "system.metrics": [
             1
           ],
+          "website.certificate.issue": [
+            1
+          ],
+          "website.certificate.remove": [
+            1
+          ],
           "website.create": [
             1
           ],
@@ -227,6 +233,49 @@
       }
     },
     {
+      "op": "website.certificate.issue",
+      "op_version": 1,
+      "mutating": true,
+      "idempotent": true,
+      "scope": "website",
+      "timeout_seconds": 300,
+      "max_result_bytes": 4096,
+      "example_result": {
+        "website_id": "01JB2W5Z6X7Y8Z9A0B1C2D3E4H",
+        "system_user": "lpabcdefgh",
+        "state": "active",
+        "revision": "aa4dc04bb5a89b47",
+        "document_root": "/home/lpabcdefgh/web/example.com",
+        "certificate": {
+          "domains": [
+            "example.com",
+            "www.example.com"
+          ],
+          "issuer": "Pretend Pretend Root",
+          "serial": "03e9",
+          "not_before": 1793177466,
+          "not_after": 1800953526
+        }
+      }
+    },
+    {
+      "op": "website.certificate.remove",
+      "op_version": 1,
+      "mutating": true,
+      "idempotent": true,
+      "scope": "website",
+      "timeout_seconds": 120,
+      "max_result_bytes": 4096,
+      "example_result": {
+        "website_id": "01JB2W5Z6X7Y8Z9A0B1C2D3E4H",
+        "system_user": "lpabcdefgh",
+        "state": "active",
+        "revision": "575b51daae0412a9",
+        "document_root": "/home/lpabcdefgh/web/example.com",
+        "certificate": null
+      }
+    },
+    {
       "op": "website.create",
       "op_version": 1,
       "mutating": true,
@@ -238,8 +287,9 @@
         "website_id": "01JB2W5Z6X7Y8Z9A0B1C2D3E4H",
         "system_user": "lpabcdefgh",
         "state": "active",
-        "revision": "87eb15f3b2d6e249",
-        "document_root": "/home/lpabcdefgh/web/example.com"
+        "revision": "575b51daae0412a9",
+        "document_root": "/home/lpabcdefgh/web/example.com",
+        "certificate": null
       }
     },
     {
@@ -253,7 +303,8 @@
       "example_result": {
         "website_id": "01JB2W5Z6X7Y8Z9A0B1C2D3E4H",
         "system_user": "lpabcdefgh",
-        "state": "deleted"
+        "state": "deleted",
+        "certificate": null
       }
     },
     {
@@ -268,8 +319,9 @@
         "website_id": "01JB2W5Z6X7Y8Z9A0B1C2D3E4H",
         "system_user": "lpabcdefgh",
         "state": "suspended",
-        "revision": "0a3a82e67d825332",
-        "document_root": "/home/lpabcdefgh/web/example.com"
+        "revision": "e261cc99cf89a4d8",
+        "document_root": "/home/lpabcdefgh/web/example.com",
+        "certificate": null
       }
     },
     {
@@ -284,8 +336,9 @@
         "website_id": "01JB2W5Z6X7Y8Z9A0B1C2D3E4H",
         "system_user": "lpabcdefgh",
         "state": "active",
-        "revision": "87eb15f3b2d6e249",
-        "document_root": "/home/lpabcdefgh/web/example.com"
+        "revision": "575b51daae0412a9",
+        "document_root": "/home/lpabcdefgh/web/example.com",
+        "certificate": null
       }
     },
     {
@@ -300,8 +353,9 @@
         "website_id": "01JB2W5Z6X7Y8Z9A0B1C2D3E4H",
         "system_user": "lpabcdefgh",
         "state": "active",
-        "revision": "87eb15f3b2d6e249",
-        "document_root": "/home/lpabcdefgh/web/example.com"
+        "revision": "575b51daae0412a9",
+        "document_root": "/home/lpabcdefgh/web/example.com",
+        "certificate": null
       }
     },
     {
@@ -318,6 +372,7 @@
         "missing": [],
         "unknown_files": [],
         "include": "ok",
+        "certificates": [],
         "nginx_test": "not_run",
         "reloaded": false
       }

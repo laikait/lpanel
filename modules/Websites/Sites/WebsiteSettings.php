@@ -34,7 +34,7 @@ final class WebsiteSettings
      *
      * @param array<string, mixed> $raw
      *
-     * @return array{settings: array{domains: list<string>, document_root: string, php: bool, index: list<string>, redirects: list<array{from: string, to: string, code: int}>, headers: list<array{name: string, value: string}>}, errors: array<string, string>}
+     * @return array{settings: array{domains: list<string>, document_root: string, php: bool, index: list<string>, redirects: list<array{from: string, to: string, code: int}>, headers: list<array{name: string, value: string}>, https_redirect: bool}, errors: array<string, string>}
      */
     public static function normalize(array $raw): array
     {
@@ -116,6 +116,8 @@ final class WebsiteSettings
                 $errors[$key] ??= 'A redirect\'s path cannot contain . or .. folders.';
             } elseif (\str_starts_with($from, '/.well-known/lpanel')) {
                 $errors[$key] ??= '/.well-known/lpanel-probe is LPanel\'s own path.';
+            } elseif (\str_starts_with($from . '/', '/.well-known/acme-challenge/')) {
+                $errors[$key] ??= '/.well-known/acme-challenge/ is where certificate checks are answered.';
             } elseif (isset($seen[$from])) {
                 $errors[$key] ??= \sprintf('There is already a redirect from %s.', $from);
             }
@@ -167,7 +169,8 @@ final class WebsiteSettings
         }
 
         return [
-            'settings' => ['domains' => $domains, 'document_root' => $root, 'php' => $php, 'index' => $index, 'redirects' => $redirects, 'headers' => $headers],
+            // On unless asked off (ADR-0015); a form sends 0 for an unticked box.
+            'settings' => ['domains' => $domains, 'document_root' => $root, 'php' => $php, 'index' => $index, 'redirects' => $redirects, 'headers' => $headers, 'https_redirect' => \array_key_exists('https_redirect', $raw) ? self::bool($raw['https_redirect']) : true],
             'errors' => $errors,
         ];
     }

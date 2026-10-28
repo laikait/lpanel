@@ -21,6 +21,7 @@ use App\Modules\Websites\Http\WebsitePanels;
 use App\Modules\Websites\Http\WebsitesApi;
 use App\Modules\Websites\Http\WebsitesPage;
 use App\Modules\Websites\Http\WebsiteViews;
+use App\Modules\Websites\Sites\CertificateStore;
 use App\Modules\Websites\Sites\WebsiteAccess;
 use App\Modules\Websites\Sites\WebsiteActions;
 use App\Modules\Websites\Sites\WebsiteStore;
@@ -48,6 +49,7 @@ return static function (ModuleContext $module): void {
 
     $module->services(static function (ServiceRegistrar $services): void {
         $services->singleton(WebsiteStore::class);
+        $services->singleton(CertificateStore::class);
         $services->singleton(WebsiteAccess::class);
         $services->singleton(WebsiteActions::class);
         $services->singleton(WebsiteViews::class);
@@ -95,6 +97,15 @@ return static function (ModuleContext $module): void {
             ->option('confirm', 'The website\'s primary domain, typed again.')
             ->option('timeout', 'With --wait, seconds to wait (default 120).')
             ->flag('wait', 'Wait until it is deleted.');
+        $commands->add('websites:certificate', [WebsiteCommands::class, 'certificate'])
+            ->describe('Get a website a certificate now (or renew it), or with --remove serve it over HTTP only again.')
+            ->argument('website', 'The website\'s id, or one of its domains.')
+            ->option('timeout', 'With --wait, seconds to wait (default 300).')
+            ->flag('remove', 'Remove its certificate; LPanel stops asking for one on its own.')
+            ->flag('wait', 'Wait until it is done; exit 0 only if it worked.');
+        $commands->add('certificates:renew', [WebsiteCommands::class, 'renew'])
+            ->describe('Ask for the certificates that are due: first ones, renewals and retries (the scheduler runs it every five minutes).')
+            ->option('limit', 'At most this many in one run (default 20).');
         $commands->add('websites:check', [WebsiteCommands::class, 'check'])
             ->describe('Ask servers to compare their websites\' Nginx files with what LPanel wrote.')
             ->argument('server', 'One server\'s id or name (default: every server with websites).', required: false);
@@ -103,6 +114,8 @@ return static function (ModuleContext $module): void {
     $module->schedules(static function (ScheduleCollector $schedules): void {
         // Finds hand edits (ADR-0014): reported, reloaded if nginx -t passes, never overwritten.
         $schedules->command('websites:check')->hourly();
+        // First certificates within minutes, renewals when due, retries after their wait (ADR-0015).
+        $schedules->command('certificates:renew')->everyFiveMinutes();
     });
 
     $module->routes(static function (RouteCollector $routes): void {
@@ -119,6 +132,9 @@ return static function (ModuleContext $module): void {
         foreach (['settings', 'suspend', 'unsuspend', 'delete', 'retry', 'restore'] as $action) {
             $routes->post('/websites/{id}/' . $action, [WebsitesPage::class, $action])->name('websites.' . $action)->where('id', $ulid)->meta(['can' => 'websites.own', 'rate_limit' => '30/1m']);
         }
+        // Certificates (ADR-0015): an authority limits how often it issues, so these are slower.
+        $routes->post('/websites/{id}/certificate', [WebsitesPage::class, 'certify'])->name('websites.certify')->where('id', $ulid)->meta(['can' => 'websites.own', 'rate_limit' => '10/10m']);
+        $routes->post('/websites/{id}/certificate/remove', [WebsitesPage::class, 'uncertify'])->name('websites.uncertify')->where('id', $ulid)->meta(['can' => 'websites.own', 'rate_limit' => '10/10m']);
 
         $api = static function (RouteCollector $routes) use ($ulid): void {
             $routes->get('/websites', [WebsitesApi::class, 'index'])->name('websites.index')->meta(['can' => 'websites.own']);
@@ -129,6 +145,8 @@ return static function (ModuleContext $module): void {
             foreach (['suspend', 'unsuspend', 'retry', 'restore'] as $action) {
                 $routes->post('/websites/{id}/' . $action, [WebsitesApi::class, $action])->name('websites.' . $action)->where('id', $ulid)->meta(['can' => 'websites.own', 'rate_limit' => '30/1m']);
             }
+            $routes->post('/websites/{id}/certificate', [WebsitesApi::class, 'certify'])->name('websites.certify')->where('id', $ulid)->meta(['can' => 'websites.own', 'rate_limit' => '10/10m']);
+            $routes->delete('/websites/{id}/certificate', [WebsitesApi::class, 'uncertify'])->name('websites.uncertify')->where('id', $ulid)->meta(['can' => 'websites.own', 'rate_limit' => '10/10m']);
         };
         // Cookie-authenticated, so CSRF stays on (ARCHITECTURE.md §4).
         $routes->group('/api/v1', $api, name: 'api.v1.', meta: ['api' => true]);

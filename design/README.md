@@ -29,6 +29,7 @@ repository). Read them in this order:
 | [0012](adr/0012-panel-package-php-fpm-and-agent-port.md) | Panel package: own PHP-FPM master, agents on :8444, `.deb` with local MariaDB | Accepted |
 | [0013](adr/0013-hosting-accounts-on-a-server.md) | Hosting accounts on a server, and the `lpa-exec` socket protocol | Accepted |
 | [0014](adr/0014-websites-through-the-hosting-nginx.md) | Websites through the hosting Nginx: managed settings, checked apply, rollback, hand edits | Accepted |
+| [0015](adr/0015-website-certificates-with-acme-http-01.md) | Website certificates from Let's Encrypt (ACME HTTP-01), through the same checked change | Accepted |
 
 `design/` is in no LPHP manifest, so `framework:update` never touches it. It is
 outside `public/`, so the web server never serves it.

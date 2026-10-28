@@ -7,8 +7,9 @@
 
 {% set served = info.account_suspended or w.status in ['suspended', 'suspending'] ? 'paused' : (w.status == 'active' ? 'live' : 'other') %}
 {% set tone = w.configState != 'ok' and w.status != 'deleted' ? 'amber' : (served == 'paused' ? 'amber' : (w.status == 'active' ? 'success' : (w.status in ['failed', 'deleting'] ? 'danger' : (w.status == 'deleted' ? 'muted' : 'primary')))) %}
-{% set doing = {'provisioning': 'Setting up the website', 'updating': 'Applying the new settings', 'suspending': 'Suspending the website', 'resuming': 'Unsuspending the website', 'deleting': 'Removing the website from Nginx'} %}
-{% set what = {'create': 'setup', 'update': 'change of settings', 'suspend': 'suspension', 'unsuspend': 'unsuspension', 'delete': 'deletion'} %}
+{% set doing = {'provisioning': 'Setting up the website', 'updating': w.lastAction == 'uncertify' ? 'Removing its certificate' : 'Applying the new settings', 'suspending': 'Suspending the website', 'resuming': 'Unsuspending the website', 'deleting': 'Removing the website from Nginx', 'securing': 'Getting a certificate from Let\'s Encrypt'} %}
+{% set what = {'create': 'setup', 'update': 'change of settings', 'suspend': 'suspension', 'unsuspend': 'unsuspension', 'delete': 'deletion', 'certify': 'certificate request', 'uncertify': 'certificate removal'} %}
+{% set secured = certificate and certificate.exists and certificate.state != 'expired' %}
 
 {% macro field_error(errors, key) %}{% if errors[key] is defined %}<div class="invalid-feedback d-block">{{ errors[key] }}</div>{% endif %}{% endmacro %}
 
@@ -33,7 +34,7 @@
   <span class="lp-chip lp-chip--info">{{ ui.icon('loader', 'lp-spin') }}</span>
   <div class="flex-grow-1">
     <div class="fw-semibold">{{ doing[w.status] }}…</div>
-    <div class="small text-body-secondary">The server's agent tests the configuration with <code>nginx -t</code> before anything goes live, usually within seconds. This page updates by itself.{% if server_status == 'offline' %} <strong>The server is offline right now</strong>, so it waits for the agent to come back.{% endif %}</div>
+    <div class="small text-body-secondary">{% if w.status == 'securing' %}Let's Encrypt checks each domain over HTTP, then the agent tests the new configuration with <code>nginx -t</code>. The website is served as before meanwhile, usually under a minute. This page updates by itself.{% else %}The server's agent tests the configuration with <code>nginx -t</code> before anything goes live, usually within seconds. This page updates by itself.{% endif %}{% if server_status == 'offline' %} <strong>The server is offline right now</strong>, so it waits for the agent to come back.{% endif %}</div>
   </div>
 </div>
 {% elseif w.configState != 'ok' and w.status != 'deleted' %}
@@ -104,7 +105,7 @@
       <div class="lp-card__header"><div><h2 class="lp-card__title">Serving</h2><p class="lp-card__subtitle">{{ info.meaning }}</p></div></div>
       <div class="card-body">
         <div class="lp-facts">
-          <div><span>Domains</span><strong>{% for d in w.domains %}{% if served == 'live' %}<a class="d-block text-break" href="http://{{ d }}/" rel="noopener" target="_blank">{{ d }}</a>{% else %}<div class="text-break">{{ d }}</div>{% endif %}{% endfor %}</strong></div>
+          <div><span>Domains</span><strong>{% for d in w.domains %}{% if served == 'live' %}<a class="d-block text-break" href="{{ secured and d not in certificate.uncovered ? 'https' : 'http' }}://{{ d }}/" rel="noopener" target="_blank">{{ d }}</a>{% else %}<div class="text-break">{{ d }}</div>{% endif %}{% endfor %}</strong></div>
           <div><span>Folder</span><strong>web/{{ w.settings.document_root }}{% if info.account %}<small class="d-block text-body-tertiary fw-normal">in <code>/home/{{ info.account.system_user }}</code></small>{% endif %}</strong></div>
           <div><span>PHP</span><strong>{% if info.php %}{{ info.account and info.account.php_version ? 'PHP ' ~ info.account.php_version : 'On' }}<small class="d-block text-body-tertiary fw-normal">runs as <code>{{ info.account ? info.account.system_user : '—' }}</code></small>{% else %}Off<small class="d-block text-body-tertiary fw-normal">static files only</small>{% endif %}</strong></div>
           <div><span>Account</span><strong>{% if account_url %}<a href="{{ account_url }}">{{ info.account.label }}</a>{% else %}{{ info.account ? info.account.label : '—' }}{% endif %}</strong></div>
@@ -113,6 +114,70 @@
         </div>
       </div>
     </section>
+
+    {% if certificate %}
+    {% set c = certificate.c %}
+    <section class="card lp-card" id="https">
+      <div class="lp-card__header">
+        <div class="d-flex align-items-start gap-3 min-w-0">
+          <span class="lp-chip lp-chip--{{ {'success': 'success', 'warning': 'amber', 'danger': 'danger', 'info': 'info', 'muted': 'muted'}[certificate.tone] }}">{{ ui.icon(certificate.exists ? 'lock' : 'shield-off') }}</span>
+          <div class="min-w-0">
+            <h2 class="lp-card__title">HTTPS</h2>
+            <p class="lp-card__subtitle">
+              {%- if certificate.state == 'active' -%}Served over HTTPS{{ certificate.redirect ? ', and HTTP sends visitors there' : ' and HTTP' }}. LPanel renews the certificate on its own.
+              {%- elseif certificate.state == 'expiring' and certificate.uncovered is not empty -%}The certificate does not cover every domain yet. LPanel asks for a new one on its own.
+              {%- elseif certificate.state == 'expiring' -%}The certificate expires soon and has not been renewed yet. LPanel keeps trying.
+              {%- elseif certificate.state == 'expired' -%}The certificate has expired: browsers warn visitors. LPanel keeps trying to renew it.
+              {%- elseif certificate.state == 'pending' -%}LPanel asks Let's Encrypt for a certificate on its own, within minutes, once every domain points at this server.
+              {%- elseif certificate.state == 'failed' -%}{{ certificate.gave_up ? 'LPanel stopped asking on its own after a week without success.' : 'The last request did not succeed. LPanel tries again on its own.' }}
+              {%- else -%}Served over HTTP only. LPanel does not ask for a certificate until someone gets one.{%- endif -%}
+            </p>
+          </div>
+        </div>
+        <span class="lp-badge{{ certificate.tone == 'muted' ? '' : ' lp-badge--' ~ certificate.tone }} lp-badge--dot flex-shrink-0">{{ certificate.label }}</span>
+      </div>
+      <div class="card-body">
+        {% if certificate.exists %}
+        <div class="lp-facts">
+          <div><span>Covers</span><strong>{% for d in c.domains %}<div class="text-break">{{ d }}</div>{% endfor %}{% for d in certificate.uncovered %}<div class="text-break text-warning-emphasis">{{ ui.icon('alert') }} {{ d }} <small class="fw-normal">not yet</small></div>{% endfor %}</strong></div>
+          <div><span>Expires</span><strong{{ certificate.state in ['expired', 'expiring'] and certificate.uncovered is empty ? ' class="text-danger-emphasis"' : '' }}>{{ ui.time(c.notAfter) }}<small class="d-block text-body-tertiary fw-normal">{{ certificate.days_left < 0 ? 'expired ' ~ (0 - certificate.days_left) ~ ' days ago' : (certificate.days_left == 0 ? 'today' : 'in ' ~ certificate.days_left ~ ' day' ~ (certificate.days_left == 1 ? '' : 's')) }}</small></strong></div>
+          <div><span>Renews</span><strong>{% if c.auto and c.nextAttemptAt %}{{ ui.time(c.nextAttemptAt) }}<small class="d-block text-body-tertiary fw-normal">on its own</small>{% else %}—{% endif %}</strong></div>
+          <div><span>Issuer</span><strong>{{ c.issuer ?: '—' }}{% if c.issuedAt %}<small class="d-block text-body-tertiary fw-normal">issued {{ c.issuedAt|date('j M Y') }}</small>{% endif %}</strong></div>
+          <div><span>HTTP</span><strong>{{ certificate.redirect ? 'Redirects to HTTPS' : 'Served too' }}<small class="d-block text-body-tertiary fw-normal">{{ certificate.redirect ? 'except certificate checks' : 'change it in the settings' }}</small></strong></div>
+          {% if admin %}<div><span>Serial</span><strong class="font-monospace text-break small">{{ c.serial }}</strong></div>{% endif %}
+        </div>
+        {% elseif certificate.state == 'failed' or c.lastError %}
+        <div class="lp-alert alert-danger">
+          {{ ui.icon('alert') }}
+          <div class="min-w-0">
+          <div class="fw-semibold mb-1">Let's Encrypt did not issue one{% if c.lastAttemptAt %} <span class="fw-normal text-body-secondary">· {{ ui.time(c.lastAttemptAt) }}</span>{% endif %}</div>
+          {% set why = (c.lastError ?: 'The request failed.')|replace({'the certificate authority did not issue: ': ''}) %}
+          <div class="small text-break">{{ why }}{% if c.lastErrorCode %} <code class="ms-1">{{ c.lastErrorCode }}</code>{% endif %}</div>
+          <div class="small text-body-secondary mt-2">Each domain must point at this server and answer on port 80.{% if c.nextAttemptAt %} Next try {{ ui.time(c.nextAttemptAt) }}, after {{ c.attempts }} failed attempt{{ c.attempts == 1 ? '' : 's' }}.{% endif %}</div>
+          </div>
+        </div>
+        {% else %}
+        <ul class="lp-assurance mb-0">
+          <li>{{ ui.icon('check') }}<span>One certificate for every domain: {{ w.domains|join(', ') }}.</span></li>
+          <li>{{ ui.icon('check') }}<span>Each domain needs a DNS record pointing at {{ server ? server.name : 'this server' }}; Let's Encrypt checks it over HTTP.</span></li>
+          <li>{{ ui.icon('check') }}<span>The key is made on the server and never leaves it.</span></li>
+        </ul>
+        {% endif %}
+      </div>
+      {% if can_certify or (configures and w.status == 'securing') %}
+      <div class="lp-card__footer lp-card__footer--actions gap-2 flex-wrap">
+        {% if certificate.exists %}
+        <form method="post" action="{{ actions.uncertify }}" class="me-auto" data-lp-confirm="{{ w.domain }} is served over HTTP only, its key is deleted, and LPanel stops asking for a certificate on its own until you get one again.{{ certificate.redirect ? ' Visitors sent to https:// get an error until then.' : '' }}" data-lp-confirm-title="Remove the certificate?" data-lp-confirm-ok="Remove">
+          {{ ui.csrf(token) }}<button class="btn btn-sm btn-link text-danger px-0 lp-btn-icon" type="submit"{{ can_certify ? '' : ' disabled' }}>{{ ui.icon('trash') }}Remove certificate</button>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ actions.certify }}"{{ certificate.exists ? '' : ' class="ms-auto"' }}>
+          {{ ui.csrf(token) }}<button class="btn btn-sm {{ certificate.exists ? 'btn-light' : 'btn-primary' }} lp-btn-icon" type="submit"{{ can_certify ? '' : ' disabled' }}>{{ ui.icon(certificate.exists ? 'refresh' : 'lock') }}{{ certificate.exists ? (certificate.uncovered is empty ? 'Renew now' : 'Get a new certificate') : (certificate.state == 'failed' ? 'Try again now' : 'Get certificate now') }}</button>
+        </form>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
 
     {% if w.status != 'deleted' %}
     <section class="card lp-card" id="settings">
@@ -159,6 +224,13 @@
               {{ _self.field_error(errors, 'index') }}
               <div class="form-text">Tried in order for a folder's address. Empty: the default shown.</div>
             </div>
+          </div>
+
+          <div class="form-check form-switch">
+            <input type="hidden" name="https_redirect" value="0">
+            <input class="form-check-input" type="checkbox" role="switch" id="https_redirect" name="https_redirect" value="1"{{ settings.https_redirect ?? true ? ' checked' : '' }}>
+            <label class="form-check-label" for="https_redirect">Redirect HTTP to HTTPS</label>
+            <div class="form-text mt-0">Once it has a certificate: every <code>http://</code> address answers 301 to its <code>https://</code> one. Certificate checks are still answered over HTTP.</div>
           </div>
 
           <div class="lp-repeat" data-lp-repeater data-lp-next="{{ settings.redirects|length + 1 }}" data-lp-max="{{ limits.redirects }}">
@@ -230,6 +302,7 @@
       <div class="card-body">
         <div class="lp-facts">
           <div><span>PHP</span><strong>{{ settings.php ? 'On' : 'Off' }}</strong></div>
+          <div><span>HTTP to HTTPS</span><strong>{{ settings.https_redirect ?? true ? 'Redirects' : 'Both served' }}</strong></div>
           <div><span>Index files</span><strong class="font-monospace">{{ settings.index is empty ? (settings.php ? 'index.php index.html index.htm' : 'index.html index.htm') : settings.index|join(' ') }}</strong></div>
         </div>
         <div class="lp-section-title mt-4">Redirects</div>
@@ -321,6 +394,7 @@
           <li>{{ ui.icon('check') }}<span>Every change is tested with <code>nginx -t</code> before it goes live, and confirmed after.</span></li>
           <li>{{ ui.icon('check') }}<span>A change that does not take is undone; the previous version keeps serving.</span></li>
           <li>{{ ui.icon('check') }}<span>A link in its folder can only lead to the account's own files.</span></li>
+          <li>{{ ui.icon('check') }}<span>Its certificate is renewed on its own; the key never leaves the server.</span></li>
         </ul>
       </div>
     </section>

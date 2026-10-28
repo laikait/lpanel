@@ -67,7 +67,7 @@ final class WebsitesPage
     {
         $account = $request->query('account');
 
-        return $this->form($request, $identity, ['account' => \is_string($account) ? $account : '', 'domains' => '', 'document_root' => '', 'php' => true], [], null);
+        return $this->form($request, $identity, ['account' => \is_string($account) ? $account : '', 'domains' => '', 'document_root' => '', 'php' => true, 'https_redirect' => true], [], null);
     }
 
     public function store(Request $request, Identity $identity): Response
@@ -77,6 +77,7 @@ final class WebsitesPage
             'domains' => self::text($request->input('domains')),
             'document_root' => self::text($request->input('document_root')),
             'php' => $request->input('php') !== null,
+            'https_redirect' => $request->input('https_redirect') !== '0',
         ];
         $account = $this->accounts->byUid($input['account']);
 
@@ -121,6 +122,7 @@ final class WebsitesPage
             'index' => self::text($request->input('index')),
             'redirects' => self::rows($request->input('redirects')),
             'headers' => self::rows($request->input('headers')),
+            'https_redirect' => $request->input('https_redirect') !== '0',
         ];
         $checked = WebsiteSettings::normalize($raw);
 
@@ -158,6 +160,36 @@ final class WebsitesPage
         }
 
         return new RedirectResponse($this->pages->url('websites.show', ['id' => $website->uid]), 303);
+    }
+
+    /** POST /websites/{id}/certificate: get one now, or renew it. */
+    public function certify(Identity $identity, string $id): Response
+    {
+        return $this->certificateAction($identity, $id, 'issue', 'Asking Let\'s Encrypt for a certificate for %s. It checks each domain over HTTP; this usually takes under a minute.');
+    }
+
+    /** POST /websites/{id}/certificate/remove */
+    public function uncertify(Identity $identity, string $id): Response
+    {
+        return $this->certificateAction($identity, $id, 'remove', 'Removing the certificate of %s. It is served over HTTP only once that is done.');
+    }
+
+    private function certificateAction(Identity $identity, string $id, string $what, string $done): Response
+    {
+        $website = $this->access->find($identity, $id, $what === 'issue' ? 'certify' : 'uncertify');
+
+        try {
+            $website = $this->actions->certificate($identity, $website, $what);
+            $this->pages->flash($what === 'remove' ? 'warning' : 'success', \sprintf($done, $website->domain));
+        } catch (OperationException $e) {
+            if ($e->status === 403) {
+                throw HttpException::forbidden($e->getMessage());
+            }
+
+            $this->pages->flash('danger', $e->getMessage());
+        }
+
+        return new RedirectResponse($this->pages->url('websites.show', ['id' => $website->uid]) . '#https', 303);
     }
 
     public function suspend(Identity $identity, string $id): Response
@@ -250,6 +282,8 @@ final class WebsitesPage
             'can_manage' => $manager,
             'can_configure' => $configures && $website->allows('update') && !$website->isEdited(),
             'configures' => $configures,
+            'certificate' => $website->status === Website::DELETED ? null : $this->views->certificate($website),
+            'can_certify' => $configures && $website->allows('certify') && !$website->isEdited(),
             'account_url' => $account !== null && ($this->accountAccess->seesAll($identity) || $account->ownerUid === $identity->id) ? $info['account']['url'] ?? null : null,
             'history' => $seesOperations ? $this->views->history($this->operations->forTarget('website', $website->uid, 10)) : [],
             'sees_operations' => $seesOperations,
@@ -262,13 +296,15 @@ final class WebsitesPage
                 'delete' => $url('websites.delete'),
                 'retry' => $url('websites.retry'),
                 'restore' => $url('websites.restore'),
+                'certify' => $url('websites.certify'),
+                'uncertify' => $url('websites.uncertify'),
                 'check' => $this->pages->url('websites.check'),
             ],
         ], $status, $identity, 'websites');
     }
 
     /**
-     * @param array{account: string, domains: string, document_root: string, php: bool} $input
+     * @param array{account: string, domains: string, document_root: string, php: bool, https_redirect: bool} $input
      * @param array<string, string> $errors
      */
     private function form(Request $request, Identity $identity, array $input, array $errors, ?string $error, int $status = 200): Response
