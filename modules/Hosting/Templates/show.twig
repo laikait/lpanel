@@ -94,6 +94,8 @@
     </section>
     {% endif %}
 
+    {% for p in panels.main %}{% include p.template with p.context %}{% endfor %}
+
     {% if sees_operations %}
     <section class="card lp-card">
       <div class="lp-card__header"><div><h2 class="lp-card__title">History</h2><p class="lp-card__subtitle">What the panel asked the server's agent to do for this account.</p></div></div>
@@ -153,13 +155,15 @@
       <div class="lp-card__header"><h2 class="lp-card__title">Delete account</h2></div>
       <form method="post" action="{{ actions.delete }}" class="card-body">
         {{ ui.csrf(token) }}
-        <p class="small text-body-secondary">Removes the Linux user, its PHP pool, and its home with <strong>every file in it</strong>. There are no backups yet, so this cannot be undone.</p>
+        <p class="small text-body-secondary">Removes the Linux user, its PHP pool, and its home with <strong>every file in it</strong>. There are no backups yet, so this cannot be undone. Delete its websites first.</p>
         <label class="form-label small" for="confirm">Type <code class="user-select-all">{{ a.systemUser }}</code> to confirm</label>
         <input class="form-control form-control-sm font-monospace mb-3" id="confirm" name="confirm" autocomplete="off" spellcheck="false" pattern="{{ a.systemUser }}" required{{ a.allows('delete') ? '' : ' disabled' }}>
         <button class="btn btn-danger btn-sm w-100 lp-btn-icon justify-content-center" type="submit"{{ a.allows('delete') ? '' : ' disabled' }}>{{ ui.icon('trash') }}Delete account and files</button>
       </form>
     </section>
     {% endif %}
+
+    {% for p in panels.side %}{% include p.template with p.context %}{% endfor %}
 
     <section class="card lp-card">
       <div class="card-body">

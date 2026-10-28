@@ -58,6 +58,11 @@ final class ServerPanels
         $runnable = [];
 
         foreach ($this->catalogue->all() as $definition) {
+            // An account's or a website's operation is asked for from its own screen.
+            if ($definition->scope !== 'server') {
+                continue;
+            }
+
             $supported = \in_array($definition->version, $server->capabilities[$definition->op] ?? [], true);
             $runnable[$definition->op] = [
                 'definition' => $definition,

@@ -1,0 +1,27 @@
+{% import "macros/ui.twig" as ui %}
+
+<section class="card lp-card" id="websites">
+  <div class="lp-card__header">
+    <div><h2 class="lp-card__title">Websites</h2><p class="lp-card__subtitle">{{ site_account_suspended ? 'Answered 503 while the account is suspended.' : 'Served from this account\'s web folder, with its PHP.' }}</p></div>
+    {% if site_new_url %}<a class="btn btn-sm btn-light lp-btn-icon" href="{{ site_new_url }}">{{ ui.icon('plus') }}Add website</a>{% endif %}
+  </div>
+  {% if site_rows is empty %}
+    {{ ui.empty('globe', 'No websites yet', site_new_url ? 'Add one: it is served from a folder in web/.' : 'Websites in this account appear here.') }}
+  {% else %}
+  <ul class="lp-oplist">
+    {% for row in site_rows %}
+    {% set w = row.website %}
+    <li class="lp-oplist__item position-relative">
+      <div class="min-w-0">
+        <a class="fw-medium stretched-link text-reset text-decoration-none" href="{{ row.url }}">{{ w.domain }}</a>
+        <div class="small text-body-tertiary text-truncate font-monospace">web/{{ w.settings.document_root }}{% if row.aliases is not empty %} · +{{ row.aliases|length }}{% endif %}</div>
+      </div>
+      <div class="text-end">
+        {% if row.account_suspended and w.status == 'active' %}<span class="lp-badge lp-badge--warning lp-badge--dot">503</span>{% else %}{{ ui.status_badge(w.status) }}{% endif %}
+        {% if w.configState != 'ok' %}<div class="small text-warning-emphasis mt-1">{{ ui.icon('alert') }} edited outside</div>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>

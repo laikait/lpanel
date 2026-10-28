@@ -6,6 +6,7 @@ namespace App\Modules\Hosting\Http;
 
 use App\Engine\Auth\Authorizer;
 use App\Engine\Auth\Identity;
+use App\Engine\Filter\FilterEngine;
 use App\Engine\Http\HttpException;
 use App\Engine\Http\RedirectResponse;
 use App\Engine\Http\Request;
@@ -39,6 +40,7 @@ final class AccountsPage
         private readonly OperationStore $operations,
         private readonly AgentSettings $settings,
         private readonly Authorizer $authorizer,
+        private readonly FilterEngine $filters,
     ) {}
 
     public function index(Request $request, Identity $identity): Response
@@ -105,6 +107,7 @@ final class AccountsPage
             'history' => $seesOperations ? $this->views->history($this->operations->forTarget('account', $account->uid, 10)) : [],
             'sees_operations' => $seesOperations,
             'watch' => $account->isBusy() ? $this->pages->url('api.v1.accounts.show', ['id' => $account->uid]) : null,
+            'panels' => self::panels($this->filters->apply('hosting.account.panels', [], $account, $identity)),
             'index_url' => $this->pages->url('accounts.index'),
             'actions' => [
                 'suspend' => $url('accounts.suspend'),
@@ -198,5 +201,24 @@ final class AccountsPage
     private static function text(mixed $value): string
     {
         return \is_string($value) ? \trim($value) : '';
+    }
+
+    /**
+     * Cards other modules add to an account's page (hosting.account.panels):
+     * ['template' => '@Module/x.twig', 'column' => 'main'|'side', 'context' => [...]].
+     *
+     * @return array{main: list<array{template: string, context: array<mixed>}>, side: list<array{template: string, context: array<mixed>}>}
+     */
+    private static function panels(mixed $given): array
+    {
+        $panels = ['main' => [], 'side' => []];
+
+        foreach (\is_array($given) ? $given : [] as $panel) {
+            if (\is_array($panel) && \is_string($panel['template'] ?? null) && \in_array($panel['column'] ?? null, ['main', 'side'], true)) {
+                $panels[$panel['column']][] = ['template' => $panel['template'], 'context' => \is_array($panel['context'] ?? null) ? $panel['context'] : []];
+            }
+        }
+
+        return $panels;
     }
 }

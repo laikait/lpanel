@@ -157,7 +157,7 @@ final class OperationsPageTest extends OperationsTestCase
 
         self::assertSame(1, \count($admin->data('/api/v1/operations?status=succeeded')));
         self::assertSame([], $admin->data('/api/v1/operations?status=active'));
-        self::assertSame(9, \count($admin->data('/api/v1/operations/catalogue')));
+        self::assertSame(15, \count($admin->data('/api/v1/operations/catalogue')));
 
         // An account operation is not asked for from a server: it has no account to act on.
         $direct = $admin->postJson($url, ['op' => 'account.delete', 'payload' => ['system_user' => 'lpabcdefgh']]);

@@ -111,6 +111,49 @@
         });
     }
 
+    // [data-lp-repeater]: rows of a list setting (redirects, headers).
+    // [data-lp-add-row] adds one from its <template data-lp-row-template>,
+    // numbered from data-lp-next; [data-lp-remove-row] removes its row, and
+    // the last row is emptied instead. Without this the form still has one
+    // blank row to fill in.
+    document.addEventListener('click', function (event) {
+        var add = event.target.closest('[data-lp-add-row]');
+        var remove = event.target.closest('[data-lp-remove-row]');
+        var repeater = (add || remove) && (add || remove).closest('[data-lp-repeater]');
+        if (!repeater) {
+            return;
+        }
+        var rows = repeater.querySelector('[data-lp-rows]');
+        if (add) {
+            var max = parseInt(repeater.getAttribute('data-lp-max'), 10) || 50;
+            if (rows.children.length >= max) {
+                return;
+            }
+            var next = parseInt(repeater.getAttribute('data-lp-next'), 10) || rows.children.length;
+            var holder = document.createElement('div');
+            holder.innerHTML = repeater.querySelector('template[data-lp-row-template]').innerHTML.replace(/__i__/g, String(next));
+            var row = holder.firstElementChild;
+            rows.appendChild(row);
+            repeater.setAttribute('data-lp-next', String(next + 1));
+            var first = row.querySelector('input');
+            if (first) {
+                first.focus();
+            }
+            return;
+        }
+        var current = remove.closest('.lp-repeat__row');
+        if (rows.children.length > 1) {
+            current.remove();
+        } else {
+            Array.prototype.forEach.call(current.querySelectorAll('input'), function (input) { input.value = ''; });
+            Array.prototype.forEach.call(current.querySelectorAll('.is-invalid'), function (el) { el.classList.remove('is-invalid'); });
+            var note = current.querySelector('.lp-repeat__error');
+            if (note) {
+                note.remove();
+            }
+        }
+    });
+
     // select[data-lp-autosubmit]: a filter applies as soon as it changes.
     document.addEventListener('change', function (event) {
         if (event.target.matches('[data-lp-autosubmit]') && event.target.form) {

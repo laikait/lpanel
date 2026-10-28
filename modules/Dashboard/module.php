@@ -24,9 +24,5 @@ return static function (ModuleContext $module): void {
 
     $module->onBoot(static function (Navigation $nav): void {
         $nav->add('main', 'dashboard', 'Dashboard', 'home', 'home', order: 0);
-
-        // Screens that are planned, so the sidebar shows where they will be.
-        // Each module replaces its entry with a live one when it ships.
-        $nav->add('hosting', 'websites', 'Websites', null, 'globe', can: 'panel.customer', order: 10, soon: 'M6b');
     });
 };

@@ -98,8 +98,8 @@ return static function (ModuleContext $module): void {
         $access->capability('users.manage', 'Create and change panel users (administrators: root only).');
 
         $access->role(Roles::ROOT, ['*'], [], 'The server\'s root account. Held by root alone, never stored.');
-        $access->role(Roles::ADMIN, ['panel.admin', 'users.*', 'audit.read', 'servers.*', 'accounts.*'], [], 'Runs the panel for root.');
-        $access->role(Roles::CUSTOMER, ['panel.customer', 'accounts.own'], [], 'A hosting customer.');
+        $access->role(Roles::ADMIN, ['panel.admin', 'users.*', 'audit.read', 'servers.*', 'accounts.*', 'websites.*'], [], 'Runs the panel for root.');
+        $access->role(Roles::CUSTOMER, ['panel.customer', 'accounts.own', 'websites.own', 'websites.configure'], [], 'A hosting customer.');
     });
 
     $module->commands(static function (CommandCollector $commands): void {

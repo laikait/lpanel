@@ -1,0 +1,329 @@
+{% extends "layout.twig" %}
+{% import "macros/ui.twig" as ui %}
+{% import "@Operations/macros.twig" as ops %}
+
+{% block title %}{{ w.domain }}{% endblock %}
+{% block crumb %}<span class="text-body-secondary">Hosting</span>{{ ui.icon('chevron-right') }}<a href="{{ index_url }}">Websites</a>{{ ui.icon('chevron-right') }}<span>{{ w.domain }}</span>{% endblock %}
+
+{% set served = info.account_suspended or w.status in ['suspended', 'suspending'] ? 'paused' : (w.status == 'active' ? 'live' : 'other') %}
+{% set tone = w.configState != 'ok' and w.status != 'deleted' ? 'amber' : (served == 'paused' ? 'amber' : (w.status == 'active' ? 'success' : (w.status in ['failed', 'deleting'] ? 'danger' : (w.status == 'deleted' ? 'muted' : 'primary')))) %}
+{% set doing = {'provisioning': 'Setting up the website', 'updating': 'Applying the new settings', 'suspending': 'Suspending the website', 'resuming': 'Unsuspending the website', 'deleting': 'Removing the website from Nginx'} %}
+{% set what = {'create': 'setup', 'update': 'change of settings', 'suspend': 'suspension', 'unsuspend': 'unsuspension', 'delete': 'deletion'} %}
+
+{% macro field_error(errors, key) %}{% if errors[key] is defined %}<div class="invalid-feedback d-block">{{ errors[key] }}</div>{% endif %}{% endmacro %}
+
+{% block content %}
+{{ ops.watch(watch, w.status) }}
+<div class="lp-profile-head">
+  <span class="lp-chip lp-chip--{{ tone }} lp-chip--xl">{{ ui.icon('globe') }}</span>
+  <div class="min-w-0">
+    <h1 class="lp-page-title mb-1 text-truncate">{{ w.domain }}</h1>
+    <div class="lp-profile-head__meta">
+      {% if info.account_suspended and w.status == 'active' %}<span class="lp-badge lp-badge--warning lp-badge--dot">Account suspended</span>{% else %}{{ ui.status_badge(w.status) }}{% endif %}
+      {% if info.account %}<span>{{ info.account.label }}</span>{% endif %}
+      {% if info.server %}<span>· {{ info.server.name }}</span>{% endif %}
+    </div>
+  </div>
+</div>
+
+{% if error %}{{ ui.alert('danger', error) }}{% endif %}
+
+{% if w.busy %}
+<div class="lp-banner lp-banner--info mb-4">
+  <span class="lp-chip lp-chip--info">{{ ui.icon('loader', 'lp-spin') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">{{ doing[w.status] }}…</div>
+    <div class="small text-body-secondary">The server's agent tests the configuration with <code>nginx -t</code> before anything goes live, usually within seconds. This page updates by itself.{% if server_status == 'offline' %} <strong>The server is offline right now</strong>, so it waits for the agent to come back.{% endif %}</div>
+  </div>
+</div>
+{% elseif w.configState != 'ok' and w.status != 'deleted' %}
+<div class="lp-banner lp-banner--warning mb-4">
+  <span class="lp-chip lp-chip--amber">{{ ui.icon('alert') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">{{ w.configState == 'missing' ? 'Its Nginx file is missing on the server' : 'Its Nginx file was edited outside LPanel' }}{% if w.configCheckedAt %} <span class="fw-normal text-body-secondary">· found {{ ui.time(w.configCheckedAt) }}</span>{% endif %}</div>
+    {% if can_manage %}
+    <div class="small text-body-secondary">LPanel leaves {{ w.configState == 'missing' ? 'it as it is' : 'the edit in place, and the server serves it if it passes nginx -t' }}. Settings cannot change until you restore LPanel's version, which replaces the file with one made from the settings below.</div>
+    {% else %}
+    <div class="small text-body-secondary">An administrator is looking at this website's configuration. Its settings can be changed again once they are done.</div>
+    {% endif %}
+  </div>
+  {% if can_manage and w.allows('update') %}
+  <form method="post" action="{{ actions.restore }}" data-lp-confirm="LPanel writes the website's Nginx file again from its settings, tests it with nginx -t, and reloads. The hand edit is gone afterwards." data-lp-confirm-title="Restore LPanel's version?" data-lp-confirm-ok="Restore">
+    {{ ui.csrf(token) }}<button class="btn btn-sm btn-primary lp-btn-icon" type="submit">{{ ui.icon('refresh') }}Restore LPanel's version</button>
+  </form>
+  {% endif %}
+</div>
+{% elseif w.status == 'failed' %}
+<div class="lp-banner lp-banner--danger mb-4">
+  <span class="lp-chip lp-chip--danger">{{ ui.icon('alert') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Setting up the website did not finish</div>
+    <div class="small text-body-secondary">{{ w.lastError ?: 'The operation failed.' }}{% if w.lastErrorCode %} <code class="ms-1">{{ w.lastErrorCode }}</code>{% endif %} Nothing was left half-done on the server.</div>
+  </div>
+  {% if can_manage %}
+  <form method="post" action="{{ actions.retry }}">{{ ui.csrf(token) }}<button class="btn btn-sm btn-primary lp-btn-icon" type="submit">{{ ui.icon('refresh') }}Try again</button></form>
+  {% endif %}
+</div>
+{% elseif w.lastError %}
+<div class="lp-banner lp-banner--warning mb-4">
+  <span class="lp-chip lp-chip--amber">{{ ui.icon('alert') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">The last {{ what[w.lastAction] ?? w.lastAction }} did not take</div>
+    <div class="small text-body-secondary">{{ w.lastError }}{% if w.lastErrorCode %} <code class="ms-1">{{ w.lastErrorCode }}</code>{% endif %} The website is served as it was before.</div>
+  </div>
+</div>
+{% elseif info.account_suspended %}
+<div class="lp-banner lp-banner--warning mb-4">
+  <span class="lp-chip lp-chip--amber">{{ ui.icon('pause') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Its hosting account is suspended</div>
+    <div class="small text-body-secondary">Every request gets "temporarily unavailable" until the account is unsuspended. Its files and settings are kept.</div>
+  </div>
+</div>
+{% elseif w.status == 'suspended' %}
+<div class="lp-banner lp-banner--warning mb-4">
+  <span class="lp-chip lp-chip--amber">{{ ui.icon('pause') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Suspended <span class="fw-normal text-body-secondary">· {{ ui.time(w.suspendedAt) }}</span></div>
+    <div class="small text-body-secondary">Every request gets "temporarily unavailable" (503). Its files and settings are kept.{{ can_manage ? '' : ' Contact your administrator to have it unsuspended.' }}</div>
+  </div>
+</div>
+{% elseif w.status == 'deleted' %}
+<div class="lp-banner mb-4">
+  <span class="lp-chip lp-chip--muted">{{ ui.icon('trash') }}</span>
+  <div class="flex-grow-1">
+    <div class="fw-semibold">Deleted <span class="fw-normal text-body-secondary">· {{ ui.time(w.deletedAt) }}</span></div>
+    <div class="small text-body-secondary">Nginx no longer serves it. Its files stayed in <code>{{ info.document_root ?: 'the account\'s web folder' }}</code>; they go when the account does.</div>
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-xl-8 d-flex flex-column gap-4">
+    <section class="card lp-card">
+      <div class="lp-card__header"><div><h2 class="lp-card__title">Serving</h2><p class="lp-card__subtitle">{{ info.meaning }}</p></div></div>
+      <div class="card-body">
+        <div class="lp-facts">
+          <div><span>Domains</span><strong>{% for d in w.domains %}{% if served == 'live' %}<a class="d-block text-break" href="http://{{ d }}/" rel="noopener" target="_blank">{{ d }}</a>{% else %}<div class="text-break">{{ d }}</div>{% endif %}{% endfor %}</strong></div>
+          <div><span>Folder</span><strong>web/{{ w.settings.document_root }}{% if info.account %}<small class="d-block text-body-tertiary fw-normal">in <code>/home/{{ info.account.system_user }}</code></small>{% endif %}</strong></div>
+          <div><span>PHP</span><strong>{% if info.php %}{{ info.account and info.account.php_version ? 'PHP ' ~ info.account.php_version : 'On' }}<small class="d-block text-body-tertiary fw-normal">runs as <code>{{ info.account ? info.account.system_user : '—' }}</code></small>{% else %}Off<small class="d-block text-body-tertiary fw-normal">static files only</small>{% endif %}</strong></div>
+          <div><span>Account</span><strong>{% if account_url %}<a href="{{ account_url }}">{{ info.account.label }}</a>{% else %}{{ info.account ? info.account.label : '—' }}{% endif %}</strong></div>
+          {% if admin %}<div><span>Configuration</span><strong{{ w.configState != 'ok' ? ' class="text-warning-emphasis"' : '' }}>{% if w.revision %}{{ w.configState == 'ok' ? 'As LPanel wrote it' : (w.configState == 'missing' ? 'File missing' : 'Edited outside LPanel') }}<small class="d-block text-body-tertiary fw-normal">revision <code>{{ w.revision }}</code></small>{% else %}—{% endif %}</strong></div>{% endif %}
+          <div><span>Last checked</span><strong>{{ ui.time(w.configCheckedAt, 'Not yet') }}</strong></div>
+        </div>
+      </div>
+    </section>
+
+    {% if w.status != 'deleted' %}
+    <section class="card lp-card" id="settings">
+      <div class="lp-card__header">
+        <div><h2 class="lp-card__title">Settings</h2><p class="lp-card__subtitle">{{ can_configure ? 'LPanel turns these into the website\'s Nginx configuration. Nginx tests it before it goes live; if it does not take, the previous settings stay.' : 'What LPanel makes the website\'s Nginx configuration from.' }}</p></div>
+      </div>
+      {% if can_configure %}
+      <form method="post" action="{{ actions.settings }}" novalidate>
+        {{ ui.csrf(token) }}
+        <div class="card-body d-flex flex-column gap-4">
+          {% if errors is not empty %}{{ ui.alert('danger', 'Some settings need a second look; nothing was changed.') }}{% endif %}
+
+          {% if can_manage %}
+          <div class="row g-3">
+            <div class="col-md-7">
+              <label class="form-label" for="domains">Domain names</label>
+              <textarea class="form-control font-monospace{{ errors.domains is defined ? ' is-invalid' : '' }}" id="domains" name="domains" rows="3" spellcheck="false" autocapitalize="off">{{ settings.domains|join("\n") }}</textarea>
+              {{ _self.field_error(errors, 'domains') }}
+              <div class="form-text">One per line, the main one first.</div>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label" for="document_root">Folder</label>
+              <div class="input-group">
+                <span class="input-group-text font-monospace small">web/</span>
+                <input class="form-control font-monospace{{ errors.document_root is defined ? ' is-invalid' : '' }}" id="document_root" name="document_root" value="{{ settings.document_root }}" spellcheck="false" autocapitalize="off">
+              </div>
+              {{ _self.field_error(errors, 'document_root') }}
+              <div class="form-text">Moving it does not move the files.</div>
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="row g-3 align-items-start">
+            <div class="col-md-5">
+              <div class="form-check form-switch mt-md-4">
+                <input class="form-check-input" type="checkbox" role="switch" id="php" name="php" value="1"{{ settings.php ? ' checked' : '' }}>
+                <label class="form-check-label" for="php">PHP</label>
+                <div class="form-text mt-0">Off: static files only; <code>.php</code> files are never handed out.</div>
+              </div>
+            </div>
+            <div class="col-md-7">
+              <label class="form-label" for="index">Index files</label>
+              <input class="form-control font-monospace{{ errors.index is defined ? ' is-invalid' : '' }}" id="index" name="index" value="{{ settings.index|join(' ') }}" spellcheck="false" autocapitalize="off" placeholder="{{ settings.php ? 'index.php index.html index.htm' : 'index.html index.htm' }}">
+              {{ _self.field_error(errors, 'index') }}
+              <div class="form-text">Tried in order for a folder's address. Empty: the default shown.</div>
+            </div>
+          </div>
+
+          <div class="lp-repeat" data-lp-repeater data-lp-next="{{ settings.redirects|length + 1 }}" data-lp-max="{{ limits.redirects }}">
+            <div class="lp-section-title d-flex align-items-center justify-content-between">
+              <span>Redirects</span>
+              <button class="btn btn-sm btn-light lp-btn-icon" type="button" data-lp-add-row>{{ ui.icon('plus') }}Add redirect</button>
+            </div>
+            <p class="small text-body-secondary mb-2">An exact path on this website, sent elsewhere: to a path here, or to another address.</p>
+            {{ _self.field_error(errors, 'redirects') }}
+            <div class="lp-repeat__head d-none d-md-grid lp-repeat__grid--redirect"><span>From</span><span>To</span><span>Kind</span><span></span></div>
+            <div data-lp-rows>
+              {% for r in settings.redirects|merge([{'from': '', 'to': '', 'code': 301}]) %}
+              {% set i = loop.index0 %}
+              <div class="lp-repeat__row lp-repeat__grid--redirect">
+                <input class="form-control form-control-sm font-monospace{{ errors['redirects.' ~ i] is defined ? ' is-invalid' : '' }}" name="redirects[{{ i }}][from]" value="{{ r.from }}" placeholder="/old-page" aria-label="Redirect from" spellcheck="false" autocapitalize="off">
+                <input class="form-control form-control-sm font-monospace{{ errors['redirects.' ~ i] is defined ? ' is-invalid' : '' }}" name="redirects[{{ i }}][to]" value="{{ r.to }}" placeholder="/new-page or https://…" aria-label="Redirect to" spellcheck="false" autocapitalize="off">
+                <select class="form-select form-select-sm" name="redirects[{{ i }}][code]" aria-label="Kind of redirect">
+                  {% for code, label in codes %}<option value="{{ code }}"{{ r.code == code ? ' selected' : '' }}>{{ label }}</option>{% endfor %}
+                </select>
+                <button class="btn btn-sm btn-link text-body-tertiary lp-repeat__remove" type="button" data-lp-remove-row aria-label="Remove this redirect" title="Remove">{{ ui.icon('x') }}</button>
+                {% if errors['redirects.' ~ i] is defined %}<div class="invalid-feedback d-block lp-repeat__error">{{ errors['redirects.' ~ i] }}</div>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            <template data-lp-row-template>
+              <div class="lp-repeat__row lp-repeat__grid--redirect">
+                <input class="form-control form-control-sm font-monospace" name="redirects[__i__][from]" placeholder="/old-page" aria-label="Redirect from" spellcheck="false" autocapitalize="off">
+                <input class="form-control form-control-sm font-monospace" name="redirects[__i__][to]" placeholder="/new-page or https://…" aria-label="Redirect to" spellcheck="false" autocapitalize="off">
+                <select class="form-select form-select-sm" name="redirects[__i__][code]" aria-label="Kind of redirect">{% for code, label in codes %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select>
+                <button class="btn btn-sm btn-link text-body-tertiary lp-repeat__remove" type="button" data-lp-remove-row aria-label="Remove this redirect" title="Remove">{{ ui.icon('x') }}</button>
+              </div>
+            </template>
+          </div>
+
+          <div class="lp-repeat" data-lp-repeater data-lp-next="{{ settings.headers|length + 1 }}" data-lp-max="{{ limits.headers }}">
+            <div class="lp-section-title d-flex align-items-center justify-content-between">
+              <span>Response headers</span>
+              <button class="btn btn-sm btn-light lp-btn-icon" type="button" data-lp-add-row>{{ ui.icon('plus') }}Add header</button>
+            </div>
+            <p class="small text-body-secondary mb-2">Sent with every answer, e.g. <code>X-Frame-Options: SAMEORIGIN</code> or a <code>Content-Security-Policy</code>.</p>
+            {{ _self.field_error(errors, 'headers') }}
+            <div class="lp-repeat__head d-none d-md-grid lp-repeat__grid--header"><span>Name</span><span>Value</span><span></span></div>
+            <div data-lp-rows>
+              {% for h in settings.headers|merge([{'name': '', 'value': ''}]) %}
+              {% set i = loop.index0 %}
+              <div class="lp-repeat__row lp-repeat__grid--header">
+                <input class="form-control form-control-sm font-monospace{{ errors['headers.' ~ i] is defined ? ' is-invalid' : '' }}" name="headers[{{ i }}][name]" value="{{ h.name }}" placeholder="Referrer-Policy" aria-label="Header name" spellcheck="false" autocapitalize="off">
+                <input class="form-control form-control-sm font-monospace{{ errors['headers.' ~ i] is defined ? ' is-invalid' : '' }}" name="headers[{{ i }}][value]" value="{{ h.value }}" placeholder="strict-origin-when-cross-origin" aria-label="Header value" spellcheck="false" autocapitalize="off">
+                <button class="btn btn-sm btn-link text-body-tertiary lp-repeat__remove" type="button" data-lp-remove-row aria-label="Remove this header" title="Remove">{{ ui.icon('x') }}</button>
+                {% if errors['headers.' ~ i] is defined %}<div class="invalid-feedback d-block lp-repeat__error">{{ errors['headers.' ~ i] }}</div>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            <template data-lp-row-template>
+              <div class="lp-repeat__row lp-repeat__grid--header">
+                <input class="form-control form-control-sm font-monospace" name="headers[__i__][name]" placeholder="Referrer-Policy" aria-label="Header name" spellcheck="false" autocapitalize="off">
+                <input class="form-control form-control-sm font-monospace" name="headers[__i__][value]" placeholder="strict-origin-when-cross-origin" aria-label="Header value" spellcheck="false" autocapitalize="off">
+                <button class="btn btn-sm btn-link text-body-tertiary lp-repeat__remove" type="button" data-lp-remove-row aria-label="Remove this header" title="Remove">{{ ui.icon('x') }}</button>
+              </div>
+            </template>
+          </div>
+        </div>
+        <div class="lp-card__footer lp-card__footer--actions gap-2">
+          <span class="small text-body-tertiary me-auto d-none d-md-inline">{{ ui.icon('lock') }} Values are checked, never pasted into the configuration.</span>
+          <button class="btn btn-primary lp-btn-icon" type="submit">{{ ui.icon('check') }}Apply settings</button>
+        </div>
+      </form>
+      {% else %}
+      <div class="card-body">
+        <div class="lp-facts">
+          <div><span>PHP</span><strong>{{ settings.php ? 'On' : 'Off' }}</strong></div>
+          <div><span>Index files</span><strong class="font-monospace">{{ settings.index is empty ? (settings.php ? 'index.php index.html index.htm' : 'index.html index.htm') : settings.index|join(' ') }}</strong></div>
+        </div>
+        <div class="lp-section-title mt-4">Redirects</div>
+        {% if settings.redirects is empty %}<p class="small text-body-tertiary mb-0">None.</p>{% else %}
+        <ul class="lp-kv-list">{% for r in settings.redirects %}<li><code>{{ r.from }}</code>{{ ui.icon('chevron-right') }}<code class="text-break">{{ r.to }}</code><span class="lp-mono-chip">{{ r.code }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        <div class="lp-section-title mt-4">Response headers</div>
+        {% if settings.headers is empty %}<p class="small text-body-tertiary mb-0">None.</p>{% else %}
+        <ul class="lp-kv-list">{% for h in settings.headers %}<li><code>{{ h.name }}</code><span class="text-break">{{ h.value }}</span></li>{% endfor %}</ul>
+        {% endif %}
+        {% if configures and w.busy %}<p class="small text-body-tertiary mt-3 mb-0">You can change these once the work under way is done.</p>{% endif %}
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    {% if sees_operations %}
+    <section class="card lp-card">
+      <div class="lp-card__header"><div><h2 class="lp-card__title">History</h2><p class="lp-card__subtitle">What the panel asked the server's agent to do for this website.</p></div></div>
+      {% if history is empty %}
+        {{ ui.empty('list-check', 'Nothing yet', 'Operations on this website appear here.') }}
+      {% else %}
+      <div class="table-responsive">
+        <table class="table lp-table lp-table--hover align-middle mb-0">
+          <thead><tr><th>Operation</th><th>State</th><th class="d-none d-md-table-cell">Asked by</th><th>When</th><th class="text-end"><span class="visually-hidden">Open</span></th></tr></thead>
+          <tbody>
+          {% for row in history %}
+            {% set o = row.op %}
+            <tr>
+              <td><a class="stretched-link text-reset text-decoration-none fw-medium" href="{{ row.url }}">{{ row.label }}</a>{% if o.attempt > 1 %}<div class="small text-body-tertiary">attempt {{ o.attempt }}</div>{% endif %}</td>
+              <td>{{ ui.status_badge(o.status) }}{% if o.errorCode %}<div class="small text-body-tertiary font-monospace mt-1">{{ o.errorCode }}</div>{% endif %}</td>
+              <td class="d-none d-md-table-cell small">{{ o.requestedByName ?: '—' }}</td>
+              <td class="small text-nowrap">{{ ui.time(o.queuedAt) }}</td>
+              <td class="text-end">{{ ui.icon('chevron-right', 'lp-row-chev') }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="col-xl-4 d-flex flex-column gap-4">
+    {% if can_manage and w.status != 'deleted' %}
+    <section class="card lp-card">
+      <div class="lp-card__header"><h2 class="lp-card__title">Manage</h2></div>
+      <div class="lp-actions">
+        {% if w.status == 'suspended' or w.status == 'resuming' %}
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold">Unsuspend</div>
+            <div class="small text-body-secondary">Serve it again from its settings.</div>
+          </div>
+          <form method="post" action="{{ actions.unsuspend }}">{{ ui.csrf(token) }}<button class="btn btn-primary btn-sm lp-btn-icon" type="submit"{{ w.allows('unsuspend') and not w.edited ? '' : ' disabled' }}>{{ ui.icon('play') }}Unsuspend</button></form>
+        </div>
+        {% else %}
+        <div class="lp-action">
+          <div>
+            <div class="fw-semibold">Suspend</div>
+            <div class="small text-body-secondary">Every request gets 503. Files and settings stay.</div>
+          </div>
+          <form method="post" action="{{ actions.suspend }}" data-lp-confirm="{{ w.domain }} answers every request with &quot;temporarily unavailable&quot; until you unsuspend it. Its files and settings are kept." data-lp-confirm-title="Suspend this website?" data-lp-confirm-ok="Suspend">
+            {{ ui.csrf(token) }}<button class="btn btn-outline-secondary btn-sm lp-btn-icon" type="submit"{{ w.allows('suspend') and not w.edited ? '' : ' disabled' }}>{{ ui.icon('pause') }}Suspend</button>
+          </form>
+        </div>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="card lp-card lp-card--danger">
+      <div class="lp-card__header"><h2 class="lp-card__title">Delete website</h2></div>
+      <form method="post" action="{{ actions.delete }}" class="card-body">
+        {{ ui.csrf(token) }}
+        <p class="small text-body-secondary">Nginx stops serving it and its configuration is removed. Its files stay in <code class="text-break">{{ info.document_root ?: 'the web folder' }}</code>.</p>
+        <label class="form-label small" for="confirm">Type <code class="user-select-all">{{ w.domain }}</code> to confirm</label>
+        <input class="form-control form-control-sm font-monospace mb-3" id="confirm" name="confirm" autocomplete="off" spellcheck="false" autocapitalize="off" required{{ w.allows('delete') ? '' : ' disabled' }}>
+        <button class="btn btn-danger btn-sm w-100 lp-btn-icon justify-content-center" type="submit"{{ w.allows('delete') ? '' : ' disabled' }}>{{ ui.icon('trash') }}Delete website</button>
+      </form>
+    </section>
+    {% endif %}
+
+    <section class="card lp-card">
+      <div class="card-body">
+        <h2 class="h6 fw-semibold mb-3">Managed for you</h2>
+        <ul class="lp-assurance">
+          <li>{{ ui.icon('check') }}<span>Its Nginx configuration is generated from the settings, never typed.</span></li>
+          <li>{{ ui.icon('check') }}<span>Every change is tested with <code>nginx -t</code> before it goes live, and confirmed after.</span></li>
+          <li>{{ ui.icon('check') }}<span>A change that does not take is undone; the previous version keeps serving.</span></li>
+          <li>{{ ui.icon('check') }}<span>A link in its folder can only lead to the account's own files.</span></li>
+        </ul>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

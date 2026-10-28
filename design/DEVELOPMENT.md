@@ -141,6 +141,32 @@ php laika accounts:suspend lpq3x7k2ma --wait
 php laika accounts:delete lpq3x7k2ma --confirm=lpq3x7k2ma --wait
 ```
 
+## Websites
+
+`modules/Websites` (M6b, [ADR-0014](adr/0014-websites-through-the-hosting-nginx.md)) asks for
+`website.create`, `website.update`, `website.suspend`, `website.unsuspend`, `website.delete` and
+`websites.check`, and settles each on `operations.finished`, like Hosting.
+
+- Every website id goes through `WebsiteAccess::find()` (audited 404). `WebsitesTest` tries every
+  route (THREAT_MODEL test 1).
+- `WebsiteSettings::normalize()` mirrors the agent's grammar so forms say which field is wrong;
+  the patterns live in `Catalogue` (`DOMAIN`, `DOCUMENT_ROOT`, …). Change them with
+  `lpa/internal/websites/settings.go`, never alone.
+- A customer (`websites.configure`) changes PHP, index files, redirects and headers of its own
+  websites; domains, the folder, suspend, delete and restore are `websites.manage`.
+- An edited website (`config_state` not ok) refuses updates, suspend/unsuspend, and its account's
+  suspension (`hosting.account.blockers`), until an administrator restores LPanel's version.
+- Hosting offers two filters other modules use: `hosting.account.blockers` (reasons an account
+  action can't happen yet) and `hosting.account.panels` (cards on an account's page).
+
+```bash
+php laika websites:create lpq3x7k2ma example.com,www.example.com --wait
+php laika websites:list --json
+php laika websites:check                  # hourly from the scheduler
+php laika websites:restore example.com --wait
+php laika websites:delete example.com --confirm=example.com --wait
+```
+
 **The query builder is immutable.** `$query->where(…)` returns a new builder.
 Write `$query = $query->where(…)`, or the condition is silently dropped. This
 bit the audit filters and the users store once; `AuditTest` and
@@ -199,6 +225,7 @@ Sign-in screens use `templates/auth.twig`, and both extend `templates/base.twig`
 | `modules/Audit` | `audit_events`, `AuditLog`, auth hooks → audit, `audit:prune`, `/audit`, `/api/v1/audit`, `/api/token/v1/audit` |
 | `modules/Identity` | users, roles, `PanelUserProvider` (sessions, tokens, resets), root verifiers, `UserAdmin` (who may change whom), sign-in / reset / security / tokens / users screens, `/api/v1` and `/api/token/v1` |
 | `modules/Servers` | servers, agent keys, enrollment, `/agent/v1` (`RequestVerifier` is the §3 checks), `/servers` screens, `/api/v1/servers`, `servers:*` commands |
+| `modules/Websites` | `websites`, `website_domains`, `WebsiteSettings` (the grammar), `WebsiteAccess`, `WebsiteActions` (ask, settle, record checks), `/websites` screens, `/api/v1/websites`, `websites:*` commands, the hourly `websites:check` |
 | `modules/Hosting` | `hosting_accounts`, `AccountAccess` (who may see which), `AccountActions` (ask the agent, settle on `operations.finished`), `/accounts` screens, `/api/v1/accounts`, `accounts:*` commands |
 | `modules/Operations` | the catalogue (`Catalogue`, strict `Shape`s), `OperationStore` (the state machine), `OperationRequests` (checks before queueing), `/agent/v1/operations/*`, `/operations` screens and server-page cards, `/api/v1/operations`, `operations:*` commands |
 | `modules/Dashboard` | `/`, and the placeholder sidebar entries for milestones not built yet |

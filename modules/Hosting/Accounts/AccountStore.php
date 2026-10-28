@@ -79,6 +79,11 @@ final class AccountStore
         return Ulid::isValid($uid) ? self::hydrate($this->db()->table('hosting_accounts')->where('uid', $uid)->first()) : null;
     }
 
+    public function byId(int $id): ?Account
+    {
+        return self::hydrate($this->db()->table('hosting_accounts')->where('id', $id)->first());
+    }
+
     public function systemUserTaken(int $serverId, string $systemUser): bool
     {
         return $this->db()->table('hosting_accounts')->where('server_id', $serverId)->where('system_user', $systemUser)->exists();

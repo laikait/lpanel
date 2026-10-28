@@ -73,12 +73,14 @@ final class OperationCatalogueTest extends TestCase
     /**
      * THREAT_MODEL.md test 4, the panel's half: the read-only operations take
      * nothing; the account operations take exactly a user name the panel
-     * chose, checked by pattern, and nothing that could be a command or a path.
+     * chose; the website operations take checked settings (ADR-0014), each
+     * field by pattern; and nothing takes a command or an absolute path.
      */
     public function test_no_operation_takes_a_command_a_path_or_an_environment(): void
     {
         $hostile = ['{"command":"id"}', '{"path":"/etc/shadow"}', '{"env":{"A":"1"}}', '[]', '"x"', 'null', '1'];
         $accounts = [];
+        $websites = [];
 
         foreach ((new Catalogue())->all() as $d) {
             foreach ($hostile as $payload) {
@@ -88,6 +90,50 @@ final class OperationCatalogueTest extends TestCase
             if (!$d->mutating) {
                 self::assertSame(['servers.read', 'server'], [$d->capability, $d->scope], $d->op);
                 self::assertNull($d->payload->check(new \stdClass()), $d->op);
+
+                continue;
+            }
+
+            if ($d->op === 'websites.check') {
+                $websites[] = $d->op;
+                self::assertSame(['websites.manage', 'server', true], [$d->capability, $d->scope, $d->idempotent]);
+                self::assertNull($d->payload->check(new \stdClass()));
+
+                continue;
+            }
+
+            if ($d->scope === 'website') {
+                $websites[] = $d->op;
+                self::assertSame([$d->op === 'website.update' ? 'websites.configure' : 'websites.manage', true], [$d->capability, $d->idempotent], $d->op);
+                $owner = '"account_id":"01JB2W5Z6X7Y8Z9A0B1C2D3E4F","system_user":"lpabcdefgh"';
+                $settings = static fn(string $domains = '"example.com"', string $root = '"example.com"', string $headers = '[]', string $redirects = '[]'): string => \sprintf(
+                    '"domains":[%s],"document_root":%s,"php":true,"index":[],"redirects":%s,"headers":%s',
+                    $domains,
+                    $root,
+                    $redirects,
+                    $headers,
+                );
+                $extra = $d->op === 'website.update' ? ',"replace_edits":false' : '';
+                $good = \in_array($d->op, ['website.create', 'website.update'], true) ? '{' . $owner . ',' . $settings() . $extra . '}' : '{' . $owner . '}';
+                self::assertNull($d->payload->check(\json_decode($good, false)), $d->op);
+
+                if ($good === '{' . $owner . '}') {
+                    continue;
+                }
+
+                foreach ([
+                    $settings('"a.com; include /etc/shadow"'),
+                    $settings('"example.com"', '"/etc/lpa"'),
+                    $settings('"example.com"', '"../../etc"'),
+                    $settings('"example.com"', '"example.com"', '[{"name":"X-A","value":"$request_uri"}]'),
+                    $settings('"example.com"', '"example.com"', '[{"name":"X-A","value":"a\" always; include /x; #"}]'),
+                    $settings('"example.com"', '"example.com"', '[]', '[{"from":"~ .*","to":"/x","code":301}]'),
+                    $settings('"example.com"', '"example.com"', '[]', '[{"from":"/a","to":"/$host","code":301}]'),
+                    $settings() . ',"raw":"server {}"',
+                ] as $members) {
+                    $payload = '{' . $owner . ',' . $members . $extra . '}';
+                    self::assertNotNull($d->payload->check(\json_decode($payload, false)), \sprintf('%s accepted %s', $d->op, $payload));
+                }
 
                 continue;
             }
@@ -102,7 +148,9 @@ final class OperationCatalogueTest extends TestCase
         }
 
         \sort($accounts);
+        \sort($websites);
         self::assertSame(['account.create', 'account.delete', 'account.suspend', 'account.unsuspend'], $accounts);
+        self::assertSame(['website.create', 'website.delete', 'website.suspend', 'website.unsuspend', 'website.update', 'websites.check'], $websites);
     }
 
     public function test_results_are_checked_strictly(): void

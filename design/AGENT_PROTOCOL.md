@@ -215,6 +215,18 @@ Every operation exists twice, with the same contract: in LPA's registry (Go) and
 
 `system_user` is `lp` and 8 characters of `[a-z2-7]`. The target names the server and the account: `{"server_id": "…", "account_id": "<ULID>"}`. The panel needs `accounts.manage` to ask for them, and asks only from an account's screen, never a server's.
 
+**Website operations (M6b, [ADR-0014](adr/0014-websites-through-the-hosting-nginx.md); mutating, idempotent; only `lpa-exec` runs them):**
+
+| op | Scope | Payload | Result |
+|---|---|---|---|
+| `website.create` | website | `{account_id, system_user, domains, document_root, php, index, redirects, headers}` | `{website_id, system_user, state: "active"\|"suspended", revision, document_root}` |
+| `website.update` | website | the same, and `replace_edits` | the same |
+| `website.suspend`, `website.unsuspend` | website | `{account_id, system_user}` | the same |
+| `website.delete` | website | `{account_id, system_user}` | `{website_id, system_user, state: "deleted"}` |
+| `websites.check` | server | `{}` | `{checked, edited: [ids], missing: [ids], unknown_files, include, nginx_test, reloaded}` |
+
+A website's target is `{"server_id": "…", "website_id": "<ULID>"}`; its account is in the payload, and `lpa-exec` checks both its own records agree. Every value has a grammar (ADR-0014); none is configuration text. `website.update` needs `websites.configure` (the Websites module checks the website is the customer's own, and keeps domains and the document root an administrator's); the others need `websites.manage`. `revision` is what the website's probe location answers with once Nginx serves the change.
+
 There is no `exec`, `shell`, `file.read`, or any operation that takes a command, a path outside a validated scope, or an environment.
 
 ### 6.2.1 Privileged operations: the `lpa-exec` socket (built in M6a)
@@ -225,7 +237,7 @@ The agent never runs an account operation itself ([ADR-0009](adr/0009-lpa-privil
 {"v": 1, "operation": {"operation": "<base64url bytes>", "kid": "…", "signature": "…"}}
 ```
 
-One request per connection, at most 256 KiB, read within 10 s. `lpa-exec` answers `{"status": "succeeded", "result": {…}}` or `{"status": "failed", "error_code": "…", "message": "…"}`. It trusts nothing from the agent:
+One request per connection, at most 256 KiB, read within 10 s. `lpa-exec` answers `{"status": "succeeded", "result": {…}}`, `{"status": "failed", "error_code": "…", "message": "…"}`, or (M6b) `{"status": "needs_attention", "error_code": "…", "message": "…"}` when it may have left the server changed in a way it could not confirm, such as a rollback Nginx did not confirm; the agent reports that as `needs_attention`. It trusts nothing from the agent:
 
 1. The peer must be the `lpa` uid (`SO_PEERCRED`). Anyone else gets no answer at all, and is logged.
 2. It verifies the panel's signature itself, with the key in `/etc/lpa/enrollment.json`, then decodes strictly and applies §6.1's checks (addressed to this agent, within `not_after`, in **its** registry, target fits the scope, idempotency key present).
@@ -298,7 +310,9 @@ Stable, lower_snake_case, shared by both sides:
 | `output_limit` | §6.2 |
 | `adapter_unavailable` | §6.2 |
 | `invalid_result` | §7 |
-| `config_rejected` | a service's own check (`php-fpm -t`, later `nginx -t`) refused generated configuration; the file was put back and nothing was reloaded (§6.2.1) |
+| `config_rejected` | a service's own check (`php-fpm -t`, `nginx -t` on the staged candidate) refused generated configuration, or Nginx warned that another site answers for one of its domains; nothing live was changed or reloaded (§6.2.1, ADR-0014) |
+| `config_edited` | a website's Nginx file (or LPanel's `conf.d` include) was edited outside LPanel; it is left as it is until an administrator restores LPanel's version (ADR-0014) |
+| `rolled_back` | Nginx did not take a new configuration after the reload; the previous files are back and, unless the status is `needs_attention`, confirmed serving (ADR-0014) |
 | `cancelled` | the agent stopped because a lease answer asked it to (§6.3) |
 | `lease_expired` | the panel's sweeper: the agent stopped extending the lease (§6.3) |
 | `operation_not_found` | a lease or result for an operation that is not this agent's |

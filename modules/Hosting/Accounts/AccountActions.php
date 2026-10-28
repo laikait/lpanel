@@ -6,6 +6,7 @@ namespace App\Modules\Hosting\Accounts;
 
 use App\Engine\Auth\Authorizer;
 use App\Engine\Auth\Identity;
+use App\Engine\Filter\FilterEngine;
 use App\Modules\Audit\AuditLog;
 use App\Modules\Identity\Users\User;
 use App\Modules\Operations\OperationException;
@@ -33,6 +34,7 @@ final class AccountActions
         private readonly ServerStore $servers,
         private readonly Authorizer $authorizer,
         private readonly AuditLog $audit,
+        private readonly FilterEngine $filters,
     ) {}
 
     /** @throws OperationException */
@@ -85,6 +87,14 @@ final class AccountActions
 
         if ($action === 'delete' && $confirm !== $account->systemUser) {
             throw new OperationException('confirmation_required', \sprintf('Type the account\'s user name, %s, to delete it and every file in it.', $account->systemUser), 422);
+        }
+
+        // Other modules' reasons not to do it yet (Websites: websites still
+        // served from it stop a delete; a hand-edited one stops a suspension).
+        $blockers = $this->filters->apply('hosting.account.blockers', [], $account, $action);
+
+        if (\is_array($blockers) && $blockers !== []) {
+            throw new OperationException('account_in_use', \implode(' ', \array_map('strval', $blockers)), 409);
         }
 
         $server = $this->servers->byId($account->serverId) ?? throw new \LogicException('An account without its server.');

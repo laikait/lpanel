@@ -142,12 +142,43 @@ check "accounts:suspend" quiet lpanel accounts:suspend "$U" --wait --timeout=90
 check "  ...switches its pool off" test ! -e /run/php/lpanel-$U.sock
 check "accounts:unsuspend" quiet lpanel accounts:unsuspend "$U" --wait --timeout=90
 check "  ...brings it back" test -S /run/php/lpanel-$U.sock
+
+echo "-- websites, through the hosting Nginx (ADR-0014)"
+site_status() { db "SELECT CONCAT(status, '/', config_state) FROM websites WHERE uid='$W'"; }
+wait_site() { for _ in $(seq 90); do [ "$(site_status)" = "$1" ] && return 0; sleep 1; done; return 1; }
+get() { curl -s -o /dev/null -w '%{http_code}' -H "Host: $1" "http://127.0.0.1$2"; }
+check "websites:create serves one in the account" quiet lpanel websites:create "$U" "site.test,www.site.test" --wait --timeout=90
+W=$(db "SELECT uid FROM websites WHERE domain='site.test'")
+check "  ...its folder is the account's, with a placeholder page" bash -c "[ \"\$(stat -c '%U' /home/$U/web/site.test)\" = '$U' ] && curl -s -H 'Host: www.site.test' http://127.0.0.1/ | grep -q '<h1>site.test</h1>'"
+echo '<?php echo posix_geteuid();' > /home/$U/web/site.test/uid.php && chown $U:$U /home/$U/web/site.test/uid.php
+is "  ...and its PHP runs as the account" "$(curl -s -H 'Host: site.test' http://127.0.0.1/uid.php)" "$(id -u $U)"
+is "  ...the server's default site still answers" "$(get default.invalid /)" 200
+is "the panel's own configuration is still byte-identical" "$(find /etc/lpanel -type f -exec sha256sum {} + | sort | sha256sum)" "$PANEL_CONF"
+site_snapshot() { hosting_snapshot | grep -v '/etc/nginx/lpanel/\|/etc/nginx/conf.d/lpanel-websites.conf'; }
+is "nothing under /etc/nginx changed but LPanel's websites" "$(site_snapshot | sha256sum)" "$(echo "$BEFORE" | sha256sum)"
+is "the panel answers while the hosting Nginx reloads" "$(code $URL/login)" 200
+is "a redirect, through the API" "$(api -o /dev/null -w '%{http_code}' -X PUT $URL/api/v1/websites/$W/settings -d '{"redirects":[{"from":"/old","to":"/new","code":301}],"headers":[{"name":"X-Frame-Options","value":"SAMEORIGIN"}]}')" 202
+check "  ...is served once Nginx took it" bash -c "$(declare -f db site_status wait_site); W=$W; wait_site active/ok && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: site.test' http://127.0.0.1/old)\" = 301 ]"
+is "a header with a variable is refused by the panel, nothing queued" "$(api -o /dev/null -w '%{http_code}' -X PUT $URL/api/v1/websites/$W/settings -d '{"headers":[{"name":"X-A","value":"$request_uri"}]}')" 422
+sed -i 's/^    server_tokens off;$/    server_tokens off;\n    add_header X-Admin "1" always;/' /etc/nginx/lpanel/sites/$W.conf
+check "websites:check finds a hand edit, and the panel marks it" bash -c "lpanel websites:check >/dev/null && $(declare -f db site_status wait_site); W=$W; wait_site active/edited"
+# A reload is a signal: the new workers take a moment.
+check "  ...which passed nginx -t, so it is served" bash -c "for _ in \$(seq 20); do curl -s -D - -o /dev/null -H 'Host: site.test' http://127.0.0.1/ | grep -qi '^X-Admin: 1' && exit 0; sleep 0.5; done; exit 1"
+check "  ...and the panel will not change the website over it" bash -c "! lpanel websites:suspend site.test >/dev/null"
+check "websites:restore puts LPanel's version back" bash -c "lpanel websites:restore site.test --wait --timeout=90 >/dev/null && ! grep -q X-Admin /etc/nginx/lpanel/sites/$W.conf && [ \"\$($(declare -f db site_status); W=$W; site_status)\" = active/ok ]"
+check "websites:suspend answers 503" bash -c "lpanel websites:suspend site.test --wait --timeout=90 >/dev/null && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: site.test' http://127.0.0.1/)\" = 503 ]"
+check "websites:unsuspend serves it again" bash -c "lpanel websites:unsuspend site.test --wait --timeout=90 >/dev/null && [ \"\$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: site.test' http://127.0.0.1/)\" = 200 ]"
+check "an account with a website is not deleted" bash -c "! lpanel accounts:delete '$U' --confirm='$U' >/dev/null && id '$U' >/dev/null"
+check "websites:delete, confirmed" quiet lpanel websites:delete site.test --confirm=site.test --wait --timeout=90
+check "  ...Nginx no longer serves it, and its files are kept" bash -c "[ ! -e /etc/nginx/lpanel/sites/$W.conf ] && ! curl -s -H 'Host: site.test' http://127.0.0.1/ | grep -q '<h1>site.test</h1>' && [ -f /home/$U/web/site.test/uid.php ]"
+is "every website change is in the audit log" "$(db "SELECT COUNT(*) FROM audit_events WHERE action LIKE 'website.%' AND action <> 'website.drift' AND outcome='succeeded'")" 6
 check "accounts:delete refuses without the typed user name" bash -c "! lpanel accounts:delete '$U' --confirm=wrong"
 check "accounts:delete, confirmed" quiet lpanel accounts:delete "$U" --confirm="$U" --wait --timeout=180
 check "  ...removes the user, its group, home and pool" bash -c "! getent passwd '$U' && ! getent group '$U' && [ ! -e /home/$U ] && [ ! -e /run/php/lpanel-$U.sock ]"
 is "  ...and the panel keeps the record as deleted" "$(db "SELECT status FROM hosting_accounts WHERE system_user='$U'")" deleted
 is "every account change is in the audit log" "$(db "SELECT COUNT(*) FROM audit_events WHERE action LIKE 'account.%' AND outcome='succeeded'")" 4
-is "afterwards, /etc/nginx, /etc/php and /etc/mysql are as they were" "$(snapshot | sha256sum)" "$(echo "$BEFORE" | sha256sum)"
+is "afterwards, /etc/nginx, /etc/php and /etc/mysql are as they were, but for LPanel's (empty) websites include" "$(site_snapshot | sha256sum)" "$(echo "$BEFORE" | sha256sum)"
+BEFORE=$(snapshot)   # LPanel's websites include stays
 
 echo "-- upgrade to $NEW"
 APP_KEY=$(grep ^APP_KEY= /etc/lpanel/lpanel.env)
@@ -155,7 +186,8 @@ KEYS=$(sha256sum /etc/lpanel/keys/operations.key /etc/lpanel/tls/*)
 OPS=$(db 'SELECT COUNT(*) FROM operations')
 check "apt upgrades the package" quiet apt-get install -y -qq "/opt/pkgtest/lpanel_${NEW}_amd64.deb"
 is "/opt/lpanel/VERSION" "$(cat /opt/lpanel/VERSION)" "$NEW"
-is "the panel is out of maintenance" "$(code $URL/login)" 200
+# The upgrade restarts the panel's services; give them a moment to listen.
+is "the panel is out of maintenance" "$(for _ in $(seq 20); do c=$(code $URL/login); [ "$c" = 200 ] && break; sleep 0.5; done; echo $c)" 200
 check "no upgrade marker is left" test ! -e /var/lib/lpanel/Runtime/lpanel-upgrading
 is "APP_KEY is kept" "$(grep ^APP_KEY= /etc/lpanel/lpanel.env)" "$APP_KEY"
 is "keys and certificates are kept" "$(sha256sum /etc/lpanel/keys/operations.key /etc/lpanel/tls/*)" "$KEYS"

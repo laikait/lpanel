@@ -29,7 +29,7 @@ Every operation **converges**: run twice, it ends in the same state and gives th
 
 ### The `lpa-exec` socket
 
-- `lpa-exec.socket` listens on `/run/lpa/exec.sock`, `0660 root:lpa`. systemd starts `lpa-exec.service` (root, hardened, `RestrictAddressFamilies=AF_UNIX`) on the first connection.
+- `lpa-exec.socket` listens on `/run/lpa/exec.sock`, `0660 root:lpa`. systemd starts `lpa-exec.service` (root, hardened, `RestrictAddressFamilies=AF_UNIX`; since M6b also IP to `localhost` only, for `nginx -t` and the website probe, [ADR-0014](0014-websites-through-the-hosting-nginx.md)) on the first connection.
 - One request per connection, at most 256 KiB, read within 10 s. **The request is the panel's signed operation, exactly as the agent received it:**
 
   ```json

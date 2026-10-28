@@ -106,6 +106,7 @@
 {%- elseif status == 'pending' -%}<span class="lp-badge lp-badge--warning lp-badge--dot">Waiting for agent</span>
 {#- hosting accounts -#}
 {%- elseif status == 'provisioning' -%}<span class="lp-badge lp-badge--info lp-badge--dot lp-badge--pulse">Setting up</span>
+{%- elseif status == 'updating' -%}<span class="lp-badge lp-badge--info lp-badge--dot lp-badge--pulse">Applying</span>
 {%- elseif status == 'suspending' -%}<span class="lp-badge lp-badge--warning lp-badge--dot lp-badge--pulse">Suspending</span>
 {%- elseif status == 'resuming' -%}<span class="lp-badge lp-badge--info lp-badge--dot lp-badge--pulse">Unsuspending</span>
 {%- elseif status == 'deleting' -%}<span class="lp-badge lp-badge--danger lp-badge--dot lp-badge--pulse">Deleting</span>

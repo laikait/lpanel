@@ -12,7 +12,9 @@ namespace App\Modules\Operations\Catalogue;
  *
  * The read-only operations need servers.read. The account operations
  * (ADR-0013) change the server: they need accounts.manage, act on one
- * account, and are asked for by the Hosting module, never from a server's screen.
+ * account, and are asked for by the Hosting module, never from a server's
+ * screen. The website operations (ADR-0014) are the Websites module's, the
+ * same way; websites.check acts on the whole server.
  */
 final class Catalogue
 {
@@ -22,6 +24,28 @@ final class Catalogue
 
     /** An account's Linux user, as the panel chooses it (ADR-0013). */
     public const SYSTEM_USER = '/^lp[a-z2-7]{8}$/';
+
+    public const ULID = '/^[0-9A-HJKMNP-TV-Z]{26}$/';
+
+    /*
+     * A website's managed settings (ADR-0014), as the agent's grammar has
+     * them (lpa internal/websites/settings.go). The agent decides; these let
+     * the panel refuse the same things first, with a better message.
+     */
+    public const DOMAIN = '/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$/';
+
+    public const DOCUMENT_ROOT = '/^[A-Za-z0-9_][A-Za-z0-9._-]{0,62}(?:\/[A-Za-z0-9_][A-Za-z0-9._-]{0,62}){0,3}$/';
+
+    public const INDEX_FILE = '/^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/';
+
+    public const REDIRECT_FROM = '/^\/[A-Za-z0-9._~+\/-]{0,254}$/';
+
+    public const REDIRECT_TO = '/^(?:https?:\/\/[A-Za-z0-9.-]+(?::[0-9]{1,5})?)?(?:\/[A-Za-z0-9._~%\/?&=+#:@!,*\'()-]*)?$/';
+
+    public const HEADER_NAME = '/^[A-Za-z][A-Za-z0-9-]{0,63}$/';
+
+    /** Printable ASCII but " $ \ { }: one quoted Nginx string, no variables. */
+    public const HEADER_VALUE = '/^[\x20\x21\x23\x25-\x5b\x5d-\x7a\x7c\x7e]{1,1024}$/';
 
     /** @var array<string, Definition> by op@version */
     private array $definitions = [];
@@ -140,6 +164,86 @@ final class Catalogue
             $account('account.suspend', 'Suspend account', 'No logins, no PHP and no running processes for the account. Its files stay.', 120, Definition::AUDIT_NOTICE, $changed('suspended')),
             $account('account.unsuspend', 'Unsuspend account', 'Lets the account in again and writes its PHP-FPM pool afresh.', 120, Definition::AUDIT_NOTICE, $changed('active')),
             $account('account.delete', 'Delete account', 'Removes the account\'s user, group, PHP-FPM pool and home, with every file in it.', 300, Definition::AUDIT_CRITICAL, $changed('deleted')),
+        ] as $definition) {
+            $this->definitions[$definition->op . '@' . $definition->version] = $definition;
+        }
+
+        $ulid = Shape::string(26, self::ULID);
+        $owner = ['account_id' => $ulid, 'system_user' => $user];
+        $settings = $owner + [
+            'domains' => Shape::list(Shape::string(253, self::DOMAIN), 10),
+            'document_root' => Shape::string(255, self::DOCUMENT_ROOT),
+            'php' => Shape::bool(),
+            'index' => Shape::list(Shape::string(64, self::INDEX_FILE), 8),
+            'redirects' => Shape::list(Shape::object([
+                'from' => Shape::string(255, self::REDIRECT_FROM),
+                'to' => Shape::string(2048, self::REDIRECT_TO),
+                'code' => Shape::int(301, 308),
+            ]), 50),
+            'headers' => Shape::list(Shape::object([
+                'name' => Shape::string(64, self::HEADER_NAME),
+                'value' => Shape::string(1024, self::HEADER_VALUE),
+            ]), 20),
+        ];
+        $served = Shape::object([
+            'website_id' => $ulid,
+            'system_user' => $user,
+            'state' => Shape::string(16, '/^(active|suspended)$/'),
+            'revision' => Shape::string(16, '/^[0-9a-f]{16}$/'),
+            'document_root' => Shape::string(300, '/^\/home\/lp[a-z2-7]{8}\/web\/[A-Za-z0-9._\/-]{1,255}$/'),
+        ]);
+        $website = static fn(string $op, string $label, string $summary, string $capability, string $audit, Shape $payload, Shape $result): Definition => new Definition(
+            op: $op,
+            version: 1,
+            label: $label,
+            summary: $summary,
+            mutating: true,
+            idempotent: true,
+            capability: $capability,
+            scope: 'website',
+            timeoutSeconds: 120,
+            maxResultBytes: 4096,
+            maxAttempts: 3,
+            audit: $audit,
+            payload: $payload,
+            result: $result,
+        );
+
+        foreach ([
+            $website('website.create', 'Create website', 'Its Nginx server block, staged and tested with nginx -t, then served; its folder in the account\'s web/.', 'websites.manage', Definition::AUDIT_NOTICE, Shape::object($settings), $served),
+            // A customer may change its own website's settings; the Websites module checks whose it is.
+            $website('website.update', 'Change website settings', 'Renders the website again from its settings; a file edited by hand is replaced only when an administrator restores it.', 'websites.configure', Definition::AUDIT_NOTICE, Shape::object($settings + ['replace_edits' => Shape::bool()]), $served),
+            $website('website.suspend', 'Suspend website', 'Every request to the website is answered 503. Its files stay.', 'websites.manage', Definition::AUDIT_NOTICE, Shape::object($owner), $served),
+            $website('website.unsuspend', 'Unsuspend website', 'Serves the website again.', 'websites.manage', Definition::AUDIT_NOTICE, Shape::object($owner), $served),
+            $website('website.delete', 'Delete website', 'Removes the website\'s Nginx configuration. Its files stay in the account\'s web/ folder.', 'websites.manage', Definition::AUDIT_CRITICAL, Shape::object($owner), Shape::object([
+                'website_id' => $ulid,
+                'system_user' => $user,
+                'state' => Shape::string(16, '/^deleted$/'),
+            ])),
+            new Definition(
+                op: 'websites.check',
+                version: 1,
+                label: 'Check websites\' Nginx files',
+                summary: 'Compares each website\'s Nginx file with what LPanel wrote. A hand edit that passes nginx -t is reloaded and reported, never overwritten.',
+                mutating: true,
+                idempotent: true,
+                capability: 'websites.manage',
+                scope: 'server',
+                timeoutSeconds: 120,
+                maxResultBytes: 65536,
+                maxAttempts: 3,
+                audit: Definition::AUDIT_NOTICE,
+                payload: Shape::object(),
+                result: Shape::object([
+                    'checked' => Shape::int(0, 100000),
+                    'edited' => Shape::list($ulid, 2000)->orNull(),
+                    'missing' => Shape::list($ulid, 2000)->orNull(),
+                    'unknown_files' => Shape::list(Shape::string(80, self::TEXT), 20)->orNull(),
+                    'include' => Shape::string(8, '/^(ok|edited|missing|none)$/'),
+                    'nginx_test' => Shape::string(8, '/^(passed|failed|not_run)$/'),
+                    'reloaded' => Shape::bool(),
+                ]),
+            ),
         ] as $definition) {
             $this->definitions[$definition->op . '@' . $definition->version] = $definition;
         }
