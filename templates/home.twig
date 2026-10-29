@@ -1,0 +1,43 @@
+{#
+ # The front page an application has before it has one of its own.
+ #
+ # Served by the shared module's "/" route. It is meant to be replaced, and
+ # there are two ways to do that without editing the framework: change this
+ # file, or declare a "/" route in a module of your own. Every other module
+ # registers after the shared one, so its route is the one that answers.
+ #
+ # Nothing here names a directory on disk as a URL, and nothing here says which
+ # version is running: a default page is public by definition, and it has no
+ # business telling a stranger what to look up in a changelog.
+ #}
+{% extends "layout.twig" %}
+
+{% block title %}Welcome{% endblock %}
+
+{% block content %}
+<section class="hero">
+    <p class="eyebrow">It works</p>
+    <h1>Your application is running</h1>
+    <p>No module has claimed the front page yet, so this is the default template's home page.</p>
+</section>
+
+<section class="next">
+    <h2>Where to go from here</h2>
+    <ol class="steps">
+        <li>
+            <strong>Add a module.</strong>
+            A directory under <code>modules/Plugins/</code> with a <code>module.php</code> in it is discovered on
+            its own. Its routes, hooks, filters, commands and schedules are declared there.
+        </li>
+        <li>
+            <strong>Claim this page.</strong>
+            Declare a <code>/</code> route in your module, or edit <code>templates/home.twig</code>.
+        </li>
+        <li>
+            <strong>Check the wiring.</strong>
+            <code>php laika module:list</code> and <code>php laika route:list</code> show what was
+            discovered and what answers.
+        </li>
+    </ol>
+</section>
+{% endblock %}

@@ -1,105 +1,37 @@
 {#
- # LPanel's page layout. Pages extend it and fill `title`, `content` and,
- # optionally, `crumb` (the topbar's trail) and `actions` (page buttons).
+ # The layout every page of the default template shares.
  #
- # Signed in (`me` set by Shared\Ui\Pages): the panel shell, a sidebar of the
- # entries the viewer may use, a topbar, and the flash message. Otherwise --
- # error pages, which have none of that in scope -- a plain centred page.
+ # There are two ways in, and both are ordinary:
+ #
+ #   - a Twig page extends it and fills the blocks:
+ #       {% extends "layout.twig" %}
+ #       {% block content %}...{% endblock %}
+ #
+ #   - any page, in any engine, renders itself to a string and hands that over
+ #     as `content`. That is how a PHP template uses a Twig layout, and why the
+ #     block's default is the string rather than nothing.
+ #
+ # `content` is printed raw because it is markup that some other template has
+ # already escaped. Every other value is escaped by Twig, which is the reason
+ # Twig is the default engine.
+ #
+ # `home` is the application's front page as the current request addresses it,
+ # so the link survives an install under a subdirectory. A page rendered with no
+ # request to derive it from falls back to the site root.
  #}
-{% extends "base.twig" %}
-{% import "macros/ui.twig" as ui %}
-
-{% block body_class %}{{ me|default(null) ? 'lp-app' : 'lp-plain' }}{% endblock %}
-
-{% block body %}
-{% if me|default(null) %}
-<a class="visually-hidden-focusable lp-skip" href="#lp-content">Skip to content</a>
-<div class="lp-shell">
-  <aside class="lp-sidebar offcanvas-lg offcanvas-start" id="lp-sidebar" tabindex="-1" aria-label="Main navigation">
-    <div class="lp-sidebar__inner">
-      <div class="lp-sidebar__brand">
-        <a class="lp-brand" href="{{ urls.home|default(home|default('/')) }}">{{ ui.logo(30) }}<span class="lp-brand__name">LPanel</span></a>
-        <button type="button" class="lp-icon-btn lp-icon-btn--dark d-lg-none" data-bs-dismiss="offcanvas" data-bs-target="#lp-sidebar" aria-label="Close menu">{{ ui.icon('x') }}</button>
-      </div>
-
-      <nav class="lp-sidebar__nav">
-        {% for group in nav|default([]) %}
-          {% if group.title %}<div class="lp-nav-title">{{ group.title }}</div>{% endif %}
-          <ul class="lp-nav">
-            {% for item in group.items %}
-              <li>
-                {% if item.url %}
-                  <a class="lp-nav-link{{ item.active ? ' active' : '' }}" href="{{ item.url }}"{% if item.active %} aria-current="page"{% endif %}>{{ ui.icon(item.icon) }}<span>{{ item.label }}</span></a>
-                {% else %}
-                  <span class="lp-nav-link is-soon" aria-disabled="true" title="Arrives in milestone {{ item.soon }}">{{ ui.icon(item.icon) }}<span>{{ item.label }}</span><span class="lp-soon">Soon</span></span>
-                {% endif %}
-              </li>
-            {% endfor %}
-          </ul>
-        {% endfor %}
-      </nav>
-
-      <div class="lp-sidebar__footer">
-        <div class="lp-sidebar__user">
-          {{ ui.avatar(profile.name, profile.initials) }}
-          <div class="lp-sidebar__who">
-            <div class="lp-sidebar__name">{{ profile.name }}</div>
-            <div class="lp-sidebar__role">{{ profile.root ? 'Server root' : profile.role }}</div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </aside>
-
-  <div class="lp-main">
-    <header class="lp-topbar">
-      <button type="button" class="lp-icon-btn d-lg-none" data-bs-toggle="offcanvas" data-bs-target="#lp-sidebar" aria-controls="lp-sidebar" aria-label="Open menu">{{ ui.icon('menu') }}</button>
-      <nav class="lp-crumb" aria-label="Breadcrumb">{% block crumb %}<span>{{ block('title') }}</span>{% endblock %}</nav>
-
-      <div class="lp-topbar__end">
-        {% if profile.root %}<span class="lp-root-pill" title="You are signed in as the server's root account">{{ ui.icon('crown') }}root</span>{% endif %}
-        <button type="button" class="lp-icon-btn" data-lp-theme-toggle aria-label="Switch light or dark theme" title="Switch theme">
-          <span class="lp-theme-light">{{ ui.icon('moon') }}</span><span class="lp-theme-dark">{{ ui.icon('sun') }}</span>
-        </button>
-        <div class="dropdown">
-          <button type="button" class="lp-user-btn" data-bs-toggle="dropdown" aria-expanded="false" aria-label="Account menu">
-            {{ ui.avatar(profile.name, profile.initials, 'sm') }}
-            <span class="lp-user-btn__name d-none d-sm-inline">{{ profile.name }}</span>
-            {{ ui.icon('chevron-down', 'lp-user-btn__chev') }}
-          </button>
-          <div class="dropdown-menu dropdown-menu-end lp-menu">
-            <div class="lp-menu__head">
-              <div class="fw-semibold">{{ profile.name }}</div>
-              <div class="small text-body-secondary font-monospace">{{ profile.login }}</div>
-            </div>
-            {% if urls.security is defined %}<a class="dropdown-item" href="{{ urls.security }}">{{ ui.icon('shield') }}Sign-in security</a>{% endif %}
-            {% if urls.tokens is defined and not profile.root %}<a class="dropdown-item" href="{{ urls.tokens }}">{{ ui.icon('key') }}API tokens</a>{% endif %}
-            <div class="dropdown-divider"></div>
-            <form method="post" action="{{ urls.logout }}">
-              {{ ui.csrf(token) }}
-              <button type="submit" class="dropdown-item text-danger">{{ ui.icon('logout') }}Sign out</button>
-            </form>
-          </div>
-        </div>
-      </div>
-    </header>
-
-    <main class="lp-content" id="lp-content" tabindex="-1">
-      {% if flash|default(null) %}{{ ui.alert(flash.type, flash.message) }}{% endif %}
-      {% block content %}{{ content|default('')|raw }}{% endblock %}
-    </main>
-
-    <footer class="lp-footer">
-      <span>LPanel</span><span class="lp-footer__dot">·</span><span>Times shown in your local time</span>
-    </footer>
-  </div>
-</div>
-{% else %}
-<main class="lp-plain__main">
-  <a class="lp-brand lp-brand--plain" href="{{ home|default('/') }}">{{ ui.logo(34) }}<span class="lp-brand__name">LPanel</span></a>
-  <div class="lp-plain__card">
-    {{ block('content') }}
-  </div>
-</main>
-{% endif %}
-{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}{{ title|default('App Framework') }}{% endblock %}</title>
+<link rel="stylesheet" href="{{ view.asset().core('css/app.css') }}">
+<link rel="stylesheet" href="{{ view.asset().template('css/theme.css') }}">
+</head>
+<body>
+<header class="site-header"><a class="brand" href="{{ home|default('/') }}">App Framework</a></header>
+<main>{% block content %}{{ content|default('')|raw }}{% endblock %}</main>
+<footer class="site-footer">{% block footer %}Module-first, hook and filter driven.{% endblock %}</footer>
+<script type="module" src="{{ view.asset().core('js/app.js') }}"></script>
+</body>
+</html>

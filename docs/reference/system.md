@@ -28,7 +28,7 @@ System  ≠ CLI       the console is one administrative interface to it
         ≠ Queue     long work is a queued job whose handler uses System
 ```
 
-Everything below is **Experimental**; see [`STABILITY.md`](../../STABILITY.md).
+Everything below is **Stable**; see [`STABILITY.md`](../../STABILITY.md).
 
 ## Running a command
 

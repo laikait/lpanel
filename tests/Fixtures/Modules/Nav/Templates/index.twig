@@ -1,0 +1,83 @@
+{#
+ # Every menu, every location, in one page. Deliberately self-contained --
+ # no {% extends %} -- so this module renders on its own in an application
+ # that has not written a layout.twig yet, and so the whole thing is one
+ # file to copy.
+ #
+ # Twig has no url() function here (see docs/guides/navigation.md, "The
+ # admin UI"), so every link and form action arrives already built:
+ # `createUrls`/`newUrl` per location, and `links[id]` (edit/delete/move)
+ # per item, all computed once in NavAdminPages::index().
+ #}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Navigation</title>
+    <style>
+        body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }
+        h1 { margin-top: 0; }
+        h2 { margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: .25rem; }
+        ul.tree, ul.tree ul { list-style: none; margin: 0; padding-left: 1.25rem; }
+        ul.tree { padding-left: 0; }
+        li.disabled { opacity: .5; }
+        .row { display: flex; align-items: center; gap: .5rem; padding: .25rem 0; }
+        .label { font-weight: 600; }
+        .meta { color: #666; font-size: .85em; }
+        form.inline { display: inline; }
+        button.link { background: none; border: none; color: #06c; cursor: pointer; padding: 0; font: inherit; }
+        .add { margin-top: 1rem; }
+    </style>
+</head>
+<body>
+<h1>Navigation</h1>
+<p class="meta">No login is required here -- see docs/guides/navigation.md before this goes anywhere public.</p>
+
+{% for location, roots in tree %}
+    <h2>{{ location }}</h2>
+    {% if roots %}
+        {{ _self.branch(roots, links, token) }}
+    {% else %}
+        <p class="meta">Nothing here yet.</p>
+    {% endif %}
+    <p class="add"><a href="{{ createUrls[location] }}">Add an item to {{ location }}</a></p>
+{% endfor %}
+
+<h2>New menu</h2>
+<p><a href="{{ newUrl }}">Add the first item of a menu you have not named yet</a></p>
+
+{% macro branch(nodes, links, token) %}
+    <ul class="tree">
+        {% for node in nodes %}
+            {% set link = links[node.item.identity] %}
+            <li class="{{ node.item.isEnabled ? '' : 'disabled' }}">
+                <div class="row">
+                    <span class="label">{{ node.item.label }}</span>
+                    <span class="meta">
+                        {{ node.item.route ? 'route: ' ~ node.item.route : (node.item.url ?: 'no destination') }}
+                        {% if node.item.capability %} &middot; requires {{ node.item.capability }}{% endif %}
+                        {% if not node.item.isEnabled %} &middot; disabled{% endif %}
+                    </span>
+                    <form class="inline" method="post" action="{{ link.move }}">
+                        <input type="hidden" name="_token" value="{{ token }}">
+                        <input type="hidden" name="direction" value="up">
+                        <button class="link" type="submit">&uarr;</button>
+                    </form>
+                    <form class="inline" method="post" action="{{ link.move }}">
+                        <input type="hidden" name="_token" value="{{ token }}">
+                        <input type="hidden" name="direction" value="down">
+                        <button class="link" type="submit">&darr;</button>
+                    </form>
+                    <a href="{{ link.edit }}">Edit</a>
+                    <form class="inline" method="post" action="{{ link.delete }}" onsubmit="return confirm('Delete this item?');">
+                        <input type="hidden" name="_token" value="{{ token }}">
+                        <button class="link" type="submit">Delete</button>
+                    </form>
+                </div>
+                {% if node.children %}{{ _self.branch(node.children, links, token) }}{% endif %}
+            </li>
+        {% endfor %}
+    </ul>
+{% endmacro %}
+</body>
+</html>

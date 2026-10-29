@@ -16,10 +16,10 @@
 {% block title %}{{ error.status }} {{ error.title }}{% endblock %}
 
 {% block content %}
-<section class="lp-error">
-  <p class="lp-error__status">{{ error.status }}</p>
-  <h1 class="lp-error__title">{{ error.status >= 500 ? 'Something went wrong at our end' : (error.status == 403 ? 'You do not have access to this' : 'That request could not be completed') }}</h1>
-  <p class="lp-error__text">{{ error.message }}</p>
-  <a class="btn btn-primary" href="{{ home|default('/') }}">Back to the dashboard</a>
+<section class="error-page">
+    <p class="status">{{ error.status }}</p>
+    <h1>{{ error.status >= 500 ? 'Something went wrong at our end' : 'That request could not be completed' }}</h1>
+    <p>{{ error.message }}</p>
+    <p><a class="button" href="{{ home|default('/') }}">Back to the home page</a></p>
 </section>
 {% endblock %}

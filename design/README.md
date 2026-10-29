@@ -1,35 +1,25 @@
 # LPanel design
 
-Phase 0 documents for LPanel (this repository) and LPA (the agent, in its own
-repository). Read them in this order:
+LPanel is a WHM/cPanel alternative for hosting companies. It is installed on
+each server and has four tiers: root admin, resellers, end users and sub-users.
 
-1. [LPHP_DISCOVERY.md](LPHP_DISCOVERY.md) — what the framework really provides, with evidence.
-2. [MVP_SCOPE.md](MVP_SCOPE.md) — what is built, in which order, and the open questions.
-3. [ARCHITECTURE.md](ARCHITECTURE.md) — components, flows, modules, boundaries.
-4. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — the LPA ↔ LPanel wire format.
-5. [THREAT_MODEL.md](THREAT_MODEL.md) — assets, attackers, mitigations, required tests.
-6. [DATA_MODEL.md](DATA_MODEL.md) — tables per module.
-7. [DEVELOPMENT.md](DEVELOPMENT.md) — running and testing the panel locally.
+| Document | What it covers |
+|---|---|
+| [FEATURES.md](FEATURES.md) | Every feature, who gets it, and in which release (v1 / v1.x / v2) |
+| [ROADMAP.md](ROADMAP.md) | Milestones M0–M11 for v1, with exit criteria |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Panel, agent and authd; rules; server layout |
+| [adr/](adr/) | Architecture decision records |
 
 ## Decisions
 
-| ADR | Decision | Status |
-|---|---|---|
-| [0001](adr/0001-lpa-in-go.md) | LPA in Go | Accepted |
-| [0002](adr/0002-agent-pull-transport.md) | Agent pulls; mTLS + Ed25519 | Accepted |
-| [0003](adr/0003-separate-panel-nginx-instance.md) | Separate panel Nginx instance | Accepted |
-| [0004](adr/0004-os-matrix.md) | Ubuntu 24.04/26.04 + Debian 12/13 | Accepted |
-| [0005](adr/0005-lpanel-disables-engine-system.md) | LPanel switches off `engine/System` | Accepted |
-| [0006](adr/0006-operations-separate-from-queue.md) | Operations separate from the LPHP queue | Accepted |
-| [0007](adr/0007-nginx-first-apache-second.md) | Nginx adapter first, Apache next | Accepted |
-| [0008](adr/0008-panel-database-mariadb.md) | Panel DB is MariaDB | Accepted |
-| [0009](adr/0009-lpa-privilege-split.md) | `lpa-agent` / `lpa-exec` split | Accepted |
-| [0010](adr/0010-root-login-via-authd.md) | Root logs in with the system password via `lpanel-authd` | Accepted |
-| [0011](adr/0011-api-tokens-resets-and-session-epochs.md) | API tokens, password resets and session epochs; root has neither tokens nor reset links | Proposed |
-| [0012](adr/0012-panel-package-php-fpm-and-agent-port.md) | Panel package: own PHP-FPM master, agents on :8444, `.deb` with local MariaDB | Accepted |
-| [0013](adr/0013-hosting-accounts-on-a-server.md) | Hosting accounts on a server, and the `lpa-exec` socket protocol | Accepted |
-| [0014](adr/0014-websites-through-the-hosting-nginx.md) | Websites through the hosting Nginx: managed settings, checked apply, rollback, hand edits | Accepted |
-| [0015](adr/0015-website-certificates-with-acme-http-01.md) | Website certificates from Let's Encrypt (ACME HTTP-01), through the same checked change | Accepted |
-
-`design/` is in no LPHP manifest, so `framework:update` never touches it. It is
-outside `public/`, so the web server never serves it.
+| ADR | Decision |
+|---|---|
+| [0001](adr/0001-single-server-install.md) | One install manages one server |
+| [0002](adr/0002-php-panel-go-agent.md) | Panel in PHP (LPHP), agent in Go |
+| [0003](adr/0003-agent-over-unix-socket.md) | Panel ↔ agent over a local Unix socket, signed requests |
+| [0004](adr/0004-root-login-via-pam.md) | Root logs in with the real root password (PAM) |
+| [0005](adr/0005-almalinux-apache-first.md) | AlmaLinux 9 + Apache first; OS matrix |
+| [0006](adr/0006-exim-dovecot.md) | Exim + Dovecot, Rspamd + ClamAV |
+| [0007](adr/0007-powerdns.md) | PowerDNS with database backend |
+| [0008](adr/0008-filesystem-quotas.md) | Kernel filesystem quotas |
+| [0009](adr/0009-commercial-license.md) | Commercial per-server license |

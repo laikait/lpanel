@@ -25,7 +25,7 @@ tool, no filesystem browser, no shell, and no way to reach a class by name.
 The framework serves it over STDIO for a local client and over HTTP for a remote
 one.
 
-Module-facing classes are **Experimental**; the server, registry and transports
+Module-facing classes are **Stable**; the server, registry and transports
 are Internal. See [`STABILITY.md`](../../STABILITY.md).
 
 ## How it fits together

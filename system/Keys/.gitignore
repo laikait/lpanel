@@ -1,4 +1,0 @@
-# The panel's operation-signing key lives here in development (servers:keygen).
-# Never commit it.
-*
-!.gitignore

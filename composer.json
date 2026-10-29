@@ -1,5 +1,5 @@
 {
-    "name": "laikait/lpanel",
+    "name": "laikait/lphp",
     "description": "Module-first, hook/filter driven backend PHP framework.",
     "type": "project",
     "license": "MIT",
@@ -34,7 +34,10 @@
     "autoload-dev": {
         "psr-4": {
             "App\\Tests\\": "tests/"
-        }
+        },
+        "classmap": [
+            "tests/Fixtures/"
+        ]
     },
     "config": {
         "sort-packages": true,
@@ -56,11 +59,16 @@
             "@test"
         ],
         "serve": "php -S 127.0.0.1:8080 -t public server",
-        "console": "php laika"
+        "console": "php laika",
+        "bench": [
+            "Composer\\Config::disableProcessTimeout",
+            "php tests/Benchmark/run.php"
+        ]
     },
     "scripts-descriptions": {
         "check": "Full quality gate: coding standard, static analysis, tests.",
         "serve": "Run the development server on http://127.0.0.1:8080",
-        "console": "Run the framework console."
+        "console": "Run the framework console.",
+        "bench": "Benchmark every subject in the specification; --save and --compare to track a change."
     }
 }

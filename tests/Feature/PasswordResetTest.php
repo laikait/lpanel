@@ -4,120 +4,228 @@ declare(strict_types=1);
 
 namespace App\Tests\Feature;
 
+use App\Engine\Auth\AuthException;
+use App\Engine\Auth\EmailVerification;
 use App\Engine\Auth\Password;
-use App\Engine\Database\ConnectionManager;
+use App\Engine\Auth\PasswordReset;
+use App\Engine\Auth\Providers\EmptyProvider;
+use App\Engine\Auth\UserProvider;
+use App\Engine\Core\Application;
+use App\Engine\Filter\FilterEngine;
+use App\Engine\Http\Response;
+use App\Engine\Mail\Message;
+use App\Engine\Mail\Transport;
+use App\Engine\Mail\Transports\ArrayTransport;
+use App\Engine\Routing\Route;
+use App\Engine\Routing\Router;
+use App\Engine\Routing\RoutingException;
 use App\Engine\Security\Secret;
-use App\Modules\Identity\Users\UserStore;
-use App\Tests\Support\ApplicationTestCase;
+use App\Engine\Security\Signer;
+use App\Tests\Fixtures\Auth\MemoryAccounts;
+use App\Tests\Support\TestCase;
 
-/** "Forgot your password?": one answer for everyone, a link that works once, every other session ended. */
-final class PasswordResetTest extends ApplicationTestCase
+final class PasswordResetTest extends TestCase
 {
-    private const OLD = 'the original password';
+    private Application $app;
 
-    private const NEW = 'a brand new passphrase';
+    private MemoryAccounts $accounts;
+
+    /** @var list<Message> */
+    private array $mailed = [];
 
     protected function setUp(): void
     {
-        parent::setUp();
-        $hash = $this->service(Password::class)->hash(new Secret(self::OLD));
-        $this->service(UserStore::class)->create('ada', 'Ada Lovelace', 'ada@example.test', $hash, ['customer']);
-        $this->service(UserStore::class)->create('nomail', 'No Mail', null, $hash, ['customer']);
+        $this->app = $this->shippedApplication([
+            'app' => ['url' => 'https://shop.example/store'],
+            'security' => ['key' => Signer::generate()],
+            'mail' => ['transport' => 'array', 'from' => ['address' => 'shop@example.test']],
+            'queue' => ['store' => 'sync'],
+            'auth' => ['password' => ['options' => ['cost' => 4]]],
+        ])->boot();
+
+        $container = $this->app->container();
+        $this->accounts = new MemoryAccounts();
+        $hash = $container->get(Password::class)->hash(new Secret('old password'));
+        $this->accounts->add('7', 'ada@example.test', $hash, name: 'Ada');
+        $this->accounts->add('8', 'suspended@example.test', $hash, active: false);
+        $container->instance(UserProvider::class, $this->accounts);
+
+        $router = $container->get(Router::class);
+        $router->setBasePath('/store');
+        $router->add((new Route('GET', '/account/reset', static fn(): Response => new Response('')))->name('password.reset'));
+        $router->add((new Route('GET', '/account/verify', static fn(): Response => new Response('')))->name('email.verify'));
+
+        $container->get(FilterEngine::class)->add('mail.message', function (Message $message): Message {
+            $this->mailed[] = $message;
+
+            return $message;
+        });
     }
 
-    private function link(): string
+    private function resets(): PasswordReset
     {
-        $mail = $this->mailTo('ada@example.test');
-        self::assertNotNull($mail, 'a reset email was sent');
-        if (\preg_match('#https://panel\.test(/password/reset\?token=[A-Za-z0-9._~%-]+)#', $mail, $m) !== 1) {
-            self::fail('The email has no reset link.');
-        }
+        return $this->app->container()->get(PasswordReset::class);
+    }
 
-        return $m[1];
+    private function verification(): EmailVerification
+    {
+        return $this->app->container()->get(EmailVerification::class);
+    }
+
+    /** The last link mailed, as the recipient reads it. */
+    private function mailedLink(): string
+    {
+        $transport = $this->app->container()->get(Transport::class);
+        self::assertInstanceOf(ArrayTransport::class, $transport);
+        $sent = $transport->sent();
+        self::assertNotSame([], $sent, 'Nothing was mailed.');
+
+        $raw = \quoted_printable_decode($sent[\count($sent) - 1]->raw);
+        self::assertSame(1, \preg_match('#https://\S+?\?token=[A-Za-z0-9_.-]+#', $raw, $match), $raw);
+
+        return $match[0] ?? '';
+    }
+
+    private function mailedToken(): string
+    {
+        \parse_str((string) \parse_url($this->mailedLink(), \PHP_URL_QUERY), $query);
+        self::assertIsString($query['token'] ?? null);
+
+        return $query['token'];
+    }
+
+    public function test_a_reset_link_is_mailed_built_from_app_url(): void
+    {
+        self::assertTrue($this->resets()->request('ada@example.test', '203.0.113.9'));
+
+        self::assertCount(1, $this->mailed);
+        $message = $this->mailed[0];
+        self::assertSame('Reset your password', $message->subject);
+        self::assertSame('ada@example.test', $message->to[0]->email);
+        self::assertStringStartsWith('https://shop.example/store/account/reset?token=', $this->mailedLink());
+
+        $transport = $this->app->container()->get(Transport::class);
+        self::assertInstanceOf(ArrayTransport::class, $transport);
+        $raw = \quoted_printable_decode($transport->sent()[0]->raw);
+        self::assertStringContainsString('Reset your password', $raw);
+        self::assertStringContainsString('works once, for 60 minutes', $raw);
     }
 
     public function test_the_answer_is_the_same_whether_or_not_the_account_exists(): void
     {
-        $bodies = [];
+        self::assertTrue($this->resets()->request('nobody@example.test'));
+        self::assertTrue($this->resets()->request('suspended@example.test'));
+        self::assertTrue($this->resets()->request(''));
 
-        foreach (['ada', 'nobody-here', 'nomail', 'root'] as $login) {
-            $response = $this->browser('198.51.100.' . \count($bodies))->post('/password/forgot', ['login' => $login]);
-            self::assertSame(200, $response->status(), $login);
-            $bodies[] = \preg_replace('/name="_token" value="[^"]+"|content="[^"]+" name|<meta name="csrf-token" content="[^"]*">/', '', $response->body());
+        self::assertSame([], $this->mailed);
+    }
+
+    public function test_a_reset_sets_the_password_and_the_link_then_stops_working(): void
+    {
+        $this->resets()->request('ada@example.test');
+        $token = $this->mailedToken();
+
+        self::assertNotNull($this->resets()->check($token));
+        $identity = $this->resets()->reset($token, new Secret('new password'));
+
+        self::assertSame('7', $identity?->id);
+        self::assertTrue($this->app->container()->get(Password::class)->verify(new Secret('new password'), $this->accounts->hashOf('7')));
+        self::assertNull($this->resets()->reset($token, new Secret('again')), 'A link worked twice.');
+        self::assertNull($this->resets()->check($token));
+    }
+
+    public function test_any_password_change_voids_outstanding_links(): void
+    {
+        $token = $this->resets()->token($this->accounts->byId('7') ?? throw new \LogicException());
+        $this->accounts->change('7', hash: $this->app->container()->get(Password::class)->hash(new Secret('changed elsewhere')));
+
+        self::assertNull($this->resets()->reset($token, new Secret('new password')));
+    }
+
+    public function test_a_changed_expired_or_foreign_token_is_refused(): void
+    {
+        $account = $this->accounts->byId('7') ?? throw new \LogicException();
+        $token = $this->resets()->token($account);
+
+        self::assertNull($this->resets()->check($token . 'x'));
+        self::assertNull($this->resets()->check('garbage'));
+        self::assertNull($this->resets()->check(''));
+        // A verification token is signed under another purpose.
+        self::assertNull($this->resets()->check($this->verification()->token($account)));
+
+        $expired = new PasswordReset(
+            $this->accounts,
+            new Password(),
+            $this->app->container()->get(Signer::class),
+            $this->app->container()->get(\App\Engine\Mail\Mailer::class),
+            $this->app->container()->get(\App\Engine\Routing\AppUrl::class),
+            ttl: -1,
+        );
+        self::assertNull($this->resets()->check($expired->token($account)));
+    }
+
+    public function test_a_suspended_account_cannot_reset(): void
+    {
+        $token = $this->resets()->token($this->accounts->byId('8') ?? throw new \LogicException());
+
+        self::assertNull($this->resets()->reset($token, new Secret('x')));
+    }
+
+    public function test_requests_are_rate_limited_per_address_whether_or_not_it_exists(): void
+    {
+        foreach (['ada@example.test', 'nobody@example.test'] as $login) {
+            for ($i = 0; $i < 3; ++$i) {
+                self::assertTrue($this->resets()->request(\strtoupper($login)));
+            }
+
+            self::assertFalse($this->resets()->request($login), $login);
         }
 
-        self::assertCount(1, \array_unique($bodies), 'every login gets the same page');
-        self::assertNotNull($this->mailTo('ada@example.test'));
-        self::assertNull($this->mailTo('root'), 'root has no reset link: its password is the server\'s');
+        self::assertCount(3, $this->mailed);
     }
 
-    public function test_the_link_sets_a_new_password_once_and_ends_other_sessions(): void
+    public function test_without_app_url_nothing_is_mailed(): void
     {
-        $elsewhere = $this->browser('203.0.113.50');
-        $elsewhere->post('/login', ['login' => 'ada', 'password' => self::OLD]);
-        self::assertTrue($elsewhere->data('/api/v1/session')['authenticated']);
+        $app = $this->shippedApplication(['security' => ['key' => Signer::generate()], 'mail' => ['transport' => 'array']])->boot();
+        $app->container()->instance(UserProvider::class, $this->accounts);
+        $app->container()->get(Router::class)->add((new Route('GET', '/r', static fn(): Response => new Response('')))->name('password.reset'));
 
-        $visitor = $this->browser();
-        $visitor->post('/password/forgot', ['login' => 'ada']);
-        $link = $this->link();
+        $this->expectException(RoutingException::class);
+        $this->expectExceptionMessage('APP_URL');
 
-        $form = $visitor->get($link);
-        self::assertSame(200, $form->status());
-        self::assertSame('no-referrer', $form->header('Referrer-Policy'), 'the token in the URL must not leak in a Referer');
-        if (\preg_match('/name="token" value="([^"]+)"/', $form->body(), $m) !== 1) {
-            self::fail('The form does not carry the token.');
-        }
-        $token = \html_entity_decode($m[1]);
-
-        self::assertSame(422, $visitor->post('/password/reset', ['token' => $token, 'password' => self::NEW, 'password_confirmation' => 'something else'])->status());
-        $done = $visitor->post('/password/reset', ['token' => $token, 'password' => self::NEW, 'password_confirmation' => self::NEW]);
-        self::assertSame(303, $done->status());
-        self::assertSame('/login', $done->header('Location'));
-        self::assertFalse($visitor->data('/api/v1/session')['authenticated'], 'a reset does not sign anyone in');
-
-        self::assertSame(410, $visitor->get($link)->status(), 'the link works once');
-        self::assertFalse($elsewhere->data('/api/v1/session')['authenticated'], 'the session from before the reset has ended');
-
-        self::assertSame(422, $this->browser('203.0.113.60')->post('/login', ['login' => 'ada', 'password' => self::OLD])->status());
-        self::assertSame(303, $this->browser('203.0.113.61')->post('/login', ['login' => 'ada', 'password' => self::NEW])->status());
-
-        $events = $this->service(ConnectionManager::class)->connection()->table('audit_events')->where('action', 'like', 'auth.password_reset%')->orderBy('id')->get();
-        self::assertSame(['auth.password_reset_requested', 'auth.password_reset'], \array_column($events, 'action'));
+        $app->container()->get(PasswordReset::class)->request('ada@example.test');
     }
 
-    /** Found on a real install: without a sender address, only accounts with email made the page fail. */
-    public function test_a_mail_failure_does_not_reveal_that_the_account_exists(): void
+    public function test_a_provider_without_the_interface_is_named(): void
     {
-        $this->app(['mail' => ['from' => ['address' => '']]]);
-        $hash = $this->service(Password::class)->hash(new Secret(self::OLD));
-        $this->service(UserStore::class)->create('ada', 'Ada Lovelace', 'ada@example.test', $hash, ['customer']);
+        $this->app->container()->instance(UserProvider::class, new EmptyProvider());
 
-        $known = $this->browser('198.51.100.1')->post('/password/forgot', ['login' => 'ada']);
-        $unknown = $this->browser('198.51.100.2')->post('/password/forgot', ['login' => 'nobody-here']);
+        $this->expectException(AuthException::class);
+        $this->expectExceptionMessage('PasswordResettable');
 
-        self::assertSame(200, $known->status());
-        self::assertSame(200, $unknown->status());
-        self::assertStringContainsString('Check your email', $known->body());
+        $this->app->container()->get(PasswordReset::class)->request('ada@example.test');
     }
 
-    public function test_a_forged_or_missing_token_is_refused(): void
+    public function test_an_address_is_verified_by_its_link(): void
     {
-        $browser = $this->browser();
+        $account = $this->accounts->byId('7') ?? throw new \LogicException();
+        $this->verification()->send($account);
 
-        self::assertSame(410, $browser->get('/password/reset?token=not-a-token')->status());
-        self::assertSame(410, $browser->get('/password/reset')->status());
-        self::assertSame(410, $browser->post('/password/reset', ['token' => 'x.y', 'password' => self::NEW, 'password_confirmation' => self::NEW])->status());
+        self::assertSame('Confirm your email address', $this->mailed[0]->subject);
+        self::assertStringStartsWith('https://shop.example/store/account/verify?token=', $this->mailedLink());
+
+        $token = $this->mailedToken();
+        self::assertSame('7', $this->verification()->verify($token)?->id);
+        self::assertTrue($this->accounts->isVerified('7'));
+        self::assertSame('7', $this->verification()->verify($token)?->id, 'Verifying twice is harmless.');
     }
 
-    public function test_requests_are_rate_limited(): void
+    public function test_a_link_for_an_old_address_does_not_verify_the_new_one(): void
     {
-        $browser = $this->browser();
-        $statuses = [];
+        $token = $this->verification()->token($this->accounts->byId('7') ?? throw new \LogicException());
+        $this->accounts->change('7', email: 'attacker@example.test');
 
-        for ($i = 0; $i < 4; ++$i) {
-            $statuses[] = $browser->post('/password/forgot', ['login' => 'ada'])->status();
-        }
-
-        self::assertSame([200, 200, 200, 429], $statuses, 'three a quarter-hour per login');
+        self::assertNull($this->verification()->verify($token));
+        self::assertFalse($this->accounts->isVerified('7'));
     }
 }

@@ -5,13 +5,13 @@ console commands, the error document, asset URLs — is marked **Stable**,
 **Experimental**, **Internal** or **Deprecated** in
 [`STABILITY.md`](../../STABILITY.md), as specification §53 asks. The short version:
 
-- **Nothing is Stable before 1.0.0.** The specification says not to promise
-  stability too early, and a framework no independent application has used yet
-  is early. What is expected to become Stable is marked *1.0 candidate*.
-- **Experimental** is what modules and applications are written against: the
+- **Stable** is what modules and applications are written against: the
   `module.php` contract, the ten helpers, handlers' types, stores' interfaces. It
-  changes only in a minor release, and never without an entry in
-  [`UPGRADING.md`](../../UPGRADING.md).
+  changes only in a major release, after a deprecation in a minor one, with an
+  entry in [`UPGRADING.md`](../../UPGRADING.md).
+- **Experimental** is a new public API that is not promised yet. Nothing has this
+  level today; it may change in a minor release, never in a patch, and is
+  promoted by an explicit changelog entry.
 - **Internal** is wiring — kernels, registries behind collectors, resolvers, the
   framework's own commands, concrete stores selected by name — and changes
   whenever it needs to.
@@ -23,16 +23,16 @@ console commands, the error document, asset URLs — is marked **Stable**,
   must read what the previous one wrote.
 
 `tests/Architecture/DocumentationTest.php` keeps the file honest: every engine
-class resolves to exactly one level, no row is stale, nothing is Stable in 0.x,
-and **no module in `modules/` or in the showcase may use an Internal class** —
+class resolves to exactly one level, no row is stale, a Deprecated row names its
+replacement and removal version, and **no module in `modules/` or in the showcase may use an Internal class** —
 the rule that makes the classification mean something.
 
 ## Versioning and releases
 
-**Semantic versioning, with 0.x read the way SemVer allows.** Before 1.0.0, a
-minor release (`0.1` → `0.2`) may change Experimental APIs, with upgrade notes; a
-patch release (`0.1.0` → `0.1.1`) may not. From 1.0.0, Stable APIs change only in
-a major release, after a deprecation in a minor one.
+**Semantic versioning.** A patch release (`3.2.0` → `3.2.1`) fixes defects and
+changes no API. A minor release (`3.2` → `3.3`) adds, and may change Experimental
+or Internal code, with upgrade notes. A Stable API changes only in a major release
+(`3` → `4`), after a deprecation in a minor one.
 
 **The version is written in one place**, `Application::VERSION`, which `about`
 and `help` print. `composer.json` deliberately has no `version` field: Composer

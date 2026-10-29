@@ -154,6 +154,7 @@ uses, under the module name `engine`. The kernel has no idea they exist: delete
 | `about` | Summarise this application: version, modules, routes, connections. |
 | `help` | List the available commands, or explain one of them. |
 | `module:list` | Discovered modules, in the order they load. |
+| `module:make` | Create `modules/<Name>/module.php`, or `modules/<Group>/<Name>/module.php`. Never overwrites. See [below](#modulemake). |
 | `route:list` | Every registered route and its owning module. |
 | `openapi:export` | The OpenAPI description of the routes marked with `openapi` meta, to stdout or `--file`; see [OpenAPI](openapi.md). |
 | `openapi:docs` | `--enable` or `--disable` the docs page and its description on this machine; no flag shows what is on. |
@@ -228,17 +229,88 @@ uses, under the module name `engine`. The kernel has no idea they exist: delete
 | `mcp:list` | Every MCP tool, resource and prompt, its module and who may use it. |
 | `mcp:stdio` | Serve MCP over stdin and stdout, as a user, for a local client. |
 
-**None of them generates code**, and an architecture test pins that list.
+**Only `module:make` generates code**, and an architecture test pins that list.
 `nginx:make` writes a file, but it is web server configuration that nothing in
 the framework reads.
 
 A `make:something` command writes a file whose shape the framework then quietly
 depends on, and that shape is undocumented because the generator *is* the
 documentation. It is how a framework stops being a library you call and becomes
-a thing you live inside.
+a thing you live inside. So `module:make` writes the `module.php` that
+[Modules: Start a new module](modules.md#start-a-new-module) documents line for
+line, plus only the starter files you name with `--with`: nothing is created for
+later.
 
-To start a module, copy the skeleton in
-[Modules: Start a new module](modules.md#start-a-new-module).
+### `module:make`
+
+```bash
+php laika module:make Billing            # modules/Billing/module.php
+php laika module:make Plugins/Billing    # modules/Plugins/Billing/module.php
+php laika module:list                    # Billing is there; nothing was registered
+```
+
+Creates `module.php`, and nothing else unless `--with` asks (below). Each part of the name must be a capital
+letter followed by letters, digits or underscores (`Billing`, `OrderHistory`),
+which also rules out `..`, drive letters and anything that is not a name. `/`
+and `\` both separate. At most one group level is allowed.
+
+**`--with` adds starter files**, one small working file per part, each the shape
+the framework documents for it:
+
+```bash
+php laika module:make Billing --with=http,templates
+php laika module:make Plugins/Billing --with=database,seeder,model
+php laika module:make Billing --with=all
+```
+
+| Part | Writes |
+|---|---|
+| `http` | `Http/Index.php`, an invokable handler, and a `GET /billing` route in `module.php`. With `database` too, the handler lists the `name` of every row in the module's table (and, with `templates`, hands them to the template as `$rows`) |
+| `model` | `Model/Billing.php`, extending `Model` |
+| `database` | `Database/Migrations/<UTC timestamp>_create_billing_table.php`, a `Reversible` creating `billing` (`id`, `name`, timestamps) |
+| `seeder` | `Database/Seeders/billing.php`, adding one row only if it is absent. Needs `database`, whose table it fills |
+| `templates` | `Templates/index.php`, found as `@Billing/index`. With `http`, the handler renders it |
+| `assets` | `assets/css/billing.css`, served at `/assets/module/Billing/css/billing.css` |
+| `lang` | `lang/en.php` |
+
+`all` is every part. Names are derived from the id: `OrderHistory` gives the
+table `order_history`, the route `/order-history` and the file `order_history.php`.
+An unknown part, or `seeder` without `database`, is refused before anything is
+written. In a grouped module the classes are in `App\Modules\Plugins\Billing\…`.
+Edit the generated files freely; nothing reads them differently from a file you wrote.
+
+**The module id is the last part.** `Plugins/Billing` is the module `Billing`:
+discovery names a module after its own folder, so the id (and `@Billing/…`,
+`config/Billing.php`) never includes the group. Ids must be unique across all
+`modules.paths` roots, so the command refuses an id that is already installed.
+Classes in a grouped module live under `App\Modules\Plugins\Billing\…`, because
+that is the folder path Composer maps.
+
+**A grouped module needs its group in `modules.paths`.** The default is
+`['modules']`, and discovery only looks at the direct children of each root, so
+`modules/Plugins/Billing` loads once `modules/Plugins` is a root too:
+
+```php
+// config/modules.php
+return ['paths' => ['modules', 'modules/Plugins']];
+```
+
+The command creates the module either way, then:
+
+| `config/modules.php` | What it does |
+|---|---|
+| group already in `modules.paths` | nothing |
+| does not exist (and `paths` is the default) | creates it with `['modules', 'modules/Plugins']` |
+| exists | leaves it alone and prints the line to add |
+
+It never edits a file you wrote, since that is PHP that may hold comments or
+computed values. If you use `config:cache`, rebuild it after the file changes.
+
+It **never overwrites**: if `modules/Billing` exists, as a folder or a file, it
+exits 1 and touches nothing. A group folder that differs only by case from an
+existing one is refused too, because `plugins` and `Plugins` are one directory on
+Windows and macOS and two on Linux. If the write fails, what the run created is
+removed and it exits 1.
 
 ## If it doesn't work
 

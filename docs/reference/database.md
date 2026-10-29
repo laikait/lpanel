@@ -556,7 +556,8 @@ return new class implements Reversible {
 A file returns a `Migration`, which has `up(Tables)`, or a `Reversible`, which
 adds `down(Tables)`. Its name is `YYYY_MM_DD_HHMMSS_what_it_does.php`, in lower
 case, and its id is `<module id>:<file name>`. **There is no `make:migration`** —
-create the file yourself.
+create the file yourself. The one exception is a module's first: `php laika
+module:make Billing --with=database,seeder` writes a starter migration and seeder.
 
 | Command | Does |
 |---|---|

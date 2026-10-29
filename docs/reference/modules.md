@@ -45,9 +45,10 @@ whole API a module author learns.
 
 ## Start a new module
 
-There is no `module:make` command, on purpose (see
-[Console](console.md)). A module is one file, so copy this one. For a module
-called `Shop`:
+`php laika module:make Shop` writes the `module.php` below, and nothing else (see
+[Console](console.md#modulemake), which also covers `Plugins/Shop` for a module
+in a group folder, and `--with=http,database,...` for starter files). A module is one file, so you can equally copy
+it by hand. For a module called `Shop`:
 
 ```
 modules/Shop/

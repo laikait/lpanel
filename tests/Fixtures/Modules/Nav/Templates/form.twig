@@ -1,0 +1,71 @@
+{#
+ # One form for both create and edit -- `mode` only changes the heading.
+ # `old` always holds every field, prefilled by the handler on the way in
+ # (blank defaults for create, the stored row for edit) and echoed back
+ # as-is when validation fails, so nothing typed is ever lost.
+ #}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{{ mode == 'edit' ? 'Edit' : 'New' }} nav item</title>
+    <style>
+        body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 32rem; color: #1a1a1a; }
+        label { display: block; margin-top: 1rem; font-weight: 600; }
+        input[type=text], input[type=number] { width: 100%; padding: .4rem; box-sizing: border-box; }
+        .hint { color: #666; font-size: .85em; font-weight: normal; }
+        .error { color: #b00020; font-size: .85em; margin: .15rem 0 0; }
+        button { margin-top: 1.5rem; padding: .5rem 1rem; }
+    </style>
+</head>
+<body>
+<p><a href="{{ indexUrl }}">&larr; Back to navigation</a></p>
+<h1>{{ mode == 'edit' ? 'Edit item' : 'New item' }}</h1>
+
+<form method="post" action="{{ action }}">
+    <input type="hidden" name="_token" value="{{ token }}">
+
+    <label>Location <span class="hint">which menu this belongs to</span>
+        <input type="text" name="location" value="{{ old.location|default('') }}" {{ mode == 'edit' ? 'readonly' : '' }}>
+    </label>
+    {% for message in errors.location|default([]) %}<p class="error">{{ message }}</p>{% endfor %}
+
+    <label>Label <span class="hint">shown to a visitor</span>
+        <input type="text" name="label" value="{{ old.label|default('') }}">
+    </label>
+    {% for message in errors.label|default([]) %}<p class="error">{{ message }}</p>{% endfor %}
+
+    <label>Parent item id <span class="hint">blank for a top-level item</span>
+        <input type="text" name="parentId" value="{{ old.parentId|default('') }}">
+    </label>
+    {% for message in errors.parentId|default([]) %}<p class="error">{{ message }}</p>{% endfor %}
+
+    <label>URL <span class="hint">a literal href, if not using a route</span>
+        <input type="text" name="url" value="{{ old.url|default('') }}">
+    </label>
+    {% for message in errors.url|default([]) %}<p class="error">{{ message }}</p>{% endfor %}
+
+    <label>Route name <span class="hint">resolved to a URL when the menu renders, instead of the URL above</span>
+        <input type="text" name="route" value="{{ old.route|default('') }}">
+    </label>
+    {% for message in errors.route|default([]) %}<p class="error">{{ message }}</p>{% endfor %}
+
+    <label>Capability <span class="hint">required to see this item; blank means everyone</span>
+        <input type="text" name="capability" value="{{ old.capability|default('') }}">
+    </label>
+    {% for message in errors.capability|default([]) %}<p class="error">{{ message }}</p>{% endfor %}
+
+    <label>Order <span class="hint">lower comes first among siblings</span>
+        <input type="number" name="order" value="{{ old.order|default('0') }}">
+    </label>
+    {% for message in errors.order|default([]) %}<p class="error">{{ message }}</p>{% endfor %}
+
+    <label>
+        <input type="checkbox" name="enabled" value="1" {{ old.enabled|default('') ? 'checked' : '' }}>
+        Enabled
+    </label>
+
+    <button type="submit">{{ mode == 'edit' ? 'Save' : 'Create' }}</button>
+</form>
+</body>
+</html>

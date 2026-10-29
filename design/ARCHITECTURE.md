@@ -1,128 +1,121 @@
-# LPanel + LPA architecture
+# LPanel architecture
 
-The system as built for the MVP ([MVP_SCOPE.md](MVP_SCOPE.md)). Every choice
-here is either a verified LPHP fact ([LPHP_DISCOVERY.md](LPHP_DISCOVERY.md)) or
-an ADR in [adr/](adr/).
+LPanel is installed on each hosting server and manages only that server. It is
+made of two programs and a small helper:
 
-## 1. Components
-
-```
- Browser / API client
-        │ HTTPS :8443 (session cookie + CSRF, or bearer token)
-        ▼
- ┌──────────────── panel host ────────────────────────────────┐
- │ lpanel-nginx.service  (own config tree, ADR-0003)           │
- │   └─ lpanel-php-fpm.service (own master, user lpanel,       │
- │      ADR-0012) ── LPHP app                                  │
- │         modules/: Shared, Identity, Audit, Servers,         │
- │                   Operations, Dashboard, Hosting, …         │
- │   lpanel-scheduler.timer         (php laika schedule:run)   │
- │   lpanel-authd.socket            (root password, ADR-0010)  │
- │   MariaDB "lpanel" (ADR-0008)                               │
- │   /etc/lpanel/keys/operations.key (Ed25519, not in DB)      │
- └─────────────────────────────────────────────────────────────┘
-        ▲  HTTPS :8444 /agent/v1/* — mTLS + signed envelopes,
-        │  agent-initiated only (ADR-0002, AGENT_PROTOCOL.md)
- ┌──────┴────────── managed server (each) ────────────────────┐
- │ lpa-agent.service  (user lpa; network, verify, journal)     │
- │      │ /run/lpa/exec.sock (SO_PEERCRED = lpa)               │
- │ lpa-exec.service   (root, hardened; registry ops only)      │
- │      ├─ hosting adapter: Nginx (ADR-0007) │ Apache later    │
- │      ├─ PHP-FPM pools per account                           │
- │      └─ MariaDB (customer databases)                        │
- └─────────────────────────────────────────────────────────────┘
-```
-
-The panel host normally also runs LPA, enrolled like any other server, so the
-panel can see its own health. That copy of LPA treats `lpanel-nginx` as
-read-only (status only).
-
-## 2. Request and operation flow
-
-1. A user calls an LPanel API route. LPHP checks CSRF or the token, `auth`, `can`, the rate limit and the schema.
-2. The module's service checks ownership with the `authorization.decision` filter, which can refuse but never grant. It also checks quota and the server's capability document.
-3. In **one DB transaction**, the module:
-   - writes the desired-state change (e.g. `websites.state = provisioning`);
-   - inserts an `operations` row (`queued`), with its signed envelope prepared at claim time;
-   - inserts `audit_events`.
-4. The API answers `202 Accepted` with the operation's URL. The UI polls `GET /api/v1/operations/{id}`.
-5. The server's agent polls `/agent/v1/operations/claim`. The panel leases the next eligible operation (guarded `UPDATE`) and returns it signed with the operation key.
-6. `lpa-agent` verifies the signature and the payload schema, and checks its journal (§7 of the protocol). For a privileged operation it forwards the signed operation, untouched, to `lpa-exec` (built in M6a), which checks the signature and everything else again itself, then runs the adapter ([AGENT_PROTOCOL.md §6.2.1](AGENT_PROTOCOL.md)). While the work runs, the agent extends the lease.
-7. The agent posts the result. The panel validates it against `result_schema`, stores it, updates the resource state (the `operations.finished` hook, which Hosting and Websites listen to), and writes `operation_events` and an audit event — in one transaction.
-8. A per-minute scheduled task sweeps lapsed leases ([ADR-0006](adr/0006-operations-separate-from-queue.md)). It also marks agents with no heartbeat for 3 × the poll interval as `offline`; new operations for an offline server are refused at creation.
-9. Reconciliation (later milestone) is just more operations: `*.drift_check` operations report differences. They correct nothing unless a policy for that operation explicitly enables it.
-
-## 3. LPanel modules (LPHP conventions)
-
-Each module is `modules/<Name>/` with a `module.php`, plus the subfolders it needs:
-
-- `Http/` — route handlers
-- `Jobs/` — LPHP queue jobs
-- `Commands/` — console commands
-- `Database/Migrations/`
-- `Templates/` (`@<Name>/…`)
-- `assets/` (`/assets/module/<Name>/…`)
-
-Dependencies are declared with `->requires()`. Proposed names (plan §4 Phase 2):
-
-| Module | Owns | Requires |
-|---|---|---|
-| Shared | `DataSource`, `/health`; shared UI layout partials | — |
-| Identity | users, roles, role assignments, API tokens, TOTP; `UserProvider`, `TokenProvider`, `TwoFactorAccounts`; login / logout / reset / 2FA screens | — |
-| Audit | `audit_events`; one `AuditLog` service other modules call | — |
-| Servers | servers, enrollments, agent credentials, `/agent/v1/*`, the Ed25519 verifier and signer | Identity, Audit |
-| Operations | `operations`, `operation_events`, the operation catalogue, the lease sweeper, the `/api/v1/operations` API | Servers, Audit |
-| Dashboard | `/` and the admin and customer home screens (a customer's own accounts) | Identity, Servers, Operations, Hosting |
-| Hosting | **built (M6a):** `hosting_accounts`, `AccountAccess` (who sees which), `AccountActions` (ask, and settle on `operations.finished`), `/accounts` screens, `/api/v1/accounts`, `accounts:*` | Identity, Servers, Operations, Audit |
-| Websites | **built (M6b, M7):** `websites`, `website_domains`, `website_certificates`, `WebsiteAccess`, `WebsiteActions` (ask, settle on `operations.finished`, record `websites.check`, ask for due certificates), `/websites` screens with the settings editor and HTTPS card, `/api/v1/websites`, `websites:*`, `certificates:renew`, the hourly check; cards on account and server pages | Identity, Servers, Operations, Hosting, Audit |
-| Databases, Certificates, Files, Cron, Backups, Monitoring, DNS, Mail | later milestones | Hosting (and others as needed) |
-
-Rules:
-
-- No circular `requires()`. LPHP refuses those at boot.
-- A module reads another module's data only through that module's service classes, never its tables.
-- No module imports `App\Engine\System\*` ([ADR-0005](adr/0005-lpanel-disables-engine-system.md)). Operations code never imports `App\Engine\Queue\*` ([ADR-0006](adr/0006-operations-separate-from-queue.md)).
-
-## 4. API surface
-
-| Prefix | Who | Auth | CSRF |
+| Part | Language | Runs as | Job |
 |---|---|---|---|
-| `/` (HTML pages) | browsers | session | on (default) |
-| `/api/v1/*` | the panel's own JS | session cookie | **on**, via `X-CSRF-TOKEN` |
-| `/api/token/v1/*` | automation clients | bearer token (`TokenProvider`) only | `'csrf' => false`; on such a route the session cookie authenticates nobody |
-| `/agent/v1/*` | LPA only | mTLS + Ed25519 envelope | `'csrf' => false` |
-| `/health` | load balancer | none | n/a |
+| **Panel** (this repo) | PHP 8.3 on LPHP | `lpanel` (unprivileged) | Web UI, REST API, CLI, its own database, decisions and permissions |
+| **Agent** (`lpa`, separate repo) | Go | root | The only thing that changes the system: users, configs, services, files |
+| **authd** (`lpanel-authd`) | Go | root, socket-activated | Checks the root password through PAM; nothing else |
 
-Automation gets its own prefix because LPHP checks CSRF on every unsafe request
-unless the route opts out, and a bearer token doesn't exempt it
-(`engine/Security/Guard.php:136-147`). Both API prefixes call the same handler
-classes; only the group meta differs.
+```
+ Browser / API client / billing system
+        │ HTTPS :2087 (WHM, reseller)  :2083 (cPanel)  :2096 (webmail)
+        ▼
+ ┌──────────────────────────────┐
+ │ panel nginx (own instance)   │   separate from the customers' web server
+ │ panel PHP-FPM (user lpanel)  │
+ │   LPHP modules               │──── MariaDB "lpanel" schema (panel state)
+ └──────────┬───────────────────┘
+            │ Unix socket /run/lpa/lpa.sock
+            │ (SO_PEERCRED = lpanel uid, every request signed)
+            ▼
+ ┌──────────────────────────────┐        ┌──────────────────────────────┐
+ │ lpa (root)                   │        │ lpanel-authd (root)           │
+ │ operation registry + journal │        │ PAM "lpanel" service          │
+ └──────────┬───────────────────┘        └──────────────────────────────┘
+            ▼
+ Apache / Nginx · PHP-FPM pools · MariaDB · PowerDNS · Exim · Dovecot · Rspamd
+ ClamAV · Pure-FTPd · restic · firewalld · ModSecurity · quotas · systemd
+```
 
-Error bodies use LPHP's single error shape. Lists use `ApiResponse::collection`, with cursor pagination wherever a table can grow without limit (operations, audit).
+## Rules
 
-## 5. UI
+1. **The panel decides, the agent does.** The panel checks who is asking and
+   whether they're allowed. It then sends the agent a named operation with
+   typed arguments, such as `account.create` or `domain.add`. The agent checks
+   the arguments again, because it does not trust the panel to have done so.
+2. **The agent has no shell API.** It only runs operations from a fixed
+   registry. Each operation declares its arguments, timeout and whether it is
+   safe to retry.
+3. **Exactly once.** Every operation carries an idempotency key. The agent
+   journals it, so a retry after a crash or timeout does not repeat the work.
+4. **Configs are generated, staged and tested.** Every config goes through the
+   same steps: render → write to a staging path → syntax-test the candidate →
+   swap → reload → probe → roll back if the probe fails. Edits made by hand are
+   detected and reported, never silently overwritten.
+5. **Panel state lives in the panel's database. System state lives on the
+   system.** A scheduled reconcile job compares the two and reports drift.
+6. **Customer isolation by default.** Each account is a Linux user with its
+   own PHP-FPM pool. Home folders are 0711, `/proc` is mounted with `hidepid`,
+   each account gets a private `/tmp`, and kernel quotas apply.
 
-- Twig templates. Bootstrap 5 and jQuery are **vendored** into `public/assets/vendor/`, not loaded from a CDN, because of the default CSP.
-- All data loads and changes go through `/api/v1`. Untrusted values are inserted with `.text()` / `textContent`, never `.html()`.
-- Two navigation trees: one for administrators, one for customers. Shared layout lives in `templates/layout.twig`, overridden for LPanel.
-- Every operation shows `queued` / `running` / `succeeded` / `failed` / `needs_attention`, with the stored `message`. Buttons are disabled while a mutation is pending.
+## Panel (this repo)
 
-## 6. Panel deployment (summary; built in M5, details in [ADR-0012](adr/0012-panel-package-php-fpm-and-agent-port.md))
+The panel is built on LPHP 3.2.0 modules, with one module per feature area
+under `modules/`. The framework in `engine/` is not edited.
 
-- The `lpanel` `.deb` (`packaging/build-deb.sh`). `postinst` runs `lpanel-setup`, which is safe to run again; `sudo lpanel <command>` is the console.
-- `lpanel` system user. The application lives in `/opt/lpanel/`, owned by root and read-only to `lpanel`, with the production Composer dependencies bundled.
-- Writable by `lpanel`: `system/`, a link to `/var/lib/lpanel`, and nothing else.
-- Panel Nginx serves `/opt/lpanel/public` only. Its config is rendered from `nginx:make`'s server block, plus TLS, HSTS and a second listener for agents (8444, client certificates).
-- `.env` (a link to `/etc/lpanel/lpanel.env`, `0640 root:lpanel`) holds `APP_KEY` and `lpanel_app`'s password. `lpanel_migrate`'s password is in `/etc/lpanel/migrate.env` (root only). The operation-signing key is a separate file (`AGENT_PROTOCOL.md §1`).
-- Upgrade order: stop the scheduler → `down` → new files → `cache:clear` → `migrate` (as `lpanel_migrate`) → `cache:warm` → `up` → restart PHP-FPM, reload Nginx → start the scheduler.
-
-## 7. Where the boundaries are
-
-| Boundary | Enforced by |
+| Module | Covers |
 |---|---|
-| Customer ↔ customer (panel) | `authorization.decision` ownership filter; tests that change ids |
-| Customer ↔ customer (server) | distinct Linux uid per account, PHP-FPM pool per account, `0750` homes, open_basedir as defense in depth only |
-| Panel process ↔ OS | `system.enabled = false`; `lpanel` user has no sudo |
-| Panel ↔ agent | mTLS + per-request signatures + signed operations + agent-side schema validation |
-| Agent network side ↔ root | `lpa-agent` / `lpa-exec` split with `SO_PEERCRED` ([ADR-0009](adr/0009-lpa-privilege-split.md)) |
-| Panel Nginx ↔ hosting web server | separate instance, config tree, unit and listener ([ADR-0003](adr/0003-separate-panel-nginx-instance.md)) |
+| `Identity` | users, tiers, sessions, 2FA, API tokens, "log in as" |
+| `Access` | roles, reseller ACLs, sub-user grants, feature lists |
+| `Audit` | audit log |
+| `Agent` | socket client, request signing, operation records and their state machine |
+| `Accounts` | accounts, packages, quotas, bandwidth |
+| `Resellers` | resellers, overselling, nameservers, branding |
+| `Web` | domains, vhosts, PHP versions, redirects, error pages |
+| `Ssl` | AutoSSL, certificates |
+| `Databases` | MariaDB DBs/users, phpMyAdmin SSO |
+| `Dns` | PowerDNS zones and templates |
+| `Mail` | mailboxes, forwarders, filters, DKIM, queue |
+| `Files` | file manager, FTP, SSH keys |
+| `Backups` | schedules, destinations, restore |
+| `Security` | firewall, brute force, ModSecurity |
+| `Monitor` | dashboard, services, stats, alerts |
+| `System` | updates, settings, license |
+
+There are three UI skins over one set of routes:
+
+| Skin | Port |
+|---|---|
+| WHM (admin) | :2087 |
+| Reseller | :2087, limited by the reseller's ACL |
+| cPanel (user) | :2083 |
+
+Sub-users get the cPanel skin, limited by their grants.
+
+## Agent (`lpa`)
+
+The agent is a single static Go binary run as a systemd service that
+listens on a Unix socket. It has one package per subsystem, for example
+`accounts`, `web/apache`, `web/nginx`, `php`, `mysql`, `dns`, `mail`, `ftp`,
+`backup`, `firewall` and `quota`. Each package implements the operations it
+owns and has a pretend-system backend, so tests can run without root.
+
+Code from the earlier attempt, to review and reuse where it fits:
+
+- `internal/execd`: socket server and peer credential checks.
+- `internal/websites`: the staged config pipeline, and the Apache and Nginx
+  renderers.
+- The ACME client code.
+- `helpers/authd`: in this repo's git history at commit `ee0adbd`.
+
+## Layout on an AlmaLinux 9 server
+
+| Path | What |
+|---|---|
+| `/usr/local/lpanel/` | panel code |
+| `/etc/lpanel/` | panel config, signing keys |
+| `/var/lib/lpanel/` | panel data (uploads, generated files) |
+| `/var/log/lpanel/` | panel logs |
+| `/usr/local/lpa/bin/lpa` | agent binary |
+| `/var/lib/lpa/` | agent journal |
+| `/etc/lpa/` | agent config |
+| `/home/<user>/` | account homes (`public_html`, `mail`, `logs`, `tmp`, `.lpanel`) |
+| `/etc/httpd/conf.d/lpanel/` or `/etc/nginx/lpanel/` | generated vhosts |
+| `/etc/opt/remi/php<XY>/php-fpm.d/<user>.conf` | per-account pools, in each Remi PHP version's own pool folder |
+
+## Decisions
+
+All decisions are recorded in [adr/](adr/).

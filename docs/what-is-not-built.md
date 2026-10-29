@@ -32,7 +32,7 @@ own specification.
 
 | Not built | Why |
 |---|---|
-| Facades, service providers, middleware, gates and policies, form requests, route-model binding, copies of Eloquent, Blade or Artisan, `make:*` generators | Specification §54 rules them out, and an architecture test enforces each one. The framework's own answers are modules, hooks and filters, and plain classes. |
+| Facades, service providers, middleware, gates and policies, form requests, route-model binding, copies of Eloquent, Blade or Artisan, `make:*` generators (the one exception is `module:make`, which writes `module.php` and, only when asked with `--with`, one starter file per part) | Specification §54 rules them out, and an architecture test enforces each one. The framework's own answers are modules, hooks and filters, and plain classes. |
 | A debug dashboard | §52: measure first. What the framework observes goes to the log and to response headers only, and a test keeps it that way. |
 | A route parameter that matches everything (`{path:.*}`) | It would make route matching ambiguous, and nothing has needed it. |
 | `OR` and joins in `Query` | `Query` must work the same on every kind of storage, memory included, and a join cannot. Both belong in a repository method written over SQL, where the query builder offers them — see [The query builder](reference/database.md#the-query-builder). |

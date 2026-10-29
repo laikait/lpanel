@@ -1,3 +1,16 @@
+# LPanel
+
+A control panel for hosting companies: a WHM/cPanel alternative with root admin,
+reseller, end-user and sub-user tiers. It is installed on each server
+(AlmaLinux 9 first) and manages that machine through a privileged Go agent.
+
+Start with [design/README.md](design/README.md): the [feature list](design/FEATURES.md),
+[roadmap](design/ROADMAP.md) and [architecture](design/ARCHITECTURE.md).
+
+The panel is built on the framework described below.
+
+---
+
 # App Framework
 
 A PHP framework for large backend applications: ERP, billing, hosting control
@@ -8,9 +21,8 @@ Your application is built from **modules**. A module is one folder under
 tables and background jobs. Delete the folder and all of it is gone, because
 nothing outside the folder refers to it.
 
-> **Status: 2.1.2, the first release.** Everything in the specification is built
-> except the demo application (Phase 29), which is postponed. Every public API is
-> **Experimental**; nothing is marked Stable yet. See
+> **Status: 3.2.0.** Everything in the specification is built except the demo
+> application (Phase 29), which is postponed. Every public API is **Stable**: see
 > [API stability](docs/contributing/releases.md),
 > [What is not built](docs/what-is-not-built.md) and
 > [Implementation status](docs/contributing/development.md#implementation-status).

@@ -1,8 +1,0 @@
-{
-  "users": ["root"],
-  "allow_from": { "root": [] },
-  "client_user": "lpanel",
-  "pam_service": "lpanel",
-  "lockout": { "failures": 5, "window_seconds": 900, "block_seconds": 900 },
-  "global_per_minute": 30
-}

@@ -1,4 +1,0 @@
-# /etc/pam.d/lpanel: how lpanel-authd checks a system password.
-# The distro's own stacks, so password policy, faillock and expiry apply as at a console.
-@include common-auth
-@include common-account

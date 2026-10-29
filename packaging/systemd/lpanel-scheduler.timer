@@ -1,9 +1,0 @@
-[Unit]
-Description=Run LPanel's scheduled tasks every minute
-
-[Timer]
-OnCalendar=minutely
-AccuracySec=1s
-
-[Install]
-WantedBy=timers.target

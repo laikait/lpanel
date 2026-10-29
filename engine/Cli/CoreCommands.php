@@ -25,6 +25,7 @@ use App\Engine\Cli\Commands\MigrateCommand;
 use App\Engine\Cli\Commands\MigrateRollbackCommand;
 use App\Engine\Cli\Commands\MigrateStatusCommand;
 use App\Engine\Cli\Commands\ModuleListCommand;
+use App\Engine\Cli\Commands\ModuleMakeCommand;
 use App\Engine\Cli\Commands\NginxMakeCommand;
 use App\Engine\Cli\Commands\OpenApiAuthCommand;
 use App\Engine\Cli\Commands\OpenApiDocsCommand;
@@ -61,12 +62,14 @@ use App\Engine\System\Cron\ScheduleRunJob;
  * because they are not: if this file were deleted the console would still work
  * and would simply have fewer commands.
  *
- * Every one of them answers a question that is otherwise expensive to answer --
- * what loaded, what routes exist, where templates are searched. None of them
- * generates code; nginx:make writes web server configuration, which nothing in
- * the framework reads. A make:something command writes a file whose shape the
- * framework then quietly depends on, and scaffolding is how a framework stops
- * being a library you call and starts being a thing you live inside.
+ * Almost every one of them answers a question that is otherwise expensive to
+ * answer -- what loaded, what routes exist, where templates are searched.
+ * nginx:make writes web server configuration, which nothing in the framework
+ * reads. module:make is the one generator, and it writes the one file a module
+ * requires, exactly as modules.md documents it, plus the starter files --with asks for. A make:something command writes
+ * a file whose shape the framework then quietly depends on, and scaffolding is
+ * how a framework stops being a library you call and starts being a thing you
+ * live inside; so there is no make:controller, and module:make adds no folder unless asked.
  */
 final class CoreCommands
 {
@@ -95,6 +98,12 @@ final class CoreCommands
         $commands->add('module:list', ModuleListCommand::class)
             ->describe('List discovered modules, in the order they load.')
             ->note('The order is load order, which is what decides whose hook runs first at equal priority.');
+
+        $commands->add('module:make', ModuleMakeCommand::class)
+            ->describe('Create modules/<name>/module.php, the one file a module needs.')
+            ->argument('name', 'Billing, or Plugins/Billing to put it in a group folder. The module id is the last part.')
+            ->option('with', 'Also create: http, model, database, seeder, templates, assets, lang, or all (comma-separated).')
+            ->note('Writes module.php only and never overwrites. A grouped module loads once modules/<Group> is in modules.paths: it creates config/modules.php for that, or tells you what to add to an existing one.');
 
         $commands->add('route:list', RouteListCommand::class)
             ->describe('List every registered route and its owning module.')

@@ -49,7 +49,8 @@ Benchmarks (`composer bench`) are informational and never part of the gate. See
 **Things the framework does not have, on purpose.** No facades, no service
 providers, no middleware, no gates or policies, no form-request objects, no
 Eloquent, Blade or Artisan clone, no global `Controllers/` or `Models/`
-directory, and no `make:*` generator. Each has an architecture test. A change
+directory, and no `make:*` generator (`module:make`, which writes only the
+documented `module.php` and the starter files `--with` names, is the single exception). Each has an architecture test. A change
 that needs one of these is a design discussion first.
 
 **Create only what is used.** No empty directories for later, no interface with
