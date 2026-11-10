@@ -65,16 +65,24 @@ limited by these:
 | T26 | The Admin panel and User panel sharing one session (cookies ignore ports) | One session cookie per interface (`config/session.php`) | e2e install "each interface has its own session cookie" |
 | T27 | A reseller selling more than their allowance, or acting outside their ACL | Allowance checked on every create, package move and package change, whoever acts; the ACL applied in the authorization filter, so pages, API and menus agree | `ResellersTest` (all) |
 | T28 | A sub-user using features they were not given | `feature.*` capabilities narrowed to the package and the sub-user's grants in the authorization filter; sub-users cannot manage users | `SubusersTest::test_an_owner_makes_a_sub_user_who_gets_only_what_was_granted`, `…grants_follow_the_package` |
+| T29 | Another service on the server (or a compromised one) talking to the agent or authd | Besides the file modes and SO_PEERCRED (T8), the SELinux module runs both in their own domains and lets only `httpd_t` connect to them, through sockets of their own type; `httpd_t` gets no other unconfined service and no generic run-time sockets | `dist/selinux/build.sh` checks "connect to the agent", "no other unconfined service", "no other generic run-time sockets"; on a VM, `tests/vm/run.sh` "nothing was denied during the whole run" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
 
 ## Known gaps
 
 These are tracked, not forgotten. Each names the milestone that closes it.
 
-- **SELinux enforcing is not yet verified.** The installer sets port and file
-  labels. Whether the policy allows the custom PHP-FPM unit to reach the two
-  sockets and MariaDB has only been tested in containers, where SELinux is off.
-  M0c's container tests do not cover it. Closes with the first VM test (M1).
+- **SELinux enforcing has not yet been run on a VM.** The policy module is
+  checked against EL9's compiled policy, and that check found and fixed real
+  denials. Only a machine with SELinux enforcing proves nothing else gets
+  denied at run time: `tests/vm/run.sh` does that, and it has not been run
+  yet (M1c).
+- **SELinux does not separate the panel's PHP from customers' web servers.**
+  From M2, customers' Apache and PHP-FPM also run as `httpd_t`, so at the
+  SELinux level they may connect to the agent's socket like the panel does.
+  The socket's mode (0660 root:lpanel), SO_PEERCRED and the request
+  signature still refuse them. M2 decides whether the panel's own PHP-FPM
+  gets a domain of its own.
 - **The certificate is self-signed.** Browsers warn once, and admins may learn
   to click through warnings. Closes in M3 (panel hostname certificate).
 - **API tokens are not scoped, and do not follow session epochs.** A token

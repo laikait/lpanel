@@ -79,6 +79,7 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Regis
 	ops.System(reg, sysinfo.New(), version, started)
 	ops.Accounts(reg, &accounts.Manager{
 		HomesBase: cfg.HomesBase, Files: accounts.SystemFiles, Run: sysexec.Exec{}, Quota: quotas, Log: log,
+		SELinux: selinuxOn(),
 	})
 	return reg
 }
@@ -170,4 +171,11 @@ func printJSON(v any) error {
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+// selinuxOn reports whether SELinux is on (enforcing or permissive), from the
+// kernel's own selinuxfs.
+func selinuxOn() bool {
+	_, err := os.Stat("/sys/fs/selinux/enforce")
+	return err == nil
 }

@@ -1,0 +1,16 @@
+# The two root programs, in their own domains (lpanel.te).
+/usr/local/lpa/bin/lpa			--	gen_context(system_u:object_r:lpanel_agent_exec_t,s0)
+/usr/local/lpa/bin/lpanel-authd		--	gen_context(system_u:object_r:lpanel_authd_exec_t,s0)
+/var/run/lpa(/.*)?					gen_context(system_u:object_r:lpanel_sock_t,s0)
+/var/run/lpanel-authd(/.*)?				gen_context(system_u:object_r:lpanel_sock_t,s0)
+
+# The panel, served by its own nginx and PHP-FPM (httpd_t). The code is read
+# only; system/ holds the cache, logs and sessions it writes.
+/usr/local/lpanel(/.*)?				gen_context(system_u:object_r:httpd_sys_content_t,s0)
+/usr/local/lpanel/system(/.*)?			gen_context(system_u:object_r:httpd_sys_rw_content_t,s0)
+
+# Their sockets, pid files, logs and nginx's temporary files.
+/var/run/lpanel(/.*)?				gen_context(system_u:object_r:httpd_var_run_t,s0)
+/var/run/lpanel-nginx(/.*)?				gen_context(system_u:object_r:httpd_var_run_t,s0)
+/var/log/lpanel(/.*)?				gen_context(system_u:object_r:httpd_log_t,s0)
+/var/lib/lpanel(/.*)?				gen_context(system_u:object_r:httpd_var_lib_t,s0)

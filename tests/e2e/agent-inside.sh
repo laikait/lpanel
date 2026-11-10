@@ -24,13 +24,11 @@ dnf -y -q install php83-php-cli php83-php-intl php83-php-mbstring php83-php-pdo 
 ln -sf /usr/bin/php83 /usr/local/bin/php
 php -v | head -1
 
-# /home on its own small ext4 filesystem with user quotas, as ADR-0008 asks of
-# a real server, so the kernel's enforcement is tested and not assumed.
-dnf -y -q install e2fsprogs >/dev/null 2>&1 || { echo "e2fsprogs install failed"; exit 1; }
-truncate -s 256M /homes.img
-mkfs.ext4 -q -O quota -E quotatype=usrquota /homes.img
-mount -o loop,usrquota /homes.img /home || { echo "cannot mount a quota filesystem (run with --privileged)"; exit 1; }
-rm -rf /home/lost+found
+# /home on its own small filesystem with user quotas, as ADR-0008 asks of a
+# real server, so the kernel's enforcement is tested and not assumed.
+# HOME_FS=xfs tests XFS with uquota, the EL9 default filesystem.
+source /src/tests/e2e/quota-home.sh
+quota_home 512M || exit 1
 
 useradd --system --home-dir /usr/local/lpanel --shell /sbin/nologin lpanel
 useradd --create-home intruder          # an ordinary local user

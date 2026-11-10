@@ -227,16 +227,24 @@ for unit in lpa.service lpanel-authd.service lpanel-authd.socket lpanel-php-fpm.
 done
 systemctl daemon-reload
 
-if command -v getenforce >/dev/null 2>&1 && [ "$(getenforce)" = "Enforcing" ]; then
-    # Labels for an SELinux-enforcing host. Not yet verified on a VM; see
-    # design/THREAT_MODEL.md, "Known gaps".
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    # LPanel's policy module (dist/selinux): lpa and authd in their own
+    # domains, their sockets reachable by the panel's PHP-FPM (httpd_t), and
+    # the labels for every path the panel uses. Installed in permissive mode
+    # too, so switching to enforcing later needs nothing more.
+    semodule -i "$BUNDLE/packaging/lpanel.pp"
     for port in 7443 7444; do
         semanage port -a -t http_port_t -p tcp "$port" 2>/dev/null || semanage port -m -t http_port_t -p tcp "$port"
     done
-    semanage fcontext -a -t httpd_sys_content_t "$PANEL(/.*)?" 2>/dev/null || true
-    semanage fcontext -a -t httpd_sys_rw_content_t "$PANEL/system(/.*)?" 2>/dev/null || true
-    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel
-    note "SELinux labels applied"
+    # Releases before the module labelled the code with local rules; the
+    # module's own rules replace them.
+    semanage fcontext -d "$PANEL(/.*)?" 2>/dev/null || true
+    semanage fcontext -d "$PANEL/system(/.*)?" 2>/dev/null || true
+    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa
+    for d in /run/lpa /run/lpanel /run/lpanel-nginx /run/lpanel-authd; do
+        if [ -e "$d" ]; then restorecon -R "$d"; fi
+    done
+    note "SELinux: lpanel policy module and labels ($(getenforce))"
 fi
 
 if systemctl is-active --quiet firewalld; then
@@ -249,7 +257,9 @@ step "Database tables"
 runuser -u lpanel -- $PHP "$PANEL/laika" migrate
 
 systemctl enable -q --now lpa.service lpanel-authd.socket lpanel-php-fpm.service lpanel-nginx.service lpanel-scheduler.timer
-systemctl restart lpa.service lpanel-php-fpm.service lpanel-nginx.service
+# Restarted even when already running, so a rerun brings new binaries, units
+# and SELinux domains into effect (authd's socket is made again with its label).
+systemctl restart lpa.service lpanel-authd.socket lpanel-php-fpm.service lpanel-nginx.service
 for _ in $(seq 50); do [ -S /run/lpa/lpa.sock ] && [ -S /run/lpanel/php-fpm.sock ] && break; sleep 0.2; done
 
 # ---------------------------------------------------------------------------

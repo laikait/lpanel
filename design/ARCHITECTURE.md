@@ -131,6 +131,26 @@ sodium extension on EL9, and the panel signs agent requests with it. Keeping
 the panel's PHP separate also means a customer-facing PHP upgrade never
 touches the panel.
 
+## SELinux
+
+LPanel runs with SELinux enforcing. Its policy module is in
+[`dist/selinux/`](../dist/selinux/lpanel.te), and the installer loads it
+whenever SELinux is on.
+
+| Process | Domain |
+|---|---|
+| the panel's nginx and PHP-FPM | `httpd_t` (their binaries are `httpd_exec_t`) |
+| `lpa` | `lpanel_agent_t`, unconfined |
+| `lpanel-authd` | `lpanel_authd_t`, unconfined |
+| the scheduler and `lpanel` commands (php83 CLI) | `unconfined_service_t` / the caller's |
+
+`httpd_t` may connect to `lpanel_agent_t` and `lpanel_authd_t` only, through
+`lpanel_sock_t` sockets. That is the reason the two root programs have
+domains of their own: the panel can reach them without being allowed to
+reach every unconfined service. The module also labels the panel's paths
+(see the table below). The agent runs `restorecon` on each new home, so
+`public_html` becomes `httpd_user_content_t`.
+
 ## Layout on an AlmaLinux 9 server
 
 | Path | What |
@@ -144,7 +164,7 @@ touches the panel.
 | `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444) |
 | `/etc/lpanel/authd.json`, `/etc/pam.d/lpanel` | root sign-in: who may be checked, and the PAM stack used |
 | `/var/lib/lpanel/`, `/var/log/lpanel/` | panel data and logs |
-| `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs |
+| `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs (`lpanel_agent_exec_t`, `lpanel_authd_exec_t`) |
 | `/etc/lpa/lpa.json`, `/etc/lpa/panel.pub` | agent config, and the panel's public key |
 | `/var/lib/lpa/journal/` | agent journal |
 | `/run/lpa/lpa.sock`, `/run/lpanel-authd/authd.sock` | the two sockets, 0660 root:lpanel |

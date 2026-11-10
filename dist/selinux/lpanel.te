@@ -1,0 +1,44 @@
+policy_module(lpanel, 1.0.0)
+
+########################################
+#
+# LPanel's SELinux policy module, for the targeted policy on EL9.
+#
+# lpa and lpanel-authd are the two root programs. They keep root's full
+# powers, since changing the system is their job, but they run in their own
+# domains instead of the shared unconfined_service_t. That way the panel's web
+# server can be allowed to reach exactly these two and no other unconfined
+# service on the machine.
+#
+
+type lpanel_agent_t;
+type lpanel_agent_exec_t;
+init_daemon_domain(lpanel_agent_t, lpanel_agent_exec_t)
+unconfined_domain(lpanel_agent_t)
+
+type lpanel_authd_t;
+type lpanel_authd_exec_t;
+init_daemon_domain(lpanel_authd_t, lpanel_authd_exec_t)
+unconfined_domain(lpanel_authd_t)
+
+# /run/lpa and /run/lpanel-authd, and the sockets in them.
+type lpanel_sock_t;
+files_pid_file(lpanel_sock_t)
+
+########################################
+#
+# The panel's own nginx and PHP-FPM run as httpd_t, because both binaries are
+# httpd_exec_t. PHP-FPM signs requests to the agent and asks authd about the
+# root password, over the two sockets.
+#
+# File permissions (0660 root:lpanel) and SO_PEERCRED still decide who gets an
+# answer. This rule only stops SELinux from refusing the connection.
+#
+
+gen_require(`
+	type httpd_t;
+')
+
+allow httpd_t lpanel_sock_t:dir search_dir_perms;
+allow httpd_t lpanel_sock_t:sock_file write_sock_file_perms;
+allow httpd_t { lpanel_agent_t lpanel_authd_t }:unix_stream_socket connectto;

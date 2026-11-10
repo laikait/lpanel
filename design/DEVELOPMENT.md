@@ -119,9 +119,11 @@ php vendor/bin/php-cs-fixer fix --dry-run --config=.php-cs-fixer.dist.php --path
 tests/e2e/agent.sh                                       # Docker; after dist/lpa/build.sh; 37 checks
 ```
 
-Both e2e scripts mount an ext4 image with user quotas on `/home` inside the
-container (it needs `--privileged`), so disk limits are enforced by the
-kernel during the tests rather than assumed.
+Both e2e scripts mount a filesystem image with user quotas on `/home` inside
+the container (it needs `--privileged`), so disk limits are enforced by the
+kernel during the tests rather than assumed. It is ext4 by default;
+`HOME_FS=xfs tests/e2e/agent.sh` (or `install.sh`) uses XFS with `uquota`,
+EL9's own filesystem. `tests/e2e/quota-home.sh` does the mounting.
 
 ## Building and testing an install
 
@@ -131,6 +133,7 @@ packages in a fresh container.
 ```bash
 dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
+dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (38 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
 tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 72 checks
 ```
@@ -150,6 +153,44 @@ docker exec lp bash -c 'echo "root:pick-a-password" | chpasswd && /bundle/instal
 limits. A real install without quotas is refused (ADR-0008). To get quotas in
 the container too, mount a quota ext4 image on `/home` first, as
 `tests/e2e/install-inside.sh` does.
+
+## SELinux
+
+Containers cannot run SELinux: the kernel is shared and has none on. So the
+policy is tested in two steps.
+
+1. **`dist/selinux/build.sh`, with Docker.** It compiles `lpanel.te` and
+   `lpanel.fc` against EL9's own targeted policy and loads the module into a
+   policy store. Then it asks the compiled policy about every access the panel
+   needs and every access it must not get, and what label each path gets.
+   When the panel starts using a new path, socket or service, add its label
+   to `lpanel.fc` and a check to `check-inside.sh`.
+2. **`tests/vm/run.sh`, on a VM.** It runs the real thing with SELinux
+   enforcing.
+
+EL9 looks up `/run/...` paths as `/var/run/...`, so `lpanel.fc` names them
+that way. Remi's php-fpm is `httpd_exec_t` only because Remi's package adds
+the `/opt/remi/php83/root = /` equivalence.
+
+## Testing on a VM
+
+`tests/vm/run.sh root@<address> [ssh options]` copies the bundle to a fresh
+AlmaLinux or Rocky 9 machine and runs the install e2e there. It adds the
+SELinux checks and fails on any denial. The machine must:
+- have SELinux enforcing (the script says how to turn it on);
+- let root in over SSH with a key;
+- be throwaway: the run sets a test root password, and mounts an XFS `uquota`
+  image over `/home` unless `/home` already has user quotas.
+
+It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
+- **A cloud server**, from the provider's AlmaLinux 9 image. Some providers
+  ship it with SELinux off.
+- **Hyper-V**, from an administrator PowerShell. Use a Generation 2 VM from
+  the AlmaLinux 9 minimal ISO, and set its Secure Boot template to
+  "Microsoft UEFI Certificate Authority".
+- **QEMU/KVM inside WSL2.** This needs `nestedVirtualization=true` in
+  `%USERPROFILE%\.wslconfig`, then `wsl --shutdown`. It only works when
+  `/dev/kvm` appears afterwards.
 
 ## Gotchas
 

@@ -335,3 +335,33 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+func TestCreateLabelsTheHomeWhenSELinuxIsOn(t *testing.T) {
+	m, sys, _ := setup(t)
+	if _, err := m.Create(context.Background(), CreateArgs{Username: "plain", Shell: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range sys.calls {
+		if strings.HasPrefix(c, "restorecon") {
+			t.Fatalf("restorecon ran without SELinux: %v", sys.calls)
+		}
+	}
+
+	m.SELinux = true
+	if _, err := m.Create(context.Background(), CreateArgs{Username: "labelled", Shell: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	want := "restorecon -R " + filepath.Join(m.HomesBase, "labelled")
+	if sys.calls[len(sys.calls)-1] != want {
+		t.Fatalf("last call %q, want %q", sys.calls[len(sys.calls)-1], want)
+	}
+
+	// A home that cannot be labelled is not half-made: the account is undone.
+	sys.fail["restorecon"] = true
+	if _, err := m.Create(context.Background(), CreateArgs{Username: "unlabelled", Shell: "none"}); err == nil {
+		t.Fatal("created without its labels")
+	}
+	if e, _ := m.Files.lookup("unlabelled"); e != nil {
+		t.Fatal("the account was left behind")
+	}
+}

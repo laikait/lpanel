@@ -47,4 +47,5 @@ composer.lock
 # Built agent binaries; source lives in dist/lpa.
 /dist/lpa/bin/
 /dist/authd/bin/
+/dist/selinux/bin/
 /dist/build/

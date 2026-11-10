@@ -59,6 +59,10 @@ type Manager struct {
 	Log       *slog.Logger
 	// Chown is os.Lchown when nil; tests replace it.
 	Chown func(path string, uid, gid int) error
+	// SELinux is true on a host with SELinux on. New homes are then given
+	// the policy's labels (public_html becomes web content), because a
+	// directory the agent makes itself would only inherit its parent's.
+	SELinux bool
 }
 
 // Account is what the operations answer about an account.
@@ -214,6 +218,11 @@ func (m *Manager) finishCreate(ctx context.Context, a CreateArgs, home string) (
 	}
 	if err := chown(web, e.UID, e.GID); err != nil {
 		return Account{}, err
+	}
+	if m.SELinux {
+		if err := sysexec.Must(ctx, m.Run, "restorecon", "-R", home); err != nil {
+			return Account{}, err
+		}
 	}
 	if err := m.setQuota(home, e.UID, a.Quota); err != nil {
 		return Account{}, err

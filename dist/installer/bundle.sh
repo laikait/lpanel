@@ -2,6 +2,7 @@
 # Make an installable bundle: dist/build/lpanel-<version>/ and its .tar.gz.
 #
 #   dist/lpa/build.sh && dist/authd/test/run.sh   # the two binaries first
+#   dist/selinux/build.sh                         # and the SELinux module
 #   dist/installer/bundle.sh [version]
 #
 # The bundle holds install.sh, the panel's code with production dependencies
@@ -14,6 +15,7 @@ out="dist/build/lpanel-${version}"
 
 [ -f dist/lpa/bin/lpa_linux_amd64 ] || { echo "build the agent first: dist/lpa/build.sh"; exit 1; }
 [ -f dist/authd/bin/lpanel-authd_linux_amd64 ] || { echo "build authd first: dist/authd/test/run.sh"; exit 1; }
+[ -f dist/selinux/bin/lpanel.pp ] || { echo "build the SELinux module first: dist/selinux/build.sh"; exit 1; }
 
 rm -rf "$out"
 mkdir -p "$out/panel" "$out/bin" "$out/packaging"
@@ -41,6 +43,7 @@ cp dist/installer/packaging/* "$out/packaging/"
 cp dist/lpa/packaging/lpa.service dist/lpa/packaging/lpa.json "$out/packaging/"
 cp dist/authd/packaging/authd.json dist/authd/packaging/lpanel-authd.service \
    dist/authd/packaging/lpanel-authd.socket dist/authd/packaging/pam.d-lpanel.el "$out/packaging/"
+install -m 0644 dist/selinux/bin/lpanel.pp "$out/packaging/lpanel.pp"
 install -m 0755 dist/installer/install.sh "$out/install.sh"
 echo "$version" > "$out/VERSION"
 

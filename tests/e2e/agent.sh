@@ -9,9 +9,10 @@ cd "$(dirname "$0")/../.."
 [ -x dist/lpa/bin/lpa_linux_amd64 ] || [ -f dist/lpa/bin/lpa_linux_amd64 ] || { echo "build the agent first: dist/lpa/build.sh"; exit 1; }
 
 src="$(pwd -W 2>/dev/null || pwd)"
-# --privileged: the accounts checks mount an ext4 image with user quotas on
-# /home, so the kernel's enforcement is tested for real.
-MSYS_NO_PATHCONV=1 docker run --rm --privileged \
+# --privileged: the accounts checks mount a filesystem image with user quotas
+# on /home, so the kernel's enforcement is tested for real.
+# HOME_FS=xfs tests/e2e/agent.sh uses XFS with uquota instead of ext4.
+MSYS_NO_PATHCONV=1 docker run --rm --privileged -e HOME_FS="${HOME_FS:-ext4}" \
     --hostname e2e-web-01 \
     -v "$src:/src:ro" \
     almalinux:9 bash /src/tests/e2e/agent-inside.sh

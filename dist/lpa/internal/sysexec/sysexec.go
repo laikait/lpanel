@@ -21,6 +21,8 @@ var Tools = map[string]string{
 	"usermod": "/usr/sbin/usermod",
 	"userdel": "/usr/sbin/userdel",
 	"pkill":   "/usr/bin/pkill",
+	// Gives files the labels the SELinux policy says they should have.
+	"restorecon": "/usr/sbin/restorecon",
 }
 
 // env is the whole environment a tool sees.

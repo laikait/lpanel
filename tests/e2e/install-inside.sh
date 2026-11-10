@@ -17,15 +17,16 @@ status() { curl -ks -o /dev/null -w '%{http_code}' "$1"; }
 location() { curl -ks -o /dev/null -w '%{redirect_url}' "$1"; }
 
 echo "$ROOT_PASSWORD" | passwd --stdin root >/dev/null
-dnf -y -q install procps-ng e2fsprogs >/dev/null 2>&1
+# On a VM with SELinux on (tests/vm/run.sh), every denial from here on fails
+# the run at the end.
+started=$(date '+%m/%d/%Y %H:%M:%S')
+dnf -y -q install procps-ng >/dev/null 2>&1
 
-# /home on an ext4 filesystem with user quotas, as ADR-0008 requires, so the
-# installer takes the real path (no --allow-no-quota) and disk limits are
-# enforced by the kernel in the checks below.
-truncate -s 512M /homes.img
-mkfs.ext4 -q -O quota -E quotatype=usrquota /homes.img
-mount -o loop,usrquota /homes.img /home || { echo "cannot mount a quota filesystem"; exit 1; }
-rm -rf /home/lost+found
+# /home on a filesystem with user quotas (ext4, or XFS with HOME_FS=xfs), as
+# ADR-0008 requires, so the installer takes the real path (no
+# --allow-no-quota) and disk limits are enforced by the kernel below.
+source /e2e/quota-home.sh
+quota_home 512M || exit 1
 
 echo "== install"
 check "the installer finishes" bash -c '/bundle/install.sh --hostname e2e-panel.test > /tmp/install.log 2>&1 || { tail -40 /tmp/install.log; exit 1; }'
@@ -181,6 +182,37 @@ check "a second run finishes" bash -c '/bundle/install.sh --hostname e2e-panel.t
 check "and keeps every secret" bash -c "[ \"\$(sha256sum /usr/local/lpanel/.env /etc/lpanel/agent.key /etc/lpanel/tls/panel.crt)\" = '$sum_before' ]"
 check "root can still sign in" bash -c "rm -f $jar; [ \"\$(signin '$ROOT_PASSWORD')\" = '303 https://127.0.0.1:7443/admin' ]"
 check "and the accounts are still there" t_active
+
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    echo "== SELinux ($(getenforce))"
+    domain() { # process name, domain
+        local got; got=$(ps -eZ | awk -v p="$1" '$NF == p { split($1, c, ":"); print c[3] }' | sort -u)
+        [ "$got" = "$2" ] || { echo "$1 runs as '${got:-nothing}', want $2"; return 1; }
+    }
+    labelled() { # path, type
+        local got; got=$(stat -c %C "$1" | cut -d: -f3)
+        [ "$got" = "$2" ] || { echo "$1 is $got, want $2"; return 1; }
+    }
+    denials() {
+        local out; out=$(ausearch -m AVC,USER_AVC,SELINUX_ERR -ts "$started" -i 2>&1)
+        grep -q '<no matches>' <<<"$out" && return 0
+        echo "$out" | grep -E 'denied|SELINUX_ERR' | head -30; return 1
+    }
+    export -f domain labelled
+    check "SELinux is enforcing" bash -c '[ "$(getenforce)" = Enforcing ]'
+    check "the lpanel policy module is loaded" bash -c 'semodule -l | grep -qx lpanel'
+    check "lpa runs in lpanel_agent_t" domain lpa lpanel_agent_t
+    # authd is started per sign-in and may have exited by now. Root signed in
+    # above, so any denial on its side shows in the last check.
+    check "authd's socket is lpanel_sock_t" labelled /run/lpanel-authd/authd.sock lpanel_sock_t
+    check "the panel's PHP-FPM runs in httpd_t" domain php-fpm httpd_t
+    check "the panel's nginx runs in httpd_t" domain nginx httpd_t
+    check "the agent's socket is lpanel_sock_t" labelled /run/lpa/lpa.sock lpanel_sock_t
+    check "the panel's writable folder is httpd_sys_rw_content_t" labelled /usr/local/lpanel/system httpd_sys_rw_content_t
+    check "the logs are httpd_log_t" labelled /var/log/lpanel/nginx-error.log httpd_log_t
+    check "an account's public_html is httpd_user_content_t" labelled /home/shop1/public_html httpd_user_content_t
+    check "nothing was denied during the whole run" denials
+fi
 
 echo
 echo "$pass passed, $fail failed"

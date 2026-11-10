@@ -173,10 +173,35 @@ M1 is built in three parts.
     interfaces, "log in as" across ports, and a reseller's account limit
     through the CLI.
 
-**M1c: bandwidth and the first VM.**
-- Bandwidth metering (log pipeline).
-- The first test on a real AlmaLinux 9 VM with SELinux enforcing, with XFS
-  `uquota` on `/home`.
+**M1c: SELinux and XFS. Built 2026-11-10; the VM run is still to do.**
+- **XFS quotas.** Both e2e scripts take `HOME_FS=xfs`, which mounts `/home` as
+  XFS with `uquota`, EL9's own filesystem. The agent needed no change: the
+  kernel enforces the limits on XFS the same way (agent e2e 37/37 on XFS).
+- **SELinux policy module** (`dist/selinux/`). The first check against EL9's
+  real policy found that, with SELinux enforcing, the panel could have
+  reached neither the agent nor authd: no rule lets `httpd_t` (the panel's
+  nginx and PHP-FPM) connect to `unconfined_service_t` or write a
+  `var_run_t` socket. The module:
+  - runs `lpa` and `lpanel-authd` in their own domains (`lpanel_agent_t`,
+    `lpanel_authd_t`). They are still unconfined, because changing the
+    system is their job.
+  - lets `httpd_t` connect to those two domains only, through sockets of
+    their own type (`lpanel_sock_t`).
+  - labels every path the panel uses: code read-only, `system/` writable,
+    logs, run-time sockets and nginx's temporary files.
+  - `dist/selinux/build.sh` builds it in AlmaLinux 9 and checks it against the
+    compiled policy (38 checks), including the access it must not grant.
+  - The installer loads it whenever SELinux is on, enforcing or permissive.
+- **The agent labels new homes** with `restorecon` when SELinux is on, so
+  `public_html` is `httpd_user_content_t` and ready for M2.
+- **`tests/vm/run.sh root@host`** runs the whole install e2e on a fresh
+  AlmaLinux or Rocky 9 machine with SELinux enforcing. It then checks the
+  domains and labels, and fails on any denial during the run.
+- **Still to do: run it on a VM.** This development machine could not host
+  one: nested virtualization is off in WSL2, and Hyper-V needs an
+  administrator. The run is the M0 and M1 exit on a real machine.
+- **Bandwidth metering moved to M2.** It reads the web server's logs, and
+  there is no web server before M2.
 
 **Exit:** a reseller creates an account from a package. The disk quota is
 enforced by the kernel. Suspend and terminate work and appear in the audit
@@ -184,6 +209,8 @@ log.
 
 ### M2: Web
 - Apache + PHP-FPM with one pool per account, and multi-PHP from Remi.
+- Bandwidth metering from the web server's logs (moved from M1c), counted
+  against each package's and reseller's bandwidth limit.
 - All domain types, redirects, error pages, directory privacy, hotlink
   protection.
 - The staged config pipeline with rollback.

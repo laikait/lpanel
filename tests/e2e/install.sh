@@ -26,4 +26,6 @@ for _ in $(seq 30); do docker exec "$name" systemctl is-system-running >/dev/nul
 docker exec "$name" mkdir -p /bundle /e2e
 docker cp "${bundle%/}/." "$name:/bundle/"
 docker cp tests/e2e/install-inside.sh "$name:/e2e/install-inside.sh"
-docker exec "$name" bash /e2e/install-inside.sh
+docker cp tests/e2e/quota-home.sh "$name:/e2e/quota-home.sh"
+# HOME_FS=xfs tests/e2e/install.sh puts /home on XFS with uquota instead of ext4.
+docker exec -e HOME_FS="${HOME_FS:-ext4}" "$name" bash /e2e/install-inside.sh
