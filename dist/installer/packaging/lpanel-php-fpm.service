@@ -1,0 +1,15 @@
+[Unit]
+Description=LPanel PHP (the panel's own PHP-FPM, Remi php83)
+After=network.target mariadb.service
+
+[Service]
+Type=notify
+ExecStart=/opt/remi/php83/root/usr/sbin/php-fpm --nodaemonize --fpm-config /etc/lpanel/php-fpm.conf
+ExecReload=/bin/kill -USR2 $MAINPID
+RuntimeDirectory=lpanel
+RuntimeDirectoryMode=0755
+Restart=on-failure
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

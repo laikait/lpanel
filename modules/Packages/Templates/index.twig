@@ -1,0 +1,53 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Packages.packages'|local }}</h1>
+        <p>{{ (show_owner ? 'Packages.lead_all' : 'Packages.lead_own')|local }}</p>
+    </div>
+</div>
+
+<div class="grid grid-side">
+    <div class="card">
+        {% if packages is empty %}
+            <div class="empty">{{ icon('box') }}<h3>{{ 'Packages.empty'|local }}</h3><p>{{ 'Packages.empty_text'|local }}</p></div>
+        {% else %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr>
+                    <th>{{ 'Packages.name'|local }}</th>
+                    <th>{{ 'Packages.limit_disk_mb'|local }}</th>
+                    <th class="hide-sm">{{ 'Packages.limit_bandwidth_mb'|local }}</th>
+                    <th>{{ 'Packages.accounts'|local }}</th>
+                    <th></th>
+                </tr></thead>
+                <tbody>
+                {% for p in packages %}
+                    <tr>
+                        <td>
+                            <div class="cell-user">
+                                <span class="avatar">{{ icon('box') }}</span>
+                                <div>
+                                    <strong class="nowrap">{{ p.name }}</strong>
+                                    {% if show_owner %}<div class="muted nowrap">{{ p.owner_name ? 'Packages.owned_by'|local({name: p.owner_name}) : 'Packages.server_package'|local }}</div>{% endif %}
+                                </div>
+                            </div>
+                        </td>
+                        <td class="nowrap">{{ p.disk_mb ? (p.disk_mb * 1048576)|bytes : 'Packages.unlimited'|local }}</td>
+                        <td class="nowrap hide-sm">{{ p.bandwidth_mb ? (p.bandwidth_mb * 1048576)|bytes : 'Packages.unlimited'|local }}</td>
+                        <td><span class="badge plain">{{ p.accounts }}</span></td>
+                        <td style="text-align:end"><a class="btn btn-sm btn-ghost nowrap" href="{{ p.edit_url }}" aria-label="{{ 'Packages.edit'|local }}: {{ p.name }}">{{ icon('settings') }}{{ 'Packages.edit_short'|local }}</a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ action }}">
+        <div class="card-head"><div><h2>{{ 'Packages.new'|local }}</h2><p>{{ 'Packages.new_lead'|local }}</p></div></div>
+        <div class="card-body">{% include "@Packages/form.twig" %}</div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Packages.create'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

@@ -1,0 +1,20 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Audit.recent'|local }}</h2><p>{{ 'Audit.recent_lead'|local }}</p></div>
+        <a class="btn btn-sm" href="{{ link }}">{{ 'Audit.view_all'|local }}</a>
+    </div>
+    {% if entries is empty %}
+        <div class="empty">{{ icon('activity') }}<h3>{{ 'Audit.empty'|local }}</h3></div>
+    {% else %}
+        <div class="table-wrap"><table class="table"><tbody>
+            {% for row in entries %}
+                <tr>
+                    <td><code>{{ row.action }}</code></td>
+                    <td class="muted mono nowrap">{{ row.ip }}</td>
+                    <td class="muted nowrap">{{ row.created_at|when }}</td>
+                    <td><span class="badge {{ row.outcome == 'ok' ? 'ok' : 'bad' }}">{{ ('Audit.outcome_' ~ row.outcome)|local }}</span></td>
+                </tr>
+            {% endfor %}
+        </tbody></table></div>
+    {% endif %}
+</div>

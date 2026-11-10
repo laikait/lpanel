@@ -1,0 +1,26 @@
+[
+  {
+    "name": "empty args",
+    "seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+    "public_key": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+    "id": "0123456789abcdef0123456789abcdef",
+    "op": "system.ping",
+    "ts": 1793232000,
+    "nonce": "AAAAAAAAAAAAAAAAAAAAAA",
+    "args": "{}",
+    "signed_bytes": "lpa-request-v1\n0123456789abcdef0123456789abcdef\nsystem.ping\n1793232000\nAAAAAAAAAAAAAAAAAAAAAA\n44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+    "signature": "fDX7NDQGCj5UIlUbE6I7XWI5W3R/d1A8Od2v708+v9Kb5IwakADZ0HjmWLWaWIBWMLwLpf1mPIEYMWyjLYTNDQ=="
+  },
+  {
+    "name": "args with unicode and spaces",
+    "seed": "AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA=",
+    "public_key": "ebVWLo/mVPlAeLES6KmLp5AfhTrmlb7X4OORC60ElmQ=",
+    "id": "req_2026-10-29_000001",
+    "op": "system.facts",
+    "ts": 1793232000,
+    "nonce": "q1w2e3r4t5y6u7i8o9p0aZ",
+    "args": "{\"note\": \"Ünïcødé — ok\", \"n\": 1}",
+    "signed_bytes": "lpa-request-v1\nreq_2026-10-29_000001\nsystem.facts\n1793232000\nq1w2e3r4t5y6u7i8o9p0aZ\na65bc025096fe3141f37f9f3fa3fac3144fe323319df3245e19cba6d08e704fd",
+    "signature": "EOjGrN+2eIJyIgMF1SfHoO0gklcA4HAaBidEXOSYQ+zQshDH/4jUNETUtYLO9RKETDrIIKWHHV70kzW5wnsTDw=="
+  }
+]

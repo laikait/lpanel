@@ -1,7 +1,7 @@
 # LPanel
 
-A control panel for hosting companies: a WHM/cPanel alternative with root admin,
-reseller, end-user and sub-user tiers. It is installed on each server
+A web hosting control panel for hosting companies, with root admin, reseller,
+end-user and sub-user tiers. It is installed on each server
 (AlmaLinux 9 first) and manages that machine through a privileged Go agent.
 
 Start with [design/README.md](design/README.md): the [feature list](design/FEATURES.md),

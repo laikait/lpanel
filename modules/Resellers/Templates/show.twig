@@ -1,0 +1,62 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+{% set r = reseller %}
+<div class="page-head">
+    <div>
+        <h1>{{ r.name ?: r.username }}</h1>
+        <p><span class="mono">{{ r.username }}</span>{% if r.email %} · {{ r.email }}{% endif %} · {{ 'Resellers.packages_count'|local({count: r.packages}) }}</p>
+    </div>
+    <div class="page-actions">
+        {% if r.active %}<span class="badge ok">{{ 'Resellers.active'|local }}</span>{% else %}<span class="badge bad">{{ 'Resellers.disabled'|local }}</span>{% endif %}
+        {% if can_login_as %}
+            <form class="inline-form" method="post" action="{{ urls.login_as }}">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <button class="btn" type="submit">{{ icon('user') }}{{ 'Resellers.login_as'|local }}</button>
+            </form>
+        {% endif %}
+        <a class="btn" href="{{ urls.back }}">{{ 'Resellers.back'|local }}</a>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:20px">
+    <div class="card-head"><div><h2>{{ 'Resellers.allowance'|local }}</h2><p>{{ 'Resellers.allowance_lead'|local }}</p></div></div>
+    {% include "@Resellers/allowance.twig" with {r: r} %}
+</div>
+
+<div class="grid grid-side">
+    <form class="card" method="post" action="{{ urls.limits }}">
+        <div class="card-head"><div><h2>{{ 'Resellers.limits'|local }}</h2><p>{{ 'Resellers.limits_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            {% include "@Resellers/limits-form.twig" with {v: r.limits} %}
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Resellers.save'|local }}</button></div>
+    </form>
+
+    <div class="stack">
+        <form class="card" method="post" action="{{ urls.active }}"{% if r.active %} data-confirm="{{ 'Resellers.confirm_disable'|local({name: r.username}) }}"{% endif %}>
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <input type="hidden" name="active" value="{{ r.active ? '0' : '1' }}">
+            <div class="card-head"><div><h2>{{ (r.active ? 'Resellers.disable' : 'Resellers.enable')|local }}</h2><p>{{ (r.active ? 'Resellers.disable_lead' : 'Resellers.enable_lead')|local }}</p></div></div>
+            <div class="card-foot"><button class="btn{% if r.active %} btn-ghost{% else %} btn-primary{% endif %}" type="submit">{{ icon(r.active ? 'pause' : 'play') }}{{ (r.active ? 'Resellers.disable' : 'Resellers.enable')|local }}</button></div>
+        </form>
+
+        <form class="card" method="post" action="{{ urls.password }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Resellers.reset_password'|local }}</h2><p>{{ 'Resellers.reset_password_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <label class="label" for="rs-password">{{ 'Resellers.new_password'|local }}</label>
+                <input class="input" id="rs-password" name="password" type="password" minlength="{{ min_password }}" autocomplete="new-password" required>
+            </div>
+            <div class="card-foot"><button class="btn" type="submit">{{ icon('key') }}{{ 'Resellers.save_password'|local }}</button></div>
+        </form>
+
+        <form class="card danger" method="post" action="{{ urls.delete }}" data-confirm="{{ 'Resellers.confirm_delete'|local({name: r.username}) }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Resellers.delete'|local }}</h2><p>{{ (removable ? 'Resellers.delete_lead' : 'Resellers.delete_blocked')|local }}</p></div></div>
+            <div class="card-foot"><button class="btn btn-danger" type="submit"{% if not removable %} disabled{% endif %}>{{ icon('trash') }}{{ 'Resellers.delete'|local }}</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}

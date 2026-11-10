@@ -1,0 +1,3 @@
+{% set tone = {active: 'ok', suspended: 'warn', creating: 'info', terminating: 'info', failed: 'bad'}[a.status]|default('plain') %}
+<span class="badge {{ tone }}">{{ ('Accounts.status_' ~ a.status)|local }}</span>
+{% if a.busy and a.status in ['active', 'suspended'] %}<span class="badge info" title="{{ 'Accounts.working_title'|local }}">{{ 'Accounts.working'|local }}</span>{% endif %}

@@ -1,0 +1,19 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Accounts.accounts'|local }}</h2><p>{{ 'Accounts.card_lead'|local({active: counts.active, suspended: counts.suspended}) }}</p></div>
+        <a class="btn btn-sm" href="{{ link }}">{{ 'Accounts.view_all'|local }}</a>
+    </div>
+    {% if recent is empty %}
+        <div class="empty">{{ icon('globe') }}<h3>{{ 'Accounts.empty'|local }}</h3><p><a class="btn btn-sm btn-primary" href="{{ new_url }}">{{ icon('plus') }}{{ 'Accounts.new'|local }}</a></p></div>
+    {% else %}
+        <div class="table-wrap"><table class="table"><tbody>
+            {% for a in recent %}
+                <tr>
+                    <td><strong>{{ a.domain }}</strong><div class="muted mono">{{ a.username }}</div></td>
+                    <td>{% include "@Accounts/disk.twig" with {a: a} %}</td>
+                    <td style="text-align:end">{% include "@Accounts/status.twig" with {a: a} %}</td>
+                </tr>
+            {% endfor %}
+        </tbody></table></div>
+    {% endif %}
+</div>

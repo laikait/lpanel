@@ -3,8 +3,8 @@
 - Status: Accepted (2026-10-29)
 
 ## Context
-WHM admins log in as `root` with the server's root password. Hosting
-companies' runbooks and habits assume this.
+Hosting companies' admins are used to logging in to their server panel as
+`root` with the server's root password. Their runbooks assume it.
 
 ## Decision
 - The username `root` on the admin port is checked by `lpanel-authd`. It is a

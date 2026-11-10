@@ -1,0 +1,10 @@
+{
+  "socket": "/run/lpa/lpa.sock",
+  "panel_user": "lpanel",
+  "panel_key_file": "/etc/lpa/panel.pub",
+  "journal_dir": "/var/lib/lpa/journal",
+  "journal_days": 30,
+  "max_running": 8,
+  "homes_base": "/home",
+  "quota": "on"
+}

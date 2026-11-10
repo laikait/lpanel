@@ -1,0 +1,177 @@
+# Developing LPanel
+
+## Run it locally (Windows + XAMPP)
+
+1. Create the databases: `lpanel` (and `lpanel_test` if you want one).
+2. Copy `.env.example` to `.env` and set:
+
+   ```
+   APP_ENV=local
+   APP_DEBUG=true
+   APP_URL=http://localhost/lpanel
+   APP_KEY=…                      # php laika security:key --bare
+   DB_DSN=mysql:host=127.0.0.1;port=3306;dbname=lpanel;charset=utf8mb4
+   DB_USERNAME=root
+   SESSION_STORE=database
+   LPANEL_ROOT_VERIFIER=dev       # no authd on Windows
+   LPANEL_DEV_ROOT_PASSWORD=root-dev-password
+   ```
+
+3. Run `php laika migrate`, then `php laika dev:seed`, then
+   `php laika dev:seed-hosting` for sample packages and accounts. These are
+   database rows only: there is no agent on Windows, so no Linux users are
+   made.
+4. Open the Admin panel at http://localhost/lpanel/admin and the User panel at
+   http://localhost/lpanel/panel.
+
+## Development logins
+
+| Interface | Username | Password | Kind |
+|---|---|---|---|
+| Admin panel | `root` | `root-dev-password` (from `.env`) | root |
+| Admin panel | `admin` | `admin-password-123` | panel administrator |
+| Admin panel | `reseller` | `reseller-password-123` | reseller |
+| User panel | `demo` | `demo-password-123` | account owner (owned by `reseller`) |
+| User panel | `demo.dev` | `subuser-password-123` | sub-user of `demo` |
+
+`dev:seed-hosting` adds the owners `bakery`, `oldblog`, `agency` and `newsite`
+(password `<username>-password-123`) and gives `demo` an account.
+`dev:seed`, `dev:seed-hosting` and the `dev` root verifier refuse to work
+unless `APP_ENV=local`.
+
+## Modules
+
+| Module | Holds |
+|---|---|
+| `Shared` | DataSource binding, `/health` |
+| `Panel` | the two shells (`@Panel/shell`, `@Panel/auth`), CSS/JS/icons, `PanelPage`, dashboards, the `panel.nav` and `panel.dashboard` filters |
+| `Audit` | `audit_log`, `AuditLog::record()`, audit pages, sign-in failure listeners |
+| `Identity` | `panel_users`, sign-in/out, two-factor, root via authd, staff, tiers and roles (all role lists live here), API tokens |
+| `Agent` | `AgentClient` (signed requests to lpa), `AgentKey`, `agent:*` commands, the server card |
+| `Packages` | packages, their limits and feature lists, `packages:*`, `/admin/api/v1/packages` |
+| `Accounts` | accounts, the `Provisioner` (every account change through the agent), `accounts:*`, `/admin/api/v1/accounts`, the dashboard cards |
+| `Resellers` | reseller allowance and ACL (enforced through filters), the resellers page, `resellers:*`, `/admin/api/v1/resellers` |
+| `Subusers` | the owner's Users page, sub-user grants, the gate on `feature.*` |
+
+Who may do what is decided in layers:
+- Roles are listed in `Identity/module.php`.
+- Routes name a capability (`can`).
+- Filters on `authorization.decision` can only take capabilities away: each
+  login's own interface (Identity), a reseller's ACL (Resellers), and the
+  package's features plus a sub-user's grants (Subusers).
+
+A screen for a hosting feature (from M2) protects its routes with
+`feature.<name>`.
+
+"Log in as": `POST /admin/login-as/{login id}`. Into the User panel it hands
+over a ticket (`/panel/login-as?ticket=…`); `LoginAs::otherInterface()` swaps
+:7443 and :7444 on a server and stays on the same site locally.
+
+The REST API lives under each interface's prefix (`/admin/api/v1/…`). Its
+routes set `csrf => false`, which makes the framework ignore the session
+cookie there, so only a bearer token (`Authorization: Bearer lpat_…`) works.
+Make a token on the API tokens page or with `lpanel identity:token <login> <name>`.
+
+On a server, root runs the panel's commands as `lpanel <command>`
+(`/usr/local/sbin/lpanel` runs `laika` as the panel's user). Try `lpanel help`.
+
+The agent itself is the Go module in [`dist/lpa/`](../dist/lpa/README.md).
+
+## The agent on a developer's machine
+
+PHP on Windows has no Unix-socket transport, so the panel cannot reach a real
+agent from XAMPP. The dashboard shows the "agent not reachable" warning. That
+is expected. To work on agent features:
+
+- **PHP side.** Feature tests answer agent calls from `Tests\Support\FakeAgent`
+  through `$this->agent($app, new FakeAgent([...]))`. It verifies signatures
+  as the real agent does. An answer may be a closure that returns a whole
+  response. `Tests\Support\FakeServer` uses that to play the account
+  operations with the agent's journal, so tests can take the agent down, lose
+  a reply, or fail the next operation.
+- **Go side.** `cd dist/lpa && go test ./...` runs on Windows, including the
+  real-socket server tests.
+- **Both together.** Build with `dist/lpa/build.sh`, then run
+  `tests/e2e/agent.sh`. It needs Docker and runs the real binary with the real
+  CLI in AlmaLinux 9, with real users and socket permissions.
+
+When you change an operation's arguments or results, change the Go operation,
+its test, and the PHP caller together. When you change the signing rule, run
+`go test ./internal/protocol -update` and then the PHP tests.
+
+The rules a new screen follows:
+
+- Render it through `PanelPage::render()`, so it gets the shell, the
+  navigation, notices, the theme and the text direction.
+- Put user-facing text in the module's `lang/en.php` and print it with `|local`.
+- Add its sidebar entry with the `panel.nav` filter.
+- Record every change with `AuditLog::record()`.
+- Protect routes under `/admin` or `/panel` with a capability. The Identity
+  module additionally makes sure each login only opens its own interface.
+
+## Checks
+
+```bash
+php vendor/bin/phpunit                                   # feature tests, SQLite in memory
+php vendor/bin/phpstan analyse --memory-limit=1G modules tests
+php vendor/bin/php-cs-fixer fix --dry-run --config=.php-cs-fixer.dist.php --path-mode=override modules
+(cd dist/lpa && gofmt -l . && go vet ./... && GOOS=linux go vet ./... && go test ./...)
+tests/e2e/agent.sh                                       # Docker; after dist/lpa/build.sh; 37 checks
+```
+
+Both e2e scripts mount an ext4 image with user quotas on `/home` inside the
+container (it needs `--privileged`), so disk limits are enforced by the
+kernel during the tests rather than assumed.
+
+## Building and testing an install
+
+These all need Docker. They take a few minutes because each one installs
+packages in a fresh container.
+
+```bash
+dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
+dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
+dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 72 checks
+```
+
+To poke at an installed panel by hand, start the same container and keep it:
+
+```bash
+MSYS_NO_PATHCONV=1 docker run -d --name lp --hostname panel.test --privileged --cgroupns=host \
+  -v /sys/fs/cgroup:/sys/fs/cgroup:rw -p 7443:7443 -p 7444:7444 almalinux/9-init
+docker cp dist/build/lpanel-0.1.0-dev/. lp:/bundle/
+docker exec lp bash -c 'echo "root:pick-a-password" | chpasswd && /bundle/install.sh --allow-no-quota'
+# then open https://localhost:7443 and sign in as root
+```
+
+`--allow-no-quota` exists for containers without a quota filesystem. It writes
+`"quota": "off"` to `/etc/lpa/lpa.json`, so accounts work but have no disk
+limits. A real install without quotas is refused (ADR-0008). To get quotas in
+the container too, mount a quota ext4 image on `/home` first, as
+`tests/e2e/install-inside.sh` does.
+
+## Gotchas
+
+- `TemplateManager::render()` takes `@Module/name` without `.twig`. Twig's own
+  `{% extends %}` takes the full file name.
+- Never pass a template variable named `view`: it is the framework's helper.
+- Route `defaults()` do not reach handler parameters that are not in the path.
+  Derive the interface with `PanelPage::areaOf($request)`.
+- Instance listeners are registered in `onBoot()`, because
+  `[Class::class, 'method']` means a static call.
+- The CSP forbids inline scripts. Behaviour goes in
+  `modules/Panel/assets/js/panel.js`.
+- `insert($row)` returns the new id only as `insert($row, 'id')`. An update
+  or delete without a `where()` is refused; use `updateAll()` when every row
+  is meant.
+- Browsers keep cookies by host, not port. `config/session.php` gives each
+  interface its own session cookie by looking at the request path, so do not
+  run `config:cache`. Feature tests boot one application for many requests,
+  so there both interfaces share one cookie; the install e2e checks the real
+  separation.
+- `SessionUsers` decorates the user provider: the framework calls `byId()`
+  once per request for the session's login, which is where session epochs and
+  `impersonator` are applied. Code that needs the plain row uses `PanelUsers`.
+- Headless Chrome cannot render a 390 px viewport directly. To check phone
+  width, load the page inside a 390 px iframe.

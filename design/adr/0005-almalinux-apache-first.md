@@ -3,8 +3,8 @@
 - Status: Accepted (2026-10-29)
 
 ## Context
-Most cPanel servers run AlmaLinux, Rocky or CloudLinux with Apache. They are
-the servers our customers will migrate from.
+Most shared-hosting servers run AlmaLinux, Rocky or CloudLinux with Apache.
+They are the servers our customers will migrate from.
 
 ## Decision
 - Development and tests target **AlmaLinux 9 with Apache 2.4 + PHP-FPM** first.

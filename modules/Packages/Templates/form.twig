@@ -1,0 +1,28 @@
+{# The package fields, shared by the new and edit forms. Needs: old, errors, limits, features. #}
+<input type="hidden" name="_token" value="{{ lp.token }}">
+<div class="field">
+    <label for="pkg-name">{{ 'Packages.name'|local }}</label>
+    <input class="input{% if errors.name is defined %} is-invalid{% endif %}" id="pkg-name" name="name" maxlength="64" autocomplete="off" value="{{ old.name|default('') }}" placeholder="{{ 'Packages.name_example'|local }}" required>
+    {% if errors.name is defined %}<div class="error">{{ errors.name|local }}</div>{% endif %}
+</div>
+
+<div class="form-row">
+    {% for limit in limits %}
+        <div class="field">
+            <label for="pkg-{{ limit }}">{{ ('Packages.limit_' ~ limit)|local }}{% if limit in ['disk_mb', 'bandwidth_mb'] %} <span class="muted">(MB)</span>{% endif %}</label>
+            <input class="input{% if errors[limit] is defined %} is-invalid{% endif %}" id="pkg-{{ limit }}" name="{{ limit }}" type="number" min="0" step="1" inputmode="numeric" value="{{ old[limit]|default(0) }}">
+            {% if errors[limit] is defined %}<div class="error">{{ errors[limit]|local }}</div>{% endif %}
+        </div>
+    {% endfor %}
+</div>
+<p class="hint" style="margin:-4px 0 16px">{{ 'Packages.unlimited_hint'|local }}</p>
+
+<fieldset class="field" style="border:0; padding:0; margin:0">
+    <legend class="label" style="margin-bottom:8px; font-weight:600">{{ 'Packages.features'|local }}</legend>
+    <div class="feature-grid">
+        {% for f in features %}
+            <label class="check"><input type="checkbox" name="features[]" value="{{ f }}"{% if f in old.features|default([]) %} checked{% endif %}> {{ ('Packages.feature_' ~ f)|local }}</label>
+        {% endfor %}
+    </div>
+    {% if errors.features is defined %}<div class="error">{{ errors.features|local }}</div>{% endif %}
+</fieldset>

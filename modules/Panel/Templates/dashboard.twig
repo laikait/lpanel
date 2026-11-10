@@ -1,0 +1,26 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Panel.welcome'|local({name: lp.me.name}) }}</h1>
+        <p>{{ (lp.area == 'admin' ? 'Panel.dashboard_admin_lead' : 'Panel.dashboard_user_lead')|local }}</p>
+    </div>
+</div>
+
+{% if cards is empty %}
+    <div class="card"><div class="empty">
+        {{ icon('gauge') }}
+        <h3>{{ 'Panel.dashboard_empty'|local }}</h3>
+        <p>{{ 'Panel.dashboard_empty_text'|local }}</p>
+    </div></div>
+{% else %}
+    <div class="grid grid-2">
+        {% for card in cards %}
+            <div{% if card.width|default('half') == 'full' %} style="grid-column: 1 / -1"{% endif %}>
+                {{ view.render(card.template, card.data|default({})|merge({lp: lp}))|raw }}
+            </div>
+        {% endfor %}
+    </div>
+{% endif %}
+{% endblock %}

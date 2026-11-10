@@ -1,0 +1,74 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Identity.staff'|local }}</h1>
+        <p>{{ 'Identity.staff_lead'|local }}</p>
+    </div>
+</div>
+
+<div class="grid grid-side">
+    <div class="card">
+        {% if staff is empty %}
+            <div class="empty">{{ icon('users') }}<h3>{{ 'Identity.staff_empty'|local }}</h3><p>{{ 'Identity.staff_empty_text'|local }}</p></div>
+        {% else %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr>
+                    <th>{{ 'Identity.username'|local }}</th>
+                    <th>{{ 'Identity.signed_in'|local }}</th>
+                    <th>{{ 'Identity.status'|local }}</th>
+                    <th></th>
+                </tr></thead>
+                <tbody>
+                {% for s in staff %}
+                    <tr>
+                        <td>
+                            <div class="cell-user">
+                                <span class="avatar">{{ (s.name ?: s.username)|slice(0, 1)|upper }}</span>
+                                <div><strong>{{ s.username }}</strong>{% if s.name %}<div class="muted">{{ s.name }}</div>{% endif %}</div>
+                            </div>
+                        </td>
+                        <td class="muted nowrap">{{ s.last_login_at|when|default('Identity.never'|local) }}</td>
+                        <td>{% if s.active %}<span class="badge ok">{{ 'Identity.active'|local }}</span>{% else %}<span class="badge bad">{{ 'Identity.disabled'|local }}</span>{% endif %}</td>
+                        <td class="nowrap" style="text-align:end">
+                            <form class="inline-form" method="post" action="{{ s.active_url }}"{% if s.active %} data-confirm="{{ 'Identity.confirm_disable_staff'|local({user: s.username}) }}"{% endif %}>
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <input type="hidden" name="active" value="{{ s.active ? '0' : '1' }}">
+                                <button class="btn btn-sm{% if s.active %} btn-ghost{% endif %}" type="submit">{{ (s.active ? 'Identity.disable' : 'Identity.enable')|local }}</button>
+                            </form>
+                            <details style="display:inline-block; position:relative">
+                                <summary class="btn btn-sm btn-ghost">{{ 'Identity.reset_password'|local }}</summary>
+                                <form method="post" action="{{ s.password_url }}" class="card" style="position:absolute; inset-inline-end:0; z-index:5; padding:12px; width:260px; margin-top:6px">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <label class="label" for="pw-{{ s.id }}">{{ 'Identity.new_password'|local }}</label>
+                                    <input class="input" id="pw-{{ s.id }}" name="password" type="password" autocomplete="new-password" minlength="{{ min_password }}" required>
+                                    <button class="btn btn-primary btn-sm" style="margin-top:10px" type="submit">{{ 'Identity.save'|local }}</button>
+                                </form>
+                            </details>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ action }}">
+        <div class="card-head"><div><h2>{{ 'Identity.add_staff'|local }}</h2><p>{{ 'Identity.add_staff_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            {% for field in ['username', 'name', 'email', 'password'] %}
+                <div class="field">
+                    <label for="new-{{ field }}">{{ ('Identity.' ~ field)|local }}</label>
+                    <input class="input{% if errors[field] is defined %} is-invalid{% endif %}" id="new-{{ field }}" name="{{ field }}"
+                        {% if field == 'password' %}type="password" autocomplete="new-password"{% elseif field == 'email' %}type="email" autocomplete="off"{% else %}autocomplete="off" value="{{ old[field]|default('') }}"{% endif %}
+                        {% if field == 'username' or field == 'password' %}required{% endif %}>
+                    {% if errors[field] is defined %}<div class="error">{{ errors[field]|local({min: min_password}) }}</div>{% elseif field == 'username' %}<div class="hint">{{ 'Identity.username_hint'|local }}</div>{% endif %}
+                </div>
+            {% endfor %}
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Identity.create'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

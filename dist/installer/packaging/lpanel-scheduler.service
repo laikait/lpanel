@@ -1,0 +1,10 @@
+[Unit]
+Description=LPanel scheduled tasks (audit pruning and the rest)
+After=mariadb.service
+
+[Service]
+Type=oneshot
+User=lpanel
+Group=lpanel
+WorkingDirectory=/usr/local/lpanel
+ExecStart=/usr/bin/php83 /usr/local/lpanel/laika schedule:run

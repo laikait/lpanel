@@ -1,0 +1,124 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Identity.security'|local }}</h1>
+        <p>{{ 'Identity.security_lead'|local }}</p>
+    </div>
+</div>
+
+{% if recovery_codes is defined %}
+    <div class="card" style="margin-bottom:20px">
+        <div class="card-head"><div><h2>{{ 'Identity.recovery_codes'|local }}</h2><p>{{ 'Identity.recovery_codes_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Identity.recovery_codes_once'|local }}</p></div>
+            <div class="codes">{% for c in recovery_codes %}<span>{{ c }}</span>{% endfor %}</div>
+            <p style="margin-top:14px"><button class="btn btn-sm" type="button" data-copy="{{ recovery_codes|join("\n") }}" data-copied="{{ 'Identity.copied'|local }}">{{ 'Identity.copy_codes'|local }}</button></p>
+        </div>
+    </div>
+{% endif %}
+
+<div class="grid grid-2">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Identity.your_login'|local }}</h2></div></div>
+        <div class="card-body">
+            <dl class="facts">
+                <dt>{{ 'Identity.username'|local }}</dt><dd class="mono">{{ row.username }}</dd>
+                <dt>{{ 'Identity.kind'|local }}</dt><dd>{{ ('Panel.kind_' ~ row.kind)|local }}</dd>
+                {% if row.email %}<dt>{{ 'Identity.email'|local }}</dt><dd>{{ row.email }}</dd>{% endif %}
+                <dt>{{ 'Identity.signed_in'|local }}</dt><dd>{{ row.last_login_at|when|default('—') }} <span class="muted">UTC</span></dd>
+                <dt>{{ 'Identity.from'|local }}</dt><dd class="mono">{{ row.last_login_ip|default('—') }}</dd>
+            </dl>
+        </div>
+        <form class="card-foot" method="post" action="{{ urls.sessions }}" data-confirm="{{ 'Identity.confirm_sign_out_elsewhere'|local }}" style="justify-content:space-between; gap:12px; flex-wrap:wrap">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <span class="hint">{{ 'Identity.sign_out_elsewhere_hint'|local }}</span>
+            <button class="btn btn-sm" type="submit">{{ icon('logout') }}{{ 'Identity.sign_out_elsewhere'|local }}</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Identity.password'|local }}</h2><p>{{ 'Identity.password_lead'|local({min: min_password}) }}</p></div></div>
+        {% if is_root %}
+            <div class="card-body">
+                <div class="alert alert-info">{{ icon('info') }}<p>{{ 'Identity.root_password_note'|local }}</p></div>
+            </div>
+        {% else %}
+            <form method="post" action="{{ urls.password }}">
+                <div class="card-body">
+                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                    {% for field in ['current_password', 'new_password', 'repeat_password'] %}
+                        <div class="field">
+                            <label for="{{ field }}">{{ ('Identity.' ~ field)|local }}</label>
+                            <input class="input{% if password_errors[field] is defined %} is-invalid{% endif %}" id="{{ field }}" name="{{ field }}" type="password" autocomplete="{{ field == 'current_password' ? 'current-password' : 'new-password' }}" required>
+                            {% if password_errors[field] is defined %}<div class="error">{{ password_errors[field]|local({min: min_password}) }}</div>{% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+                <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Identity.change_password'|local }}</button></div>
+            </form>
+        {% endif %}
+    </div>
+
+    <div class="card" style="grid-column:1 / -1">
+        <div class="card-head">
+            <div><h2>{{ 'Identity.two_factor'|local }}</h2><p>{{ 'Identity.two_factor_lead'|local }}</p></div>
+            {% if two_factor %}<span class="badge ok">{{ 'Identity.on'|local }}</span>{% else %}<span class="badge warn">{{ 'Identity.off'|local }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+            {% if two_factor %}
+                <p>{{ 'Identity.two_factor_on_text'|local({count: recovery_left}) }}</p>
+                {% if manage_error is defined %}<div class="alert alert-error">{{ icon('alert') }}<p>{{ manage_error|local }}</p></div>{% endif %}
+                <div class="form-row">
+                    <form method="post" action="{{ urls.codes }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <div class="field">
+                            <label for="code-codes">{{ 'Identity.new_codes'|local }}</label>
+                            <input class="input" id="code-codes" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123 456" required>
+                        </div>
+                        <button class="btn" type="submit">{{ icon('key') }}{{ 'Identity.make_new_codes'|local }}</button>
+                    </form>
+                    <form method="post" action="{{ urls.disable }}" data-confirm="{{ 'Identity.confirm_disable'|local }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <div class="field">
+                            <label for="code-off">{{ 'Identity.turn_off'|local }}</label>
+                            <input class="input" id="code-off" name="code" inputmode="numeric" autocomplete="one-time-code" placeholder="123 456" required>
+                        </div>
+                        <button class="btn btn-danger" type="submit">{{ 'Identity.turn_off'|local }}</button>
+                    </form>
+                </div>
+            {% elseif enrolment %}
+                <div class="grid grid-2" style="align-items:start">
+                    <div>
+                        <p><strong>1.</strong> {{ 'Identity.scan'|local }}</p>
+                        <div class="qr">{{ enrolment.qr|raw }}</div>
+                        <p style="margin-top:12px" class="muted">{{ 'Identity.or_type'|local }}</p>
+                        <p><code>{{ enrolment.secret }}</code></p>
+                    </div>
+                    <form method="post" action="{{ urls.confirm }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <p><strong>2.</strong> {{ 'Identity.type_code'|local }}</p>
+                        <div class="field">
+                            <label for="code-on">{{ 'Identity.code'|local }}</label>
+                            <input class="input input-code{% if code_error is defined %} is-invalid{% endif %}" id="code-on" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="8" required autofocus>
+                            {% if code_error is defined %}<div class="error">{{ code_error|local }}</div>{% endif %}
+                        </div>
+                        <button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Identity.turn_on'|local }}</button>
+                    </form>
+                </div>
+                <form method="post" action="{{ urls.cancel }}" style="margin-top:12px">
+                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                    <button class="btn btn-ghost btn-sm" type="submit">{{ 'Identity.cancel'|local }}</button>
+                </form>
+            {% else %}
+                <p>{{ 'Identity.two_factor_off_text'|local }}</p>
+                <form method="post" action="{{ urls.begin }}">
+                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                    <button class="btn btn-primary" type="submit">{{ icon('phone') }}{{ 'Identity.set_up'|local }}</button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}

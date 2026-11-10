@@ -59,16 +59,11 @@
             "@test"
         ],
         "serve": "php -S 127.0.0.1:8080 -t public server",
-        "console": "php laika",
-        "bench": [
-            "Composer\\Config::disableProcessTimeout",
-            "php tests/Benchmark/run.php"
-        ]
+        "console": "php laika"
     },
     "scripts-descriptions": {
         "check": "Full quality gate: coding standard, static analysis, tests.",
         "serve": "Run the development server on http://127.0.0.1:8080",
-        "console": "Run the framework console.",
-        "bench": "Benchmark every subject in the specification; --save and --compare to track a change."
+        "console": "Run the framework console."
     }
 }

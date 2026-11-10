@@ -1,0 +1,22 @@
+{# The allowance and ACL fields. Needs: v (limits values), errors, acl. #}
+<div class="form-row">
+    {% for field in ['max_accounts', 'disk_mb', 'bandwidth_mb'] %}
+        <div class="field">
+            <label for="rs-{{ field }}">{{ ('Resellers.limit_' ~ field)|local }}{% if field != 'max_accounts' %} <span class="muted">(MB)</span>{% endif %}</label>
+            <input class="input{% if errors[field] is defined %} is-invalid{% endif %}" id="rs-{{ field }}" name="{{ field }}" type="number" min="0" step="1" inputmode="numeric" value="{{ v[field]|default(0) }}">
+            {% if errors[field] is defined %}<div class="error">{{ errors[field]|local }}</div>{% endif %}
+        </div>
+    {% endfor %}
+</div>
+<p class="hint" style="margin:-4px 0 14px">{{ 'Resellers.unlimited_hint'|local }}</p>
+<label class="check" style="margin-bottom:6px"><input type="checkbox" name="oversell" value="1"{% if v.oversell|default(false) %} checked{% endif %}> {{ 'Resellers.oversell'|local }}</label>
+<p class="hint" style="margin:0 0 18px 26px">{{ 'Resellers.oversell_hint'|local }}</p>
+
+<fieldset class="field" style="border:0; padding:0; margin:0">
+    <legend class="label" style="margin-bottom:8px; font-weight:600">{{ 'Resellers.may'|local }}</legend>
+    <div class="feature-grid">
+        {% for a in acl %}
+            <label class="check"><input type="checkbox" name="acl[]" value="{{ a }}"{% if a in v.acl|default([]) %} checked{% endif %}> {{ ('Resellers.acl_' ~ a|replace({'.': '_'}))|local }}</label>
+        {% endfor %}
+    </div>
+</fieldset>

@@ -1,0 +1,10 @@
+<div class="card">
+    <div class="card-head"><div><h2>{{ 'Subusers.your_access'|local }}</h2><p>{{ 'Subusers.your_access_lead'|local({owner: owner}) }}</p></div></div>
+    <div class="card-body">
+        {% if features is empty %}
+            <p class="muted" style="margin:0">{{ 'Subusers.no_access'|local }}</p>
+        {% else %}
+            <div class="chips">{% for f in features %}<span class="badge accent">{{ ('Packages.feature_' ~ f)|local }}</span>{% endfor %}</div>
+        {% endif %}
+    </div>
+</div>

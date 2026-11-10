@@ -1,0 +1,52 @@
+{#
+ # The signed-out layout: sign-in, the code form. Pages extend it and fill
+ # `form`. The left half says which interface this is.
+ #}
+<!DOCTYPE html>
+<html lang="{{ lp.lang }}" dir="{{ lp.dir }}"{% if lp.theme != 'auto' %} data-theme="{{ lp.theme }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}{{ lp.title|local }}{% endblock %} · {{ lp.brand }}</title>
+<link rel="icon" href="{{ view.asset().module('Panel', 'favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ view.asset().module('Panel', 'css/panel.css') }}">
+</head>
+<body class="area-{{ lp.area }}">
+<div class="auth">
+    <section class="auth-art" aria-hidden="true">
+        <div class="brand-mark">{{ icon('logo') }}{{ lp.brand }}</div>
+        <div>
+            {% if lp.area == 'admin' %}
+                <h2>{{ 'Panel.auth_admin_title'|local }}</h2>
+                <p>{{ 'Panel.auth_admin_text'|local }}</p>
+                <ul class="auth-points">
+                    <li>{{ icon('check') }}{{ 'Panel.auth_admin_point1'|local }}</li>
+                    <li>{{ icon('check') }}{{ 'Panel.auth_admin_point2'|local }}</li>
+                    <li>{{ icon('check') }}{{ 'Panel.auth_admin_point3'|local }}</li>
+                </ul>
+            {% else %}
+                <h2>{{ 'Panel.auth_user_title'|local }}</h2>
+                <p>{{ 'Panel.auth_user_text'|local }}</p>
+                <ul class="auth-points">
+                    <li>{{ icon('check') }}{{ 'Panel.auth_user_point1'|local }}</li>
+                    <li>{{ icon('check') }}{{ 'Panel.auth_user_point2'|local }}</li>
+                    <li>{{ icon('check') }}{{ 'Panel.auth_user_point3'|local }}</li>
+                </ul>
+            {% endif %}
+        </div>
+        <div></div>
+    </section>
+    <main class="auth-panel">
+        <div class="auth-box">
+            {% for notice in lp.notices %}
+                <div class="alert alert-{{ notice.kind }}" role="status">{{ icon('info') }}<p>{{ notice.message|local }}</p></div>
+            {% endfor %}
+            {% block form %}{% endblock %}
+            <p class="auth-foot">{{ lp.brand }} {{ lp.version }}</p>
+        </div>
+    </main>
+</div>
+<script type="module" src="{{ view.asset().module('Panel', 'js/panel.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,85 @@
+{% if facts is null %}
+<div class="card">
+    <div class="card-head"><div><h2>{{ 'Agent.this_server'|local }}</h2><p>{{ 'Agent.live_from_agent'|local }}</p></div><span class="badge bad">{{ 'Agent.not_reachable'|local }}</span></div>
+    <div class="card-body">
+        <div class="alert alert-warning" style="margin:0">{{ icon('alert') }}<p><strong>{{ 'Agent.unreachable_title'|local }}</strong><br>{{ problem }}</p></div>
+        <p class="muted" style="margin:12px 0 0">{{ 'Agent.unreachable_hint'|local }}</p>
+    </div>
+</div>
+{% else %}
+{% set mem_used = facts.memory.total_bytes - facts.memory.available_bytes %}
+{% set mem_pct = percent(mem_used, facts.memory.total_bytes) %}
+{% set load_pct = percent(facts.load.one, facts.cpus) %}
+<div class="card">
+    <div class="card-head">
+        <div>
+            <h2>{{ facts.hostname }}</h2>
+            <p>{{ facts.os.pretty_name|default(facts.os.id) }} · {{ 'Agent.kernel'|local }} {{ facts.kernel }} · {{ facts.arch }}</p>
+        </div>
+        <span class="badge ok">{{ 'Agent.agent_version'|local({version: facts.agent.version}) }}</span>
+    </div>
+    <div class="grid grid-4" style="gap:0">
+        <div class="stat">
+            <span class="stat-icon">{{ icon('cpu') }}</span>
+            <div style="flex:1">
+                <div class="stat-label">{{ 'Agent.load'|local }}</div>
+                <div class="stat-value">{{ facts.load.one|number_format(2) }}</div>
+                <div class="stat-sub">{{ 'Agent.load_sub'|local({five: facts.load.five|number_format(2), fifteen: facts.load.fifteen|number_format(2), cpus: facts.cpus}) }}</div>
+                <div class="meter{% if load_pct >= 90 %} is-bad{% elseif load_pct >= 70 %} is-warn{% endif %}"><span style="width:{{ load_pct }}%"></span></div>
+            </div>
+        </div>
+        <div class="stat">
+            <span class="stat-icon">{{ icon('memory') }}</span>
+            <div style="flex:1">
+                <div class="stat-label">{{ 'Agent.memory'|local }}</div>
+                <div class="stat-value">{{ mem_pct }}%</div>
+                <div class="stat-sub">{{ 'Agent.of'|local({used: mem_used|bytes, total: facts.memory.total_bytes|bytes}) }}</div>
+                <div class="meter{% if mem_pct >= 90 %} is-bad{% elseif mem_pct >= 75 %} is-warn{% endif %}"><span style="width:{{ mem_pct }}%"></span></div>
+            </div>
+        </div>
+        {% set root = facts.disks|filter(d => d.mount == '/')|first|default(facts.disks|first) %}
+        <div class="stat">
+            <span class="stat-icon">{{ icon('disk') }}</span>
+            <div style="flex:1">
+                <div class="stat-label">{{ 'Agent.disk'|local({mount: root.mount|default('/')}) }}</div>
+                {% if root %}
+                    {% set disk_pct = percent(root.used_bytes, root.total_bytes) %}
+                    <div class="stat-value">{{ disk_pct }}%</div>
+                    <div class="stat-sub">{{ 'Agent.free'|local({free: root.available_bytes|bytes}) }}</div>
+                    <div class="meter{% if disk_pct >= 90 %} is-bad{% elseif disk_pct >= 80 %} is-warn{% endif %}"><span style="width:{{ disk_pct }}%"></span></div>
+                {% else %}
+                    <div class="stat-value">—</div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="stat">
+            <span class="stat-icon">{{ icon('clock') }}</span>
+            <div>
+                <div class="stat-label">{{ 'Agent.uptime'|local }}</div>
+                <div class="stat-value">{{ facts.uptime_seconds|duration }}</div>
+                <div class="stat-sub">{{ 'Agent.cpus'|local({count: facts.cpus}) }}</div>
+            </div>
+        </div>
+    </div>
+    {% if facts.disks|length > 1 %}
+        <div class="table-wrap" style="border-top:1px solid var(--border)"><table class="table">
+            <thead><tr><th>{{ 'Agent.mount'|local }}</th><th>{{ 'Agent.type'|local }}</th><th>{{ 'Agent.used'|local }}</th><th>{{ 'Agent.size'|local }}</th><th style="width:30%"></th></tr></thead>
+            <tbody>
+            {% for d in facts.disks %}
+                {% set p = percent(d.used_bytes, d.total_bytes) %}
+                <tr>
+                    <td class="mono">{{ d.mount }}</td>
+                    <td class="muted">{{ d.fs_type }}</td>
+                    <td class="nowrap">{{ d.used_bytes|bytes }}</td>
+                    <td class="muted nowrap">{{ d.total_bytes|bytes }}</td>
+                    <td><div class="meter{% if p >= 90 %} is-bad{% elseif p >= 80 %} is-warn{% endif %}" style="margin:0"><span style="width:{{ p }}%"></span></div></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+    {% if facts.problems|default([]) is not empty %}
+        <div class="card-foot" style="justify-content:flex-start"><span class="badge warn">{{ 'Agent.partial'|local }}</span><span class="muted">{{ facts.problems|join('; ') }}</span></div>
+    {% endif %}
+</div>
+{% endif %}

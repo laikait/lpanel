@@ -1,0 +1,89 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Accounts.new'|local }}</h1>
+        <p>{{ 'Accounts.new_lead'|local }}</p>
+    </div>
+    <div class="page-actions"><a class="btn" href="{{ back }}">{{ 'Accounts.back'|local }}</a></div>
+</div>
+
+{% if agent_error %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ agent_error|local }}</p></div>
+{% endif %}
+
+{% if packages is empty %}
+    <div class="card"><div class="empty">
+        {{ icon('box') }}
+        <h3>{{ 'Accounts.no_packages'|local }}</h3>
+        <p>{{ 'Accounts.no_packages_text'|local }}</p>
+        <p><a class="btn btn-primary" href="{{ packages_url }}">{{ icon('plus') }}{{ 'Accounts.make_package'|local }}</a></p>
+    </div></div>
+{% else %}
+<form class="grid grid-side" method="post" action="{{ action }}">
+    <input type="hidden" name="_token" value="{{ lp.token }}">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Accounts.site_and_login'|local }}</h2><p>{{ 'Accounts.site_and_login_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <div class="field">
+                <label for="acc-domain">{{ 'Accounts.domain'|local }}</label>
+                <input class="input{% if errors.domain is defined %} is-invalid{% endif %}" id="acc-domain" name="domain" value="{{ old.domain|default('') }}" placeholder="example.com" autocomplete="off" autocapitalize="none" spellcheck="false" required data-suggest-username="acc-username">
+                {% if errors.domain is defined %}<div class="error">{{ errors.domain|local }}</div>{% else %}<div class="hint">{{ 'Accounts.domain_hint'|local }}</div>{% endif %}
+            </div>
+            <div class="form-row">
+                <div class="field">
+                    <label for="acc-username">{{ 'Accounts.username'|local }}</label>
+                    <input class="input mono{% if errors.username is defined %} is-invalid{% endif %}" id="acc-username" name="username" value="{{ old.username|default('') }}" maxlength="16" pattern="[a-z][a-z0-9]{1,15}" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+                    {% if errors.username is defined %}<div class="error">{{ errors.username|local }}</div>{% else %}<div class="hint">{{ 'Accounts.username_hint'|local }}</div>{% endif %}
+                </div>
+                <div class="field">
+                    <label for="acc-password">{{ 'Accounts.password'|local }}</label>
+                    <input class="input{% if errors.password is defined %} is-invalid{% endif %}" id="acc-password" name="password" type="password" minlength="{{ min_password }}" autocomplete="new-password" required>
+                    {% if errors.password is defined %}<div class="error">{{ errors.password|local({min: min_password}) }}</div>{% else %}<div class="hint">{{ 'Accounts.password_hint'|local({min: min_password}) }}</div>{% endif %}
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="field">
+                    <label for="acc-name">{{ 'Accounts.contact_name'|local }}</label>
+                    <input class="input{% if errors.name is defined %} is-invalid{% endif %}" id="acc-name" name="name" value="{{ old.name|default('') }}" maxlength="120" autocomplete="off">
+                    {% if errors.name is defined %}<div class="error">{{ errors.name|local }}</div>{% endif %}
+                </div>
+                <div class="field">
+                    <label for="acc-email">{{ 'Accounts.email'|local }}</label>
+                    <input class="input{% if errors.email is defined %} is-invalid{% endif %}" id="acc-email" name="email" type="email" value="{{ old.email|default('') }}" autocomplete="off">
+                    {% if errors.email is defined %}<div class="error">{{ errors.email|local }}</div>{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Accounts.plan'|local }}</h2><p>{{ 'Accounts.plan_lead'|local }}</p></div></div>
+        <div class="card-body">
+            {% if choose_owner %}
+                <div class="field">
+                    <label for="acc-owner">{{ 'Accounts.owner'|local }}</label>
+                    <select class="input{% if errors.owner is defined %} is-invalid{% endif %}" id="acc-owner" name="owner" data-owner-select="acc-package">
+                        <option value="">{{ 'Accounts.server_owned'|local }}</option>
+                        {% for r in resellers %}<option value="{{ r.id }}"{% if old.owner|default('') == r.id ~ '' %} selected{% endif %}>{{ r.username }}{% if r.name %} · {{ r.name }}{% endif %}</option>{% endfor %}
+                    </select>
+                    {% if errors.owner is defined %}<div class="error">{{ errors.owner|local }}</div>{% else %}<div class="hint">{{ 'Accounts.owner_hint'|local }}</div>{% endif %}
+                </div>
+            {% endif %}
+            <div class="field">
+                <label for="acc-package">{{ 'Accounts.package'|local }}</label>
+                <select class="input{% if errors.package is defined %} is-invalid{% endif %}" id="acc-package" name="package" required>
+                    {% for p in packages %}
+                        <option value="{{ p.id }}" data-owner="{{ p.owner_id }}"{% if old.package|default('') == p.id ~ '' %} selected{% endif %}>{{ p.name }} — {{ p.disk_mb ? (p.disk_mb * 1048576)|bytes : 'Accounts.unlimited'|local }}</option>
+                    {% endfor %}
+                </select>
+                {% if errors.package is defined %}<div class="error">{{ errors.package|local }}</div>{% endif %}
+            </div>
+            <div class="alert alert-info" style="margin:4px 0 0">{{ icon('info') }}<p>{{ 'Accounts.what_happens'|local }}</p></div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Accounts.create'|local }}</button></div>
+    </div>
+</form>
+{% endif %}
+{% endblock %}

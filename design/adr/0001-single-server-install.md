@@ -5,12 +5,10 @@
 ## Context
 A panel can be built in one of two ways:
 
-- **Central:** one panel drives many servers through remote agents, like
-  Virtualmin Cloudmin or RunCloud.
-- **Local:** the panel is installed on every server, like cPanel/WHM, Plesk
-  and DirectAdmin.
+- **Central:** one panel drives many servers through remote agents.
+- **Local:** the panel is installed on every server.
 
-Our customers are hosting companies moving away from cPanel. Their staff and
+Our customers are hosting companies selling shared hosting. Their staff and
 end users expect the local model. Their billing systems expect to call each
 server directly.
 

@@ -6,12 +6,12 @@ made of two programs and a small helper:
 | Part | Language | Runs as | Job |
 |---|---|---|---|
 | **Panel** (this repo) | PHP 8.3 on LPHP | `lpanel` (unprivileged) | Web UI, REST API, CLI, its own database, decisions and permissions |
-| **Agent** (`lpa`, separate repo) | Go | root | The only thing that changes the system: users, configs, services, files |
+| **Agent** (`lpa`, in `dist/lpa/`) | Go | root | The only thing that changes the system: users, configs, services, files |
 | **authd** (`lpanel-authd`) | Go | root, socket-activated | Checks the root password through PAM; nothing else |
 
 ```
  Browser / API client / billing system
-        │ HTTPS :2087 (WHM, reseller)  :2083 (cPanel)  :2096 (webmail)
+        │ HTTPS :7443 (Admin panel)  :7444 (User panel)  :7445 (webmail)
         ▼
  ┌──────────────────────────────┐
  │ panel nginx (own instance)   │   separate from the customers' web server
@@ -58,12 +58,13 @@ under `modules/`. The framework in `engine/` is not edited.
 
 | Module | Covers |
 |---|---|
-| `Identity` | users, tiers, sessions, 2FA, API tokens, "log in as" |
-| `Access` | roles, reseller ACLs, sub-user grants, feature lists |
+| `Identity` | users, tiers and their roles, sessions and session epochs, 2FA, API tokens, "log in as" |
 | `Audit` | audit log |
-| `Agent` | socket client, request signing, operation records and their state machine |
-| `Accounts` | accounts, packages, quotas, bandwidth |
-| `Resellers` | resellers, overselling, nameservers, branding |
+| `Agent` | socket client, request signing |
+| `Packages` | packages: limits and feature lists (the `feature.*` capabilities) |
+| `Accounts` | accounts and their agent operations (the `Provisioner`), quotas, bandwidth |
+| `Resellers` | resellers: allowance, overselling, ACL; later nameservers and branding |
+| `Subusers` | sub-users and their grants; the gate on `feature.*` |
 | `Web` | domains, vhosts, PHP versions, redirects, error pages |
 | `Ssl` | AutoSSL, certificates |
 | `Databases` | MariaDB DBs/users, phpMyAdmin SSO |
@@ -75,46 +76,87 @@ under `modules/`. The framework in `engine/` is not edited.
 | `Monitor` | dashboard, services, stats, alerts |
 | `System` | updates, settings, license |
 
-There are three UI skins over one set of routes:
+There are two interfaces over one set of routes and one API:
 
-| Skin | Port |
-|---|---|
-| WHM (admin) | :2087 |
-| Reseller | :2087, limited by the reseller's ACL |
-| cPanel (user) | :2083 |
+| Interface | Port | Who |
+|---|---|---|
+| **Admin panel** | :7443 | Root admins and panel admins see everything. Resellers see what their ACL allows, with their own branding. |
+| **User panel** | :7444 | Account owners see their account. Sub-users see what the owner granted. |
 
-Sub-users get the cPanel skin, limited by their grants.
+Webmail is served on :7445. All three ports can be changed at install time.
 
 ## Agent (`lpa`)
 
-The agent is a single static Go binary run as a systemd service that
-listens on a Unix socket. It has one package per subsystem, for example
-`accounts`, `web/apache`, `web/nginx`, `php`, `mysql`, `dns`, `mail`, `ftp`,
-`backup`, `firewall` and `quota`. Each package implements the operations it
-owns and has a pretend-system backend, so tests can run without root.
+The agent's source is in this repo at [`dist/lpa/`](../dist/lpa/README.md), as
+its own Go module with no third-party dependencies. It builds to a single
+static binary, run by systemd as `lpa serve`, listening on `/run/lpa/lpa.sock`.
+Its README covers the wire format, the checks in order, the journal and the
+operation list.
 
-Code from the earlier attempt, to review and reuse where it fits:
+Each subsystem is a package under `internal/` (so far `sysinfo`, `accounts`
+and `quota`; later `web`, `php`, `mysql`, `dns`, `mail`, `ftp`, `backup`,
+`firewall`), registered as operations in `internal/ops`. Each reads the system
+through paths it is given, so tests run against fixture files without root.
+Operations that need the system's own tools (`useradd`, `usermod`, `userdel`,
+`pkill`) run them through `internal/sysexec`: a fixed list of absolute paths,
+arguments as a list, never a shell, and a fixed minimal environment.
 
-- `internal/execd`: socket server and peer credential checks.
-- `internal/websites`: the staged config pipeline, and the Apache and Nginx
-  renderers.
-- The ACME client code.
-- `helpers/authd`: in this repo's git history at commit `ee0adbd`.
+The panel never calls an operation that changes the system and forgets it.
+`Accounts\Provisioner` writes the operation, its arguments and a new id to the
+account's row first, then sends it. An answer it never received is asked for
+again by `accounts:settle` (every minute) with the same id, and the agent's
+journal returns the first outcome. The same pattern is used for every later
+subsystem.
+
+The panel's side is the `Agent` module. It provides `AgentClient`, the signing
+key and `agent:*` commands. `tests/Unit/AgentProtocolTest.php` signs the Go
+golden vectors, and `tests/e2e/agent.sh` runs both halves together in
+AlmaLinux 9.
+
+Code from the earlier attempt, still to review and reuse where it fits:
+
+- `C:\xampp\htdocs\lpa\internal\websites`: the staged config pipeline, and the
+  Apache and Nginx renderers (M2).
+- The ACME client code there (M3).
+- `helpers/authd`: in this repo's git history at commit `ee0adbd` (M0c).
+
+Already carried over in M0b: `sysinfo`, `fsutil` and the SO_PEERCRED check.
+authd came over in M0c.
+
+## The panel's own PHP
+
+On EL9 the panel runs on Remi's `php83`, installed under `/opt/remi/php83`,
+beside whatever PHP versions customers' sites use. AppStream's PHP has no
+sodium extension on EL9, and the panel signs agent requests with it. Keeping
+the panel's PHP separate also means a customer-facing PHP upgrade never
+touches the panel.
 
 ## Layout on an AlmaLinux 9 server
 
 | Path | What |
 |---|---|
-| `/usr/local/lpanel/` | panel code |
-| `/etc/lpanel/` | panel config, signing keys |
-| `/var/lib/lpanel/` | panel data (uploads, generated files) |
-| `/var/log/lpanel/` | panel logs |
-| `/usr/local/lpa/bin/lpa` | agent binary |
-| `/var/lib/lpa/` | agent journal |
-| `/etc/lpa/` | agent config |
+| `/usr/local/lpanel/` | panel code, root-owned and read-only to the panel |
+| `/usr/local/lpanel/.env` | panel settings and secrets (APP_KEY, database password), 0640 root:lpanel |
+| `/usr/local/lpanel/system/` | the only part of the code tree the panel writes (cache, logs, sessions) |
+| `/etc/lpanel/agent.key` | the panel's signing key for agent requests, 0600 lpanel |
+| `/etc/lpanel/tls/` | the panel's TLS certificate and key (key 0600 root) |
+| `/etc/lpanel/php-fpm.conf` | the panel's own PHP-FPM master (`lpanel-php-fpm.service`) |
+| `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444) |
+| `/etc/lpanel/authd.json`, `/etc/pam.d/lpanel` | root sign-in: who may be checked, and the PAM stack used |
+| `/var/lib/lpanel/`, `/var/log/lpanel/` | panel data and logs |
+| `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs |
+| `/etc/lpa/lpa.json`, `/etc/lpa/panel.pub` | agent config, and the panel's public key |
+| `/var/lib/lpa/journal/` | agent journal |
+| `/run/lpa/lpa.sock`, `/run/lpanel-authd/authd.sock` | the two sockets, 0660 root:lpanel |
 | `/home/<user>/` | account homes (`public_html`, `mail`, `logs`, `tmp`, `.lpanel`) |
-| `/etc/httpd/conf.d/lpanel/` or `/etc/nginx/lpanel/` | generated vhosts |
-| `/etc/opt/remi/php<XY>/php-fpm.d/<user>.conf` | per-account pools, in each Remi PHP version's own pool folder |
+| `/etc/httpd/conf.d/lpanel/` or `/etc/nginx/lpanel/` | generated vhosts for customers' sites (M2) |
+| `/etc/opt/remi/php<XY>/php-fpm.d/<user>.conf` | per-account pools, in each Remi PHP version's own pool folder (M2) |
+
+Services: `lpa`, `lpanel-authd.socket` (socket-activated), `lpanel-php-fpm`,
+`lpanel-nginx`, `lpanel-scheduler.timer` (every minute), and `mariadb`. The
+packages' own `nginx` and `php83-php-fpm` services stay off. The installer is
+`dist/installer/install.sh`, run from a bundle made by
+`dist/installer/bundle.sh`.
 
 ## Decisions
 

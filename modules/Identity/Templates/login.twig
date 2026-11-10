@@ -1,0 +1,25 @@
+{% extends "@Panel/auth.twig" %}
+
+{% block form %}
+<span class="area-chip">{{ icon(lp.area == 'admin' ? 'server' : 'user') }}{{ (lp.area == 'admin' ? 'Panel.area_admin' : 'Panel.area_user')|local }}</span>
+<h1>{{ 'Identity.sign_in'|local }}</h1>
+<p class="lead">{{ (lp.area == 'admin' ? 'Identity.sign_in_admin_lead' : 'Identity.sign_in_user_lead')|local }}</p>
+
+{% if error %}
+    <div class="alert alert-error" role="alert">{{ icon('alert') }}<p>{{ error|local }}</p></div>
+{% endif %}
+
+<form method="post" action="{{ action }}" novalidate>
+    <input type="hidden" name="_token" value="{{ lp.token }}">
+    <div class="field">
+        <label for="username">{{ 'Identity.username'|local }}</label>
+        <input class="input" id="username" name="username" value="{{ username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+    </div>
+    <div class="field">
+        <label for="password">{{ 'Identity.password'|local }}</label>
+        <input class="input" id="password" name="password" type="password" autocomplete="current-password" required>
+        {% if lp.area == 'admin' %}<div class="hint">{{ 'Identity.root_hint'|local }}</div>{% endif %}
+    </div>
+    <button class="btn btn-primary btn-block" type="submit">{{ icon('lock') }}{{ 'Identity.sign_in'|local }}</button>
+</form>
+{% endblock %}

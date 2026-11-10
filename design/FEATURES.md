@@ -1,7 +1,10 @@
 # LPanel features
 
 LPanel is a control panel for hosting companies that sell shared hosting. It is
-installed on each server and manages that one machine, the way WHM/cPanel does.
+installed on each server and manages that one machine. It has two interfaces:
+
+- the **Admin panel**, for root admins and resellers
+- the **User panel**, for account owners and their sub-users
 
 This file lists every feature the product will have and when it ships. The
 order of work is in [ROADMAP.md](ROADMAP.md).
@@ -18,12 +21,12 @@ order of work is in [ROADMAP.md](ROADMAP.md).
 
 **Who** (which tier sees the feature)
 
-| Letter | Tier | Equivalent |
+| Letter | Tier | Interface |
 |---|---|---|
-| **A** | Root admin | WHM root |
-| **R** | Reseller | WHM reseller |
-| **U** | End user, the account owner | cPanel user |
-| **S** | Sub-user, when the owner grants it | cPanel "user manager" |
+| **A** | Root admin (and panel admins with roles) | Admin panel |
+| **R** | Reseller | Admin panel, limited by ACL |
+| **U** | End user, the account owner | User panel |
+| **S** | Sub-user, when the owner grants it | User panel, limited by grants |
 
 A reseller can only do what their ACL allows. A sub-user can only do what the
 account owner granted. The root admin can do everything.
@@ -32,7 +35,7 @@ account owner granted. The root admin can do everything.
 
 | Feature | Release | Who | Notes |
 |---|---|---|---|
-| Root login with the server's real root password (PAM via `lpanel-authd`) | v1 | A | Like WHM. Nothing stores the password. |
+| Root login with the server's real root password (PAM via `lpanel-authd`) | v1 | A | Nothing stores the password. |
 | Panel admin users with roles (no system root) | v1 | A | For staff who must not hold the root password. |
 | Two-factor auth (TOTP + recovery codes) for every tier | v1 | A R U S | Admin can make it mandatory for each tier. |
 | Login protection: rate limit, lockout, login history | v1 | A R U S | Feeds the brute-force blocker (section 10). |
@@ -55,7 +58,7 @@ account owner granted. The root admin can do everything.
 | Modify account (package, owner reseller, main domain, IP, shell) | v1 | A R | |
 | Change account username | v1.x | A | Hard to do: renames the system user, DB prefixes and paths. |
 | Packages/plans: disk, bandwidth, inodes, addon/parked/subdomains, mailboxes, mail lists, DBs, FTP users, cron jobs, max hourly emails, CPU/RAM/IO/processes | v1 | A R | CPU/RAM/IO/process limits are enforced from v1.x (section 11). |
-| Feature lists (switch whole cPanel features on or off per package) | v1 | A R | E.g. no SSH, no Git, no Node.js. |
+| Feature lists (switch whole User panel features on or off per package) | v1 | A R | E.g. no SSH, no Git, no Node.js. |
 | Disk quotas enforced by the kernel (ext4/XFS user quotas) | v1 | A | Usage refreshed live. Warning email at 80/90/100%. |
 | Bandwidth metering per account from web, mail and FTP logs, with an over-limit action | v1 | A R U | The action is "warn" or "suspend", set per package. |
 | Dedicated IPs and IP pool (IPv4 + IPv6) | v1 | A | Shared IP by default. Dedicated IPs assigned per account. |
@@ -69,7 +72,7 @@ account owner granted. The root admin can do everything.
 |---|---|---|---|
 | Apache 2.4 + PHP-FPM (event MPM) | v1 | A | The first web server built. Has `.htaccess` support. |
 | Nginx + PHP-FPM | v1 | A | Admin picks one web stack per server. |
-| Nginx in front (static files, TLS, HTTP/2/3) + Apache behind it (`.htaccess`) | v1 | A | The hybrid mode Plesk and cPanel offer. |
+| Nginx in front (static files, TLS, HTTP/2/3) + Apache behind it (`.htaccess`) | v1 | A | Hybrid mode: fast static files plus `.htaccess` compatibility. |
 | OpenLiteSpeed / LiteSpeed Enterprise | v2 | A | |
 | Main domain, addon domains, parked/alias domains, subdomains, wildcard subdomains | v1 | A R U S | Each one is bounded by the package limits. |
 | Choose each domain's document root | v1 | U S | It must stay inside the account's home folder. |
@@ -146,7 +149,7 @@ account owner granted. The root admin can do everything.
 
 | Feature | Release | Who | Notes |
 |---|---|---|---|
-| Exim (MTA) + Dovecot (IMAP/POP3) | v1 | A | Same MTA as cPanel, which makes cpmove import easier. |
+| Exim (MTA) + Dovecot (IMAP/POP3) | v1 | A | The most common mail stack on shared hosting, so migrated mail imports easily. |
 | Mailboxes with quota; change password | v1 | U S | |
 | Forwarders (address → address/pipe/discard) and domain forwarders | v1 | U S | |
 | Autoresponders with schedule | v1 | U S | |
@@ -216,8 +219,8 @@ account owner granted. The root admin can do everything.
 | Self-service restore: single file/folder, database, mailbox, full account | v1 | U S | |
 | Admin restore of any account, including terminated ones | v1 | A | |
 | Backups encrypted at rest | v1 | A | Restic repository key held by the agent. |
-| Import a cPanel backup (`cpmove-*.tar.gz`): files, DBs, mail, DNS, SSL, cron | v1.x | A R | Highest-priority migration source. |
-| Import from Plesk, DirectAdmin, CyberPanel | v1.x | A | |
+| Import account backups made by other control panels: files, DBs, mail, DNS, SSL, cron | v1.x | A R | The most widely used backup format first, then others. |
+| Migrate an account from a remote server over SSH (files, DBs, mail) | v1.x | A | Works without a control-panel backup on the source server. |
 | Server-to-server account transfer between two LPanel servers | v2 | A | |
 
 ## 13. Monitoring, stats and alerts
@@ -233,7 +236,7 @@ account owner granted. The root admin can do everything.
 | Alerts: disk full, service down, high load, SSL expiry, quota reached, backup failed | v1 | A U | |
 | Alert channels: email, Telegram, Slack, webhook | v1 | A U | |
 
-## 14. Server administration (WHM side)
+## 14. Server administration (Admin panel)
 
 | Feature | Release | Who | Notes |
 |---|---|---|---|
@@ -265,7 +268,7 @@ account owner granted. The root admin can do everything.
 | REST API covering every panel action (OpenAPI document) | v1 | A R U | The UI calls the same API. |
 | `lpanel` CLI on the server (all admin actions, JSON output) | v1 | A | |
 | Webhooks for events (account created, suspended, backup done…) | v1 | A R | Billing systems integrate through these and the API. |
-| Three skins: WHM (admin), reseller, cPanel (user) | v1 | A R U S | |
+| Two interfaces: Admin panel (admins, resellers) and User panel (owners, sub-users) | v1 | A R U S | |
 | White-label: logo, colors, panel name, favicon, per reseller | v1 | A R | |
 | Panel served on a custom domain per reseller | v1.x | R | |
 | Multi-language with RTL support (English, Bangla, Arabic first) | v1 | A R U S | |
@@ -273,7 +276,7 @@ account owner granted. The root admin can do everything.
 | Commercial license: per-server key, online activation, grace period, license server | v1 | A | |
 | Installer: one command on a fresh AlmaLinux 9 server | v1 | A | |
 | Plugin system: modules that add UI pages, API endpoints and agent operations | v2 | A | |
-| WHMCS / Blesta provisioning module | v2 | A | Not planned now. The API and webhooks cover integration. |
+| Provisioning modules for third-party billing systems | v2 | A | Not planned now. The API and webhooks cover integration. |
 | Built-in billing | — | | Out of scope. |
 
 ## 17. Operating systems

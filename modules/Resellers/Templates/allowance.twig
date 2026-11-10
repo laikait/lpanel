@@ -1,0 +1,28 @@
+{# One reseller's usage against their limits, as meters. Needs: r (a Resellers::find() row). #}
+{% set l = r.limits %}
+{% set u = r.usage %}
+<div class="grid grid-3" style="gap:0">
+    <div class="stat">
+        <span class="stat-icon">{{ icon('globe') }}</span>
+        <div style="flex:1">
+            <div class="stat-label">{{ 'Resellers.accounts'|local }}</div>
+            <div class="stat-value">{{ u.accounts }}{% if l.max_accounts %} <span class="muted" style="font-size:14px">/ {{ l.max_accounts }}</span>{% endif %}</div>
+            <div class="stat-sub">{{ l.max_accounts ? 'Resellers.left'|local({count: max(0, l.max_accounts - u.accounts)}) : 'Resellers.unlimited'|local }}</div>
+            {% if l.max_accounts %}{% set p = percent(u.accounts, l.max_accounts) %}<div class="meter{% if p >= 100 %} is-bad{% elseif p >= 80 %} is-warn{% endif %}"><span style="width:{{ min(100, p) }}%"></span></div>{% endif %}
+        </div>
+    </div>
+    {% for key, icon_name in {disk_mb: 'disk', bandwidth_mb: 'activity'} %}
+        <div class="stat">
+            <span class="stat-icon">{{ icon(icon_name) }}</span>
+            <div style="flex:1">
+                <div class="stat-label">{{ ('Resellers.allocated_' ~ key)|local }}</div>
+                <div class="stat-value">{{ (u[key] * 1048576)|bytes }}{% if l[key] %} <span class="muted" style="font-size:14px">/ {{ (l[key] * 1048576)|bytes }}</span>{% endif %}</div>
+                <div class="stat-sub">
+                    {%- if not l[key] %}{{ 'Resellers.unlimited'|local }}{% elseif l.oversell %}{{ 'Resellers.oversell_on'|local }}{% else %}{{ 'Resellers.of_allowance'|local }}{% endif -%}
+                    {%- set unl = key == 'disk_mb' ? u.unlimited_disk : u.unlimited_bandwidth %}{% if unl %} · {{ 'Resellers.on_unlimited'|local({count: unl}) }}{% endif -%}
+                </div>
+                {% if l[key] %}{% set p = percent(u[key], l[key]) %}<div class="meter{% if p >= 100 %} is-bad{% elseif p >= 80 %} is-warn{% endif %}"><span style="width:{{ min(100, p) }}%"></span></div>{% endif %}
+            </div>
+        </div>
+    {% endfor %}
+</div>

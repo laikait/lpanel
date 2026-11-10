@@ -1,0 +1,67 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Resellers.resellers'|local }}</h1>
+        <p>{{ 'Resellers.lead'|local }}</p>
+    </div>
+</div>
+
+<div class="grid grid-side">
+    <div class="card">
+        {% if resellers is empty %}
+            <div class="empty">{{ icon('users') }}<h3>{{ 'Resellers.empty'|local }}</h3><p>{{ 'Resellers.empty_text'|local }}</p></div>
+        {% else %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr>
+                    <th>{{ 'Resellers.reseller'|local }}</th>
+                    <th>{{ 'Resellers.accounts'|local }}</th>
+                    <th class="hide-sm">{{ 'Resellers.allocated_disk_mb'|local }}</th>
+                    <th>{{ 'Resellers.status'|local }}</th>
+                </tr></thead>
+                <tbody>
+                {% for r in resellers %}
+                    {% set l = r.limits %}
+                    <tr>
+                        <td>
+                            <a class="cell-user" href="{{ r.url }}" style="color:inherit; text-decoration:none">
+                                <span class="avatar soft">{{ (r.name ?: r.username)|slice(0, 1)|upper }}</span>
+                                <div><strong>{{ r.username }}</strong>{% if r.name %}<div class="muted">{{ r.name }}</div>{% endif %}</div>
+                            </a>
+                        </td>
+                        <td class="nowrap">{{ r.usage.accounts }}{% if l.max_accounts %} <span class="muted">/ {{ l.max_accounts }}</span>{% endif %}</td>
+                        <td class="hide-sm">
+                            <span class="usage">{{ (r.usage.disk_mb * 1048576)|bytes }}{% if l.disk_mb %} / {{ (l.disk_mb * 1048576)|bytes }}{% else %} · {{ 'Resellers.unlimited'|local }}{% endif %}</span>
+                            {% if l.disk_mb %}{% set p = percent(r.usage.disk_mb, l.disk_mb) %}<div class="meter compact{% if p >= 100 %} is-bad{% elseif p >= 80 %} is-warn{% endif %}"><span style="width:{{ min(100, p) }}%"></span></div>{% endif %}
+                        </td>
+                        <td class="nowrap">
+                            {% if r.active %}<span class="badge ok">{{ 'Resellers.active'|local }}</span>{% else %}<span class="badge bad">{{ 'Resellers.disabled'|local }}</span>{% endif %}
+                            {% if l.oversell %}<span class="badge info">{{ 'Resellers.oversells'|local }}</span>{% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ action }}">
+        <div class="card-head"><div><h2>{{ 'Resellers.new'|local }}</h2><p>{{ 'Resellers.new_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            {% for field in ['username', 'name', 'email', 'password'] %}
+                <div class="field">
+                    <label for="new-{{ field }}">{{ ('Resellers.' ~ field)|local }}</label>
+                    <input class="input{% if errors[field] is defined %} is-invalid{% endif %}" id="new-{{ field }}" name="{{ field }}"
+                        {% if field == 'password' %}type="password" autocomplete="new-password" minlength="{{ min_password }}"{% elseif field == 'email' %}type="email" autocomplete="off" value="{{ old.email|default('') }}"{% else %}autocomplete="off" value="{{ old[field]|default('') }}"{% endif %}
+                        {% if field == 'username' or field == 'password' %}required{% endif %}>
+                    {% if errors[field] is defined %}<div class="error">{{ errors[field]|local({min: min_password}) }}</div>{% endif %}
+                </div>
+            {% endfor %}
+            {% include "@Resellers/limits-form.twig" with {v: old} %}
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Resellers.create'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

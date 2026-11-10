@@ -3,7 +3,7 @@
 - Status: Accepted (2026-10-29)
 
 ## Context
-LPanel is sold commercially, per server, like cPanel.
+LPanel is sold commercially, per server.
 
 ## Decision
 - Each server needs a license key, which is bound to the server's main IP and

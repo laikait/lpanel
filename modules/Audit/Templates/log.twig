@@ -1,0 +1,62 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ (everyone ? 'Audit.audit_log' : 'Audit.my_activity')|local }}</h1>
+        <p>{{ (everyone ? 'Audit.lead_all' : 'Audit.lead_own')|local }}</p>
+    </div>
+</div>
+
+<div class="card">
+    <form class="toolbar" method="get">
+        <input class="input grow" type="search" name="q" value="{{ q }}" placeholder="{{ 'Audit.search'|local }}" aria-label="{{ 'Audit.search'|local }}">
+        <select class="input" name="outcome" aria-label="{{ 'Audit.outcome'|local }}">
+            <option value="">{{ 'Audit.any_outcome'|local }}</option>
+            {% for o in ['ok', 'failed', 'denied'] %}
+                <option value="{{ o }}"{% if outcome == o %} selected{% endif %}>{{ ('Audit.outcome_' ~ o)|local }}</option>
+            {% endfor %}
+        </select>
+        <button class="btn" type="submit">{{ icon('search') }}{{ 'Audit.filter'|local }}</button>
+    </form>
+
+    {% if rows is empty %}
+        <div class="empty">{{ icon('list') }}<h3>{{ 'Audit.empty'|local }}</h3><p>{{ 'Audit.empty_text'|local }}</p></div>
+    {% else %}
+        <div class="table-wrap">
+            <table class="table">
+                <thead><tr>
+                    <th>{{ 'Audit.when'|local }}</th>
+                    {% if everyone %}<th>{{ 'Audit.who'|local }}</th>{% endif %}
+                    <th>{{ 'Audit.action'|local }}</th>
+                    <th>{{ 'Audit.subject'|local }}</th>
+                    <th>{{ 'Audit.from'|local }}</th>
+                    <th>{{ 'Audit.outcome'|local }}</th>
+                </tr></thead>
+                <tbody>
+                {% for row in rows %}
+                    <tr>
+                        <td class="nowrap muted" title="UTC">{{ row.created_at|when }}</td>
+                        {% if everyone %}
+                            <td>{% if row.actor_name %}<strong>{{ row.actor_name }}</strong>{% if row.actor_kind %} <span class="muted">· {{ ('Panel.kind_' ~ row.actor_kind)|local }}</span>{% endif %}{% else %}<span class="muted">{{ 'Audit.visitor'|local }}</span>{% endif %}</td>
+                        {% endif %}
+                        <td><code>{{ row.action }}</code></td>
+                        <td>{{ row.subject }}{% for k, v in row.details %} <span class="muted">{{ k }}={{ v }}</span>{% endfor %}</td>
+                        <td class="nowrap muted mono">{{ row.ip }}</td>
+                        <td><span class="badge {{ row.outcome == 'ok' ? 'ok' : (row.outcome == 'denied' ? 'warn' : 'bad') }}">{{ ('Audit.outcome_' ~ row.outcome)|local }}</span></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="pager">
+            <span>{{ 'Audit.entries'|local({count: total}) }}</span>
+            <span>
+                {% if page > 1 %}<a class="btn btn-sm" href="?q={{ q|url_encode }}&amp;outcome={{ outcome|url_encode }}&amp;page={{ page - 1 }}">{{ 'Audit.newer'|local }}</a>{% endif %}
+                {{ 'Audit.page_of'|local({page: page, pages: pages}) }}
+                {% if page < pages %}<a class="btn btn-sm" href="?q={{ q|url_encode }}&amp;outcome={{ outcome|url_encode }}&amp;page={{ page + 1 }}">{{ 'Audit.older'|local }}</a>{% endif %}
+            </span>
+        </div>
+    {% endif %}
+</div>
+{% endblock %}

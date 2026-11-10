@@ -1,0 +1,29 @@
+[Unit]
+Description=LPanel agent (privileged operations for the panel)
+Documentation=file:///usr/local/lpanel/design/ARCHITECTURE.md
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lpa/bin/lpa serve -config /etc/lpa/lpa.json
+Restart=on-failure
+RestartSec=2
+# Background operations get time to finish and record their outcome.
+TimeoutStopSec=90
+# /run/lpa: the socket. /var/lib/lpa: the journal.
+RuntimeDirectory=lpa
+RuntimeDirectoryMode=0755
+StateDirectory=lpa
+StateDirectoryMode=0700
+UMask=0077
+# The agent needs root for its work, but nothing new beyond that.
+NoNewPrivileges=yes
+ProtectClock=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

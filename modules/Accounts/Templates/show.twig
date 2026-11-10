@@ -1,0 +1,141 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+{% set a = account %}
+<div class="page-head">
+    <div>
+        <h1>{{ a.domain }}</h1>
+        <p><span class="mono">{{ a.username }}</span> · {{ a.package_name }}{% if a.owner_name %} · {{ 'Accounts.owned_by'|local({name: a.owner_name}) }}{% endif %}</p>
+    </div>
+    <div class="page-actions">
+        {% include "@Accounts/status.twig" with {a: a} %}
+        {% if can.login_as and a.status == 'active' %}
+            <form class="inline-form" method="post" action="{{ login_as_url }}">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <button class="btn" type="submit">{{ icon('user') }}{{ 'Accounts.login_as'|local }}</button>
+            </form>
+        {% endif %}
+        <a class="btn" href="{{ urls.back }}">{{ 'Accounts.back'|local }}</a>
+    </div>
+</div>
+
+{% if a.busy %}
+    <div class="alert alert-info">{{ icon('clock') }}<p><strong>{{ ('Accounts.op_' ~ a.op|replace({'account.': ''}))|local }}</strong><br>{{ 'Accounts.op_pending_text'|local({since: a.op_started_at|when}) }}</p></div>
+{% endif %}
+{% if a.op_error %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Accounts.last_error'|local }}</strong><br><span class="mono">{{ a.op_error }}</span></p></div>
+{% endif %}
+{% if a.status == 'suspended' %}
+    <div class="alert alert-warning">{{ icon('pause') }}<p><strong>{{ 'Accounts.is_suspended'|local }}</strong><br>{{ a.suspend_reason ?: 'Accounts.no_reason'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-side">
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><div><h2>{{ 'Accounts.usage'|local }}</h2><p>{{ a.usage_at ? 'Accounts.usage_read'|local({at: a.usage_at|when}) : 'Accounts.usage_unknown'|local }}</p></div></div>
+            <div class="grid grid-2" style="gap:0">
+                <div class="stat">
+                    <span class="stat-icon">{{ icon('disk') }}</span>
+                    <div style="flex:1">
+                        <div class="stat-label">{{ 'Accounts.disk'|local }}</div>
+                        <div class="stat-value">{{ a.disk_used_bytes is null ? '—' : a.disk_used_bytes|bytes }}</div>
+                        <div class="stat-sub">{{ a.disk_limit_bytes ? 'Accounts.limit_of'|local({limit: a.disk_limit_bytes|bytes}) : 'Accounts.unlimited'|local }}</div>
+                        {% if a.disk_percent is not null %}<div class="meter{% if a.disk_percent >= 95 %} is-bad{% elseif a.disk_percent >= 80 %} is-warn{% endif %}"><span style="width:{{ a.disk_percent }}%"></span></div>{% endif %}
+                    </div>
+                </div>
+                <div class="stat">
+                    <span class="stat-icon">{{ icon('folder') }}</span>
+                    <div>
+                        <div class="stat-label">{{ 'Accounts.files'|local }}</div>
+                        <div class="stat-value">{{ a.inodes_used is null ? '—' : a.inodes_used|number_format }}</div>
+                        <div class="stat-sub">{{ a.package.inodes|default(0) ? 'Accounts.limit_of'|local({limit: a.package.inodes|number_format}) : 'Accounts.unlimited'|local }}</div>
+                    </div>
+                </div>
+            </div>
+            {% if a.package %}
+            <div class="limits">
+                {% for limit in limits|filter(l => l not in ['disk_mb', 'inodes']) %}
+                    <div><div class="stat-label">{{ ('Packages.limit_' ~ limit)|local }}</div><strong>{{ a.package[limit] ? (limit == 'bandwidth_mb' ? (a.package[limit] * 1048576)|bytes : a.package[limit]) : '∞' }}</strong></div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <div class="card-head"><div><h2>{{ 'Accounts.details'|local }}</h2></div></div>
+            <div class="card-body">
+                <dl class="facts">
+                    <dt>{{ 'Accounts.domain'|local }}</dt><dd>{{ a.domain }}</dd>
+                    <dt>{{ 'Accounts.username'|local }}</dt><dd class="mono">{{ a.username }}</dd>
+                    <dt>{{ 'Accounts.home'|local }}</dt><dd class="mono">{{ a.home ?: '—' }}</dd>
+                    <dt>{{ 'Accounts.uid'|local }}</dt><dd class="mono">{{ a.uid ?: '—' }}</dd>
+                    <dt>{{ 'Accounts.contact'|local }}</dt><dd>{{ login.name|default('') ?: '—' }}{% if login.email|default(null) %} · {{ login.email }}{% endif %}</dd>
+                    <dt>{{ 'Accounts.features'|local }}</dt>
+                    <dd><div class="chips">{% for f in a.package.features|default([]) %}<span class="badge plain">{{ ('Packages.feature_' ~ f)|local }}</span>{% else %}—{% endfor %}</div></dd>
+                    <dt>{{ 'Accounts.subusers'|local }}</dt><dd>{{ subusers|length }}</dd>
+                    <dt>{{ 'Accounts.created_at'|local }}</dt><dd>{{ a.created_at|when }}</dd>
+                    <dt>{{ 'Accounts.last_sign_in'|local }}</dt><dd>{{ login.last_login_at|default(null)|when ?: 'Accounts.never'|local }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+
+    <div class="stack">
+        {% if can.modify and a.status in ['active', 'suspended'] %}
+        <form class="card" method="post" action="{{ urls.package }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Accounts.change_package'|local }}</h2><p>{{ 'Accounts.change_package_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <label class="sr-only" for="acc-package">{{ 'Accounts.package'|local }}</label>
+                <select class="input" id="acc-package" name="package">
+                    {% for p in packages %}<option value="{{ p.id }}"{% if p.id == a.package_id %} selected{% endif %}>{{ p.name }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="card-foot"><button class="btn" type="submit"{% if a.busy %} disabled{% endif %}>{{ icon('box') }}{{ 'Accounts.change'|local }}</button></div>
+        </form>
+        {% endif %}
+
+        {% if can.suspend and a.status == 'active' %}
+        <form class="card" method="post" action="{{ urls.suspend }}" data-confirm="{{ 'Accounts.confirm_suspend'|local({name: a.username}) }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Accounts.suspend'|local }}</h2><p>{{ 'Accounts.suspend_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <label class="label" for="acc-reason">{{ 'Accounts.reason'|local }}</label>
+                <input class="input" id="acc-reason" name="reason" maxlength="255" placeholder="{{ 'Accounts.reason_example'|local }}">
+            </div>
+            <div class="card-foot"><button class="btn" type="submit"{% if a.busy %} disabled{% endif %}>{{ icon('pause') }}{{ 'Accounts.suspend'|local }}</button></div>
+        </form>
+        {% elseif can.suspend and a.status == 'suspended' %}
+        <form class="card" method="post" action="{{ urls.unsuspend }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Accounts.unsuspend'|local }}</h2><p>{{ 'Accounts.unsuspend_lead'|local }}</p></div></div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit"{% if a.busy %} disabled{% endif %}>{{ icon('play') }}{{ 'Accounts.unsuspend'|local }}</button></div>
+        </form>
+        {% endif %}
+
+        {% if can.modify and a.status in ['active', 'suspended', 'creating'] %}
+        <form class="card" method="post" action="{{ urls.password }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Accounts.reset_password'|local }}</h2><p>{{ 'Accounts.reset_password_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <label class="label" for="acc-new-password">{{ 'Accounts.new_password'|local }}</label>
+                <input class="input" id="acc-new-password" name="password" type="password" minlength="{{ min_password }}" autocomplete="new-password" required>
+            </div>
+            <div class="card-foot"><button class="btn" type="submit">{{ icon('key') }}{{ 'Accounts.save_password'|local }}</button></div>
+        </form>
+        {% endif %}
+
+        {% if can.terminate and a.status != 'terminating' %}
+        <form class="card danger" method="post" action="{{ urls.terminate }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Accounts.terminate'|local }}</h2><p>{{ 'Accounts.terminate_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <label class="label" for="acc-confirm">{{ 'Accounts.type_to_confirm'|local({name: a.username}) }}</label>
+                <input class="input mono" id="acc-confirm" name="confirm" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+            </div>
+            <div class="card-foot"><button class="btn btn-danger" type="submit"{% if a.busy %} disabled{% endif %}>{{ icon('trash') }}{{ 'Accounts.terminate'|local }}</button></div>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

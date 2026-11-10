@@ -1,0 +1,104 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Subusers.users'|local }}</h1>
+        <p>{{ 'Subusers.lead'|local }}</p>
+    </div>
+</div>
+
+<div class="grid grid-side">
+    <div class="stack">
+        {% if subusers is empty %}
+            <div class="card"><div class="empty">{{ icon('users') }}<h3>{{ 'Subusers.empty'|local }}</h3><p>{{ 'Subusers.empty_text'|local }}</p></div></div>
+        {% endif %}
+        {% for s in subusers %}
+            <div class="card">
+                <div class="card-head">
+                    <div class="cell-user">
+                        <span class="avatar soft">{{ (s.name ?: s.username|split('.')|last)|slice(0, 1)|upper }}</span>
+                        <div><h2 class="mono" style="font-size:15px">{{ s.username }}</h2><p>{{ s.name ?: '—' }}{% if s.email %} · {{ s.email }}{% endif %} · {{ 'Subusers.last'|local({at: s.last_login_at|when|default('Subusers.never'|local)}) }}</p></div>
+                    </div>
+                    {% if s.active %}<span class="badge ok">{{ 'Subusers.active'|local }}</span>{% else %}<span class="badge bad">{{ 'Subusers.disabled'|local }}</span>{% endif %}
+                </div>
+                <form method="post" action="{{ s.grants_url }}">
+                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                    <div class="card-body">
+                        <div class="label" style="margin-bottom:8px">{{ 'Subusers.may_use'|local }}</div>
+                        <div class="feature-grid">
+                            {% for f in offered %}
+                                <label class="check"><input type="checkbox" name="grants[]" value="{{ f }}"{% if f in s.grants %} checked{% endif %}> {{ ('Packages.feature_' ~ f)|local }}</label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    <div class="card-foot" style="justify-content:space-between; flex-wrap:wrap; gap:8px">
+                        <span class="hint">{{ 'Subusers.grants_hint'|local }}</span>
+                        <button class="btn btn-sm btn-primary" type="submit">{{ icon('check') }}{{ 'Subusers.save'|local }}</button>
+                    </div>
+                </form>
+                <div class="card-foot" style="gap:8px; flex-wrap:wrap; justify-content:flex-end">
+                    <details style="position:relative">
+                        <summary class="btn btn-sm btn-ghost">{{ icon('key') }}{{ 'Subusers.reset_password'|local }}</summary>
+                        <form method="post" action="{{ s.password_url }}" class="card" style="position:absolute; inset-inline-end:0; bottom:110%; z-index:5; padding:12px; width:260px">
+                            <input type="hidden" name="_token" value="{{ lp.token }}">
+                            <label class="label" for="pw-{{ s.id }}">{{ 'Subusers.new_password'|local }}</label>
+                            <input class="input" id="pw-{{ s.id }}" name="password" type="password" minlength="12" autocomplete="new-password" required>
+                            <button class="btn btn-primary btn-sm" style="margin-top:10px" type="submit">{{ 'Subusers.save'|local }}</button>
+                        </form>
+                    </details>
+                    <form class="inline-form" method="post" action="{{ s.active_url }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <input type="hidden" name="active" value="{{ s.active ? '0' : '1' }}">
+                        <button class="btn btn-sm btn-ghost" type="submit">{{ icon(s.active ? 'pause' : 'play') }}{{ (s.active ? 'Subusers.disable' : 'Subusers.enable')|local }}</button>
+                    </form>
+                    <form class="inline-form" method="post" action="{{ s.delete_url }}" data-confirm="{{ 'Subusers.confirm_delete'|local({name: s.username}) }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button class="btn btn-sm btn-ghost" type="submit">{{ icon('trash') }}{{ 'Subusers.delete'|local }}</button>
+                    </form>
+                </div>
+            </div>
+        {% endfor %}
+    </div>
+
+    <form class="card" method="post" action="{{ action }}">
+        <div class="card-head"><div><h2>{{ 'Subusers.new'|local }}</h2><p>{{ 'Subusers.new_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label for="su-suffix">{{ 'Subusers.username'|local }}</label>
+                <div style="display:flex; align-items:center; gap:6px">
+                    <span class="mono muted">{{ prefix }}</span>
+                    <input class="input mono{% if errors.suffix is defined %} is-invalid{% endif %}" id="su-suffix" name="suffix" maxlength="15" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.suffix|default('') }}" placeholder="dev" required>
+                </div>
+                {% if errors.suffix is defined %}<div class="error">{{ errors.suffix|local }}</div>{% else %}<div class="hint">{{ 'Subusers.username_hint'|local }}</div>{% endif %}
+            </div>
+            <div class="field">
+                <label for="su-name">{{ 'Subusers.name'|local }}</label>
+                <input class="input" id="su-name" name="name" maxlength="120" autocomplete="off" value="{{ old.name|default('') }}">
+            </div>
+            <div class="field">
+                <label for="su-email">{{ 'Subusers.email'|local }}</label>
+                <input class="input{% if errors.email is defined %} is-invalid{% endif %}" id="su-email" name="email" type="email" autocomplete="off" value="{{ old.email|default('') }}">
+                {% if errors.email is defined %}<div class="error">{{ errors.email|local }}</div>{% endif %}
+            </div>
+            <div class="field">
+                <label for="su-password">{{ 'Subusers.password'|local }}</label>
+                <input class="input{% if errors.password is defined %} is-invalid{% endif %}" id="su-password" name="password" type="password" minlength="12" autocomplete="new-password" required>
+                {% if errors.password is defined %}<div class="error">{{ errors.password|local }}</div>{% endif %}
+            </div>
+            <div class="label" style="margin-bottom:8px">{{ 'Subusers.may_use'|local }}</div>
+            {% if offered is empty %}
+                <p class="hint">{{ 'Subusers.nothing_offered'|local }}</p>
+            {% else %}
+                <div class="feature-grid">
+                    {% for f in offered %}
+                        <label class="check"><input type="checkbox" name="grants[]" value="{{ f }}"{% if f in old.grants|default([]) %} checked{% endif %}> {{ ('Packages.feature_' ~ f)|local }}</label>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Subusers.create'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

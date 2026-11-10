@@ -1,0 +1,39 @@
+[Unit]
+Description=LPanel root password check (ADR-0004)
+Requires=lpanel-authd.socket
+After=lpanel-authd.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lpa/bin/lpanel-authd --config /etc/lpanel/authd.json
+Restart=on-failure
+RestartSec=5s
+# Root, to read /etc/shadow. On EL the file is mode 0000, so even root reads
+# it only with CAP_DAC_READ_SEARCH (read-only; no write override). On Debian
+# it is 0640 root:shadow and the capability is simply unused. CAP_AUDIT_WRITE
+# lets PAM log the attempt. Nothing else is needed or allowed.
+User=root
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_AUDIT_WRITE CAP_DAC_READ_SEARCH
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# pam_faillock and friends may keep state here.
+ReadWritePaths=-/run/faillock -/var/run/faillock

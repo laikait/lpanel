@@ -1,0 +1,85 @@
+{#
+ # The signed-in shell for both interfaces. Pages extend it:
+ #   {% extends "@Panel/shell.twig" %}
+ #   {% block content %}…{% endblock %}
+ # PanelPage passes the shell's data as `lp`.
+ #}
+<!DOCTYPE html>
+<html lang="{{ lp.lang }}" dir="{{ lp.dir }}"{% if lp.theme != 'auto' %} data-theme="{{ lp.theme }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}{{ lp.title|local }}{% endblock %} · {{ lp.brand }}</title>
+<link rel="icon" href="{{ view.asset().module('Panel', 'favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ view.asset().module('Panel', 'css/panel.css') }}">
+</head>
+<body class="area-{{ lp.area }}">
+<div class="shell">
+    <aside class="side" id="side">
+        <a class="side-brand" href="{{ lp.nav[0].items[0].url|default('#') }}">
+            {{ icon('logo') }}
+            <span>{{ lp.brand }}<small>{{ (lp.area == 'admin' ? 'Panel.area_admin' : 'Panel.area_user')|local }}</small></span>
+        </a>
+        <nav class="side-nav" aria-label="{{ 'Panel.main_menu'|local }}">
+            {% for section in lp.nav %}
+                <div class="side-section">
+                    {% if section.label %}<div class="side-section-label">{{ section.label|local }}</div>{% endif %}
+                    {% for item in section.items %}
+                        <a class="side-link{% if item.key == lp.active %} is-active{% endif %}" href="{{ item.url }}"{% if item.key == lp.active %} aria-current="page"{% endif %}>
+                            {{ icon(item.icon) }}<span>{{ item.label|local }}</span>
+                        </a>
+                    {% endfor %}
+                </div>
+            {% endfor %}
+        </nav>
+        <div class="side-foot">{{ lp.brand }} {{ lp.version }}</div>
+    </aside>
+    <div class="scrim" data-nav-toggle></div>
+
+    <div class="main">
+        <header class="top">
+            <button class="icon-btn menu-toggle" type="button" data-nav-toggle aria-controls="side" aria-label="{{ 'Panel.open_menu'|local }}">{{ icon('menu') }}</button>
+            <div class="top-title">{{ lp.title|local }}</div>
+            <div class="top-spacer"></div>
+            {% block top_actions %}{% endblock %}
+            <button class="icon-btn" type="button" data-theme-toggle aria-label="{{ 'Panel.toggle_theme'|local }}" title="{{ 'Panel.toggle_theme'|local }}">{{ icon('moon') }}</button>
+            <div class="account">
+                <button class="account-btn" type="button" data-dropdown="account-menu" aria-haspopup="true" aria-expanded="false">
+                    <span class="avatar">{{ lp.me.initials }}</span>
+                    <span class="account-name">{{ lp.me.name }}<small>{{ ('Panel.kind_' ~ lp.me.kind)|local }}</small></span>
+                    {{ icon('down') }}
+                </button>
+                <div class="dropdown" id="account-menu">
+                    <a href="{{ lp.security }}">{{ icon('shield') }}{{ 'Panel.security'|local }}</a>
+                    <hr>
+                    <form method="post" action="{{ lp.logout }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button type="submit">{{ icon('logout') }}{{ 'Panel.sign_out'|local }}</button>
+                    </form>
+                </div>
+            </div>
+        </header>
+
+        {% if lp.me.impersonator %}
+            <form class="impersonating" method="post" action="{{ lp.end_impersonation }}" role="status">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                {{ icon('user') }}
+                <p>{{ 'Panel.impersonating'|local({me: lp.me.username, by: lp.me.impersonator}) }}</p>
+                <button class="btn btn-sm" type="submit">{{ (lp.area == 'admin' ? 'Panel.impersonating_return' : 'Panel.impersonating_end')|local }}</button>
+            </form>
+        {% endif %}
+        <main class="content" id="content">
+            {% for notice in lp.notices %}
+                <div class="alert alert-{{ notice.kind }}" role="status">
+                    {{ icon(notice.kind == 'success' ? 'check' : (notice.kind == 'info' ? 'info' : 'alert')) }}
+                    <p>{{ notice.message|local }}</p>
+                </div>
+            {% endfor %}
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</div>
+<script type="module" src="{{ view.asset().module('Panel', 'js/panel.js') }}"></script>
+</body>
+</html>

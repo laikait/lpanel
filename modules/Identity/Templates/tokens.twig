@@ -1,0 +1,83 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Identity.tokens'|local }}</h1>
+        <p>{{ 'Identity.tokens_lead'|local }}</p>
+    </div>
+</div>
+
+{% if new_token %}
+    <div class="card" style="margin-bottom:20px">
+        <div class="card-head"><div><h2>{{ 'Identity.token_made'|local({name: new_name}) }}</h2><p>{{ 'Identity.token_made_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Identity.token_once'|local }}</p></div>
+            <div class="codes"><span class="mono" style="overflow-wrap:anywhere">{{ new_token }}</span></div>
+            <p style="margin-top:14px"><button class="btn btn-sm" type="button" data-copy="{{ new_token }}" data-copied="{{ 'Identity.copied'|local }}">{{ icon('copy') }}{{ 'Identity.copy_token'|local }}</button></p>
+        </div>
+    </div>
+{% endif %}
+
+<div class="grid grid-side">
+    <div class="stack">
+        <div class="card">
+            {% if tokens is empty %}
+                <div class="empty">{{ icon('code') }}<h3>{{ 'Identity.tokens_empty'|local }}</h3><p>{{ 'Identity.tokens_empty_text'|local }}</p></div>
+            {% else %}
+                <div class="table-wrap"><table class="table">
+                    <thead><tr>
+                        <th>{{ 'Identity.token_name'|local }}</th>
+                        <th>{{ 'Identity.token_last_used'|local }}</th>
+                        <th>{{ 'Identity.token_expires'|local }}</th>
+                        <th></th>
+                    </tr></thead>
+                    <tbody>
+                    {% for t in tokens %}
+                        <tr>
+                            <td><strong>{{ t.name }}</strong><div class="muted mono">{{ t.prefix }}…</div></td>
+                            <td class="muted nowrap">{{ t.last_used_at|when|default('Identity.never'|local) }}</td>
+                            <td class="muted nowrap">{{ t.expires_at|when|default('Identity.token_no_expiry'|local) }}</td>
+                            <td style="text-align:end">
+                                <form class="inline-form" method="post" action="{{ t.revoke_url }}" data-confirm="{{ 'Identity.confirm_revoke'|local({name: t.name}) }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <button class="btn btn-sm btn-ghost" type="submit">{{ icon('trash') }}{{ 'Identity.revoke'|local }}</button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table></div>
+            {% endif %}
+        </div>
+
+        <div class="card">
+            <div class="card-head"><div><h2>{{ 'Identity.api_use'|local }}</h2><p>{{ 'Identity.api_use_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <pre class="mono" style="margin:0; white-space:pre-wrap; overflow-wrap:anywhere">curl -H "Authorization: Bearer lpat_…" \
+     {{ api_base }}/accounts</pre>
+            </div>
+        </div>
+    </div>
+
+    <form class="card" method="post" action="{{ action }}">
+        <div class="card-head"><div><h2>{{ 'Identity.new_token'|local }}</h2><p>{{ 'Identity.new_token_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label for="token-name">{{ 'Identity.token_name'|local }}</label>
+                <input class="input{% if errors.name is defined %} is-invalid{% endif %}" id="token-name" name="name" maxlength="80" autocomplete="off" value="{{ old.name|default('') }}" placeholder="{{ 'Identity.token_name_example'|local }}" required>
+                {% if errors.name is defined %}<div class="error">{{ errors.name|local }}</div>{% endif %}
+            </div>
+            <div class="field">
+                <label for="token-days">{{ 'Identity.token_lifetime'|local }}</label>
+                <select class="input" id="token-days" name="days">
+                    {% for d in lifetimes %}<option value="{{ d }}"{% if d == 90 %} selected{% endif %}>{{ 'Identity.days'|local({count: d}) }}</option>{% endfor %}
+                    <option value="never">{{ 'Identity.token_no_expiry'|local }}</option>
+                </select>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Identity.make_token'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

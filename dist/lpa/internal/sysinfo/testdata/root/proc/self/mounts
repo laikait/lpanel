@@ -1,0 +1,6 @@
+/dev/sda1 / ext4 rw,relatime 0 0
+proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+tmpfs /run tmpfs rw,nosuid,nodev 0 0
+/dev/sda2 /srv/web\040data xfs rw,relatime 0 0
+/dev/sda1 /etc/lpa ext4 ro,relatime 0 0
+overlay /var/lib/docker/overlay2/x/merged overlay rw 0 0

@@ -1,0 +1,20 @@
+[Unit]
+Description=LPanel web server (the panel's own nginx, ports 7443 and 7444)
+After=network-online.target lpanel-php-fpm.service
+Wants=network-online.target
+
+[Service]
+Type=forking
+PIDFile=/run/lpanel-nginx/nginx.pid
+RuntimeDirectory=lpanel-nginx
+ExecStartPre=/usr/sbin/nginx -t -q -c /etc/lpanel/nginx/nginx.conf
+ExecStart=/usr/sbin/nginx -c /etc/lpanel/nginx/nginx.conf
+ExecReload=/usr/sbin/nginx -t -q -c /etc/lpanel/nginx/nginx.conf
+ExecReload=/bin/kill -s HUP $MAINPID
+KillSignal=SIGQUIT
+TimeoutStopSec=10
+Restart=on-failure
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

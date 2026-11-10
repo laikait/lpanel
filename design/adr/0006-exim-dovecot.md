@@ -3,10 +3,11 @@
 - Status: Accepted (2026-10-29)
 
 ## Context
-cPanel uses Exim and Dovecot. Importing cpmove archives (v1.x) is easier when
+Exim + Dovecot is the most common mail stack on the shared-hosting servers our
+customers migrate from. Importing their account backups (v1.x) is easier when
 the mail layout and routing rules match. The alternative, Postfix, is simpler
-but would mean translating cPanel's per-domain routing, forwarders and
-filters.
+but would mean translating per-domain routing, forwarders and filters during
+every migration.
 
 ## Decision
 - MTA: Exim, with LPanel-generated config driven by flat lookup files under
@@ -18,4 +19,5 @@ filters.
 ## Consequences
 - Outbound limits per account and delivery tracking use Exim's own
   features.
-- The cPanel mail layout imports with path changes only.
+- Maildir data from other Exim + Dovecot servers imports with path changes
+  only.

@@ -1,0 +1,29 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ package.name }}</h1>
+        <p>{{ 'Packages.edit_lead'|local({count: accounts}) }}</p>
+    </div>
+    <div class="page-actions"><a class="btn" href="{{ back }}">{{ 'Packages.back'|local }}</a></div>
+</div>
+
+<div class="grid grid-side">
+    <form class="card" method="post" action="{{ action }}">
+        <div class="card-head"><div><h2>{{ 'Packages.edit'|local }}</h2><p>{{ 'Packages.edit_note'|local }}</p></div></div>
+        <div class="card-body">{% include "@Packages/form.twig" %}</div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Packages.save'|local }}</button></div>
+    </form>
+
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Packages.delete'|local }}</h2><p>{{ (accounts > 0 ? 'Packages.delete_blocked' : 'Packages.delete_lead')|local({count: accounts}) }}</p></div></div>
+        <div class="card-foot">
+            <form method="post" action="{{ delete_url }}" data-confirm="{{ 'Packages.confirm_delete'|local({name: package.name}) }}">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <button class="btn btn-danger" type="submit"{% if accounts > 0 %} disabled{% endif %}>{{ icon('trash') }}{{ 'Packages.delete'|local }}</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

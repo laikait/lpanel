@@ -1,0 +1,75 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Accounts.accounts'|local }}</h1>
+        <p>{{ (show_owner ? 'Accounts.lead_all' : 'Accounts.lead_own')|local }}</p>
+    </div>
+    {% if can_create %}<div class="page-actions">
+        <a class="btn btn-primary" href="{{ new_url }}">{{ icon('plus') }}{{ 'Accounts.new'|local }}</a>
+    </div>{% endif %}
+</div>
+
+<div class="grid grid-4 stats-row" style="margin-bottom:20px">
+    {% for s, icon_name in {active: 'check', suspended: 'pause', creating: 'clock', failed: 'alert'} %}
+        <a class="card stat" href="{{ base_url }}?status={{ s }}" style="text-decoration:none; color:inherit">
+            <span class="stat-icon">{{ icon(icon_name) }}</span>
+            <div>
+                <div class="stat-label">{{ ('Accounts.status_' ~ s)|local }}</div>
+                <div class="stat-value">{{ counts[s]|default(0) + (s == 'creating' ? counts.terminating|default(0) : 0) }}</div>
+            </div>
+        </a>
+    {% endfor %}
+</div>
+
+<div class="card">
+    <form class="toolbar" method="get" action="{{ base_url }}" role="search">
+        <input class="input grow" type="search" name="q" value="{{ search }}" placeholder="{{ 'Accounts.search'|local }}" aria-label="{{ 'Accounts.search'|local }}">
+        <select class="input" name="status" aria-label="{{ 'Accounts.status'|local }}">
+            <option value="">{{ 'Accounts.all_statuses'|local }}</option>
+            {% for s in statuses %}<option value="{{ s }}"{% if s == status %} selected{% endif %}>{{ ('Accounts.status_' ~ s)|local }}</option>{% endfor %}
+        </select>
+        <button class="btn" type="submit">{{ icon('search') }}{{ 'Accounts.filter'|local }}</button>
+    </form>
+
+    {% if accounts is empty %}
+        <div class="empty">
+            {{ icon('globe') }}
+            {% if search or status %}
+                <h3>{{ 'Accounts.none_match'|local }}</h3><p><a href="{{ base_url }}">{{ 'Accounts.clear_filter'|local }}</a></p>
+            {% else %}
+                <h3>{{ 'Accounts.empty'|local }}</h3><p>{{ 'Accounts.empty_text'|local }}</p>
+                {% if can_create %}<p><a class="btn btn-primary" href="{{ new_url }}">{{ icon('plus') }}{{ 'Accounts.new'|local }}</a></p>{% endif %}
+            {% endif %}
+        </div>
+    {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Accounts.account'|local }}</th>
+                <th class="hide-sm">{{ 'Accounts.package'|local }}</th>
+                {% if show_owner %}<th class="hide-sm">{{ 'Accounts.owner'|local }}</th>{% endif %}
+                <th class="hide-sm">{{ 'Accounts.disk'|local }}</th>
+                <th>{{ 'Accounts.status'|local }}</th>
+            </tr></thead>
+            <tbody>
+            {% for a in accounts %}
+                <tr>
+                    <td>
+                        <a class="cell-user" href="{{ a.url }}" style="color:inherit; text-decoration:none">
+                            <span class="avatar soft">{{ a.username|slice(0, 2)|upper }}</span>
+                            <div><strong>{{ a.domain }}</strong><div class="muted mono">{{ a.username }}</div></div>
+                        </a>
+                    </td>
+                    <td class="hide-sm">{{ a.package_name }}</td>
+                    {% if show_owner %}<td class="muted hide-sm">{{ a.owner_name ?: 'Accounts.server'|local }}</td>{% endif %}
+                    <td class="hide-sm">{% include "@Accounts/disk.twig" with {a: a} %}</td>
+                    <td>{% include "@Accounts/status.twig" with {a: a} %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        <div class="pager"><span>{{ 'Accounts.shown'|local({count: accounts|length}) }}</span></div>
+    {% endif %}
+</div>
+{% endblock %}
