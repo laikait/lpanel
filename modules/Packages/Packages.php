@@ -28,6 +28,13 @@ final class Packages
     /** Numeric limits; 0 means unlimited. */
     public const LIMITS = ['disk_mb', 'inodes', 'bandwidth_mb', 'domains', 'subdomains', 'mailboxes', 'databases', 'ftp_accounts'];
 
+    /**
+     * What happens when an account has used its bandwidth for the month:
+     * "block" stops its sites until the next month (they say why), "warn"
+     * only shows it in both panels.
+     */
+    public const BANDWIDTH_ACTIONS = ['block', 'warn'];
+
     /** What an account on the package may use. Each is checked by the module that offers it. */
     public const FEATURES = ['domains', 'file_manager', 'email', 'databases', 'dns', 'ssl', 'backups', 'cron', 'ftp', 'ssh', 'php_settings', 'stats'];
 
@@ -152,6 +159,16 @@ final class Packages
             $clean[$limit] = (int) $value;
         }
 
+        $action = $input['bandwidth_action'] ?? 'block';
+        $action = \is_string($action) && $action !== '' ? $action : 'block';
+
+        if (!\in_array($action, self::BANDWIDTH_ACTIONS, true)) {
+            $errors['bandwidth_action'] = 'Packages.error_bandwidth_action';
+            $action = 'block';
+        }
+
+        $clean['bandwidth_action'] = $action;
+
         $features = $input['features'] ?? [];
         $features = \is_array($features) ? \array_values(\array_filter($features, 'is_string')) : [];
         $unknown = \array_diff($features, self::FEATURES);
@@ -224,6 +241,7 @@ final class Packages
             'name' => (string) $row['name'],
             'owner_id' => $row['owner_id'] === null ? null : (int) $row['owner_id'],
             'limits' => $limits,
+            'bandwidth_action' => (string) ($row['bandwidth_action'] ?? 'block'),
             'features' => $row['features'],
         ];
     }

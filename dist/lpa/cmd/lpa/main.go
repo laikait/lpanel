@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"os/user"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -82,7 +83,10 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Regis
 		HomesBase: cfg.HomesBase, Files: accounts.SystemFiles, Run: sysexec.Exec{}, Quota: quotas, Log: log,
 		SELinux: selinuxOn(),
 	}
-	sites := &web.Manager{Server: cfg.Web, Run: sysexec.Exec{}, Log: log, Owner: acc.Owner, SELinux: acc.SELinux}
+	sites := &web.Manager{
+		Server: cfg.Web, Run: sysexec.Exec{}, Log: log, Owner: acc.Owner, SELinux: acc.SELinux,
+		PanelPHP: cfg.PanelPHP, TrafficState: filepath.Join(filepath.Dir(cfg.JournalDir), "traffic.json"),
+	}
 	sites.Defaults()
 	acc.BeforeRemove = sites.RemoveFor
 	ops.Accounts(reg, acc)

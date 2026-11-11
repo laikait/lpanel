@@ -42,6 +42,7 @@ final class WebSync
         private readonly Accounts $accounts,
         private readonly Domains $domains,
         private readonly AgentClient $agent,
+        private readonly WebSettings $settings,
     ) {}
 
     /**
@@ -57,8 +58,8 @@ final class WebSync
         }
 
         $this->domains->ensureMain($account, $this->defaultPhp());
-        $args = \json_encode($this->domains->state($account), \JSON_THROW_ON_ERROR);
         $row = $this->row($accountId);
+        $args = \json_encode($this->domains->state($account) + ['limited' => (bool) $row['limited']], \JSON_THROW_ON_ERROR);
 
         if ($row['op_args'] === $args && $row['state'] === self::APPLIED) {
             return WebOutcome::done();
@@ -119,6 +120,24 @@ final class WebSync
     {
         $this->domains->deleteAccount($accountId);
         $this->table()->where('account_id', $accountId)->delete();
+        $this->connections->connection()->table('web_traffic')->where('account_id', $accountId)->delete();
+    }
+
+    /**
+     * Stop an account's sites for having used the month's bandwidth, or
+     * start them again; sends the change when it is one.
+     */
+    public function setLimited(int $accountId, bool $limited): ?WebOutcome
+    {
+        $row = $this->row($accountId);
+
+        if ((bool) $row['limited'] === $limited) {
+            return null;
+        }
+
+        $this->table()->where('id', (int) $row['id'])->update(['limited' => $limited]);
+
+        return $this->touch($accountId);
     }
 
     /**
@@ -138,6 +157,12 @@ final class WebSync
         }
 
         return $this->info;
+    }
+
+    /** Ask the agent again next time: PHP versions were installed or removed. */
+    public function forgetInfo(): void
+    {
+        $this->info = false;
     }
 
     /**
@@ -168,12 +193,13 @@ final class WebSync
         return $versions;
     }
 
-    /** The newest PHP version installed. */
+    /** The PHP version new sites get: the one chosen in the Admin panel, else the newest installed. */
     public function defaultPhp(): string
     {
         $versions = $this->phpVersions();
+        $chosen = (string) $this->settings->get('default_php', '');
 
-        return (string) \end($versions);
+        return \in_array($chosen, $versions, true) ? $chosen : (string) \end($versions);
     }
 
     /** "83" → "8.3" */

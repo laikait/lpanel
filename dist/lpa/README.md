@@ -78,9 +78,14 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `account.unsuspend` | change | `{username}`: removes the expiry |
 | `account.terminate` | change, background | `{username}`: ends processes, removes the user, group, home (never following links) and mail spool. A name with no user is already gone |
 | `account.info` | read-only | `{usernames?}`: LPanel accounts with their disk use and limits |
-| `web.apply` | change | `{username, suspended, sites: [{name, aliases, docroot, php, canonical, redirects, error_pages, protected, hotlink}], pool: {max_children}, php_settings: {"83": {directive: value}}}`: the account's whole web state. Applying the same state again changes nothing |
+| `web.apply` | change | `{username, suspended, limited, sites: [{name, aliases, docroot, php, canonical, redirects, error_pages, protected, hotlink}], pool: {max_children}, php_settings: {"83": {directive: value}}}`: the account's whole web state. Applying the same state again changes nothing |
 | `web.remove` | change | `{username}`: its Apache file and pools. Also run by `account.terminate` before the user goes |
 | `web.info` | read-only | the web server, whether it runs, and each PHP version installed with its pools |
+| `web.traffic` | read-only | bytes sent and received per account and day, read from the access logs (running totals; see below) |
+| `php.info` | read-only | every version of the catalogue: installed, its extensions, pools, the panel's own |
+| `php.install` | change, background | `{version}`: the version with the usual extensions, from Remi |
+| `php.remove` | change, background | `{version}`: refused while any pool uses it (`in_use`) and for the panel's own (`panel_php`) |
+| `php.extensions` | change, background | `{version, install, remove}`: extension names from the catalogue; the panel's own stay in its version |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -91,6 +96,7 @@ The account operations refuse (`not_ours`) any user without the comment
 `lpa.json` adds `homes_base` (default `/home`) and `quota`: `"on"`, or `"off"`
 on a machine without quotas, which the installer writes only with
 `--allow-no-quota`. `web` is `"apache"` (the default) or `"off"`.
+`panel_php` (default `"83"`) is the Remi version the panel itself runs on.
 
 ### Sites (`web.apply`)
 
@@ -128,6 +134,30 @@ sections come after the site's own `<Directory>`, so its
 change of logins alone reloads nothing. php.ini settings go into the pool of
 their version, as `php_value` or `php_flag`. `features.go` holds the rule
 each value must match.
+
+A `limited` account (its month's bandwidth used, on a package that blocks)
+has its sites answer 503 and say so; its pools and settings stay.
+
+### PHP versions (`php.*`)
+
+The panel names a version and extensions from the agent's catalogue
+(`php.go`): versions 7.4 to 8.5 and about twenty extensions. The agent makes
+the package names itself, so nothing from the panel reaches `dnf` as a name
+or an option. One `dnf` runs at a time; a removal also holds the sites lock,
+so no pool can appear while a version goes. A new version's sample `www`
+pool is emptied, as the installer does. `dnf_failed` carries dnf's last
+lines (no network, a package Remi does not have for that version).
+
+### Bandwidth (`web.traffic`)
+
+The agent reads each `<user>.access.log` and `<user>.access.log.1` in
+`/var/log/httpd/lpanel/` (the `lpanel` log format ends with `%O %I`) and
+adds the bytes per account and day. It remembers how far it has read each
+file by device and inode, in `/var/lib/lpa/traffic.json`, so a file that
+logrotate renamed is finished, not read again; a line still being written
+waits for the next call. The answer is the running total of each day (62
+days are kept), so asking twice or losing an answer changes nothing.
+`web.remove` deletes the account's logs and totals.
 
 Document roots are `public_html` or folders under it. The agent makes them
 by walking from the home with `O_NOFOLLOW` directory descriptors, so a link

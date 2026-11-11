@@ -18,6 +18,7 @@ import (
 type fakeRun struct {
 	calls []string
 	fail  map[string]string // call prefix → output of a failure
+	out   map[string]string // call prefix → output of a success
 	after func(call string)
 }
 
@@ -31,6 +32,11 @@ func (f *fakeRun) Run(_ context.Context, tool string, args ...string) (int, stri
 	}
 	if f.after != nil {
 		f.after(call)
+	}
+	for prefix, out := range f.out {
+		if strings.HasPrefix(call, prefix) {
+			return 0, out, nil
+		}
 	}
 	return 0, "", nil
 }
@@ -62,7 +68,7 @@ func setup(t *testing.T) (*Manager, *fakeRun, *probeLog, string) {
 	}
 	homes := filepath.Join(root, "home")
 	os.MkdirAll(filepath.Join(homes, "shop1"), 0o711)
-	run := &fakeRun{fail: map[string]string{}}
+	run := &fakeRun{fail: map[string]string{}, out: map[string]string{}}
 	probes := &probeLog{}
 	m := &Manager{
 		Include:  filepath.Join(root, "httpd", "conf.d", "lpanel.conf"),

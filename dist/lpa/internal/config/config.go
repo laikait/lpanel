@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 )
 
 // Default is where the installer writes the configuration.
@@ -35,6 +36,9 @@ type Config struct {
 	// Web is the web server the agent configures for accounts' sites:
 	// "apache", or "off" (no web operations).
 	Web string `json:"web"`
+	// PanelPHP is the Remi PHP version the panel itself runs on ("83"). It
+	// cannot be removed, nor the extensions the panel needs.
+	PanelPHP string `json:"panel_php"`
 }
 
 // Defaults are the values a fresh install uses.
@@ -49,6 +53,7 @@ func Defaults() Config {
 		HomesBase:    "/home",
 		Quota:        "on",
 		Web:          "apache",
+		PanelPHP:     "83",
 	}
 }
 
@@ -88,6 +93,9 @@ func (c Config) validate() error {
 	}
 	if c.Web != "apache" && c.Web != "off" {
 		return fmt.Errorf("web must be \"apache\" or \"off\", not %q", c.Web)
+	}
+	if len(c.PanelPHP) != 2 || c.PanelPHP < "50" || c.PanelPHP > "89" || strings.Trim(c.PanelPHP, "0123456789") != "" {
+		return fmt.Errorf("panel_php must be two digits such as \"83\", not %q", c.PanelPHP)
 	}
 	if c.MaxRunning < 1 || c.JournalDays < 1 {
 		return errors.New("max_running and journal_days must be at least 1")

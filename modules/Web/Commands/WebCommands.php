@@ -11,6 +11,7 @@ use App\Modules\Accounts\Accounts;
 use App\Modules\Identity\PanelUsers;
 use App\Modules\Web\DomainActions;
 use App\Modules\Web\Domains;
+use App\Modules\Web\PhpVersions;
 use App\Modules\Web\WebOutcome;
 use App\Modules\Web\WebSync;
 
@@ -161,9 +162,13 @@ final class WebCommands
         return 0;
     }
 
-    public function settle(Output $output): int
+    public function settle(Output $output, PhpVersions $php): int
     {
         $counts = $this->sync->settleAll();
+
+        foreach ($php->settleAll() as $state => $n) {
+            $counts['PHP job ' . $state] = $n;
+        }
 
         if ($counts !== []) {
             $output->line(\implode(', ', \array_map(static fn(string $k, int $v): string => "{$v} {$k}", \array_keys($counts), $counts)));

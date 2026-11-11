@@ -1,0 +1,30 @@
+# Installed by LPanel as /etc/logrotate.d/lpanel.
+
+# Each account's Apache logs (written by the sites the agent configures).
+# The agent counts bandwidth from the access logs by each file's inode, and
+# reads the rest of a rotated file while it is still uncompressed: so
+# rotation renames (never copytruncate) and compresses one day later.
+/var/log/httpd/lpanel/*.log {
+    daily
+    rotate 14
+    missingok
+    notifempty
+    compress
+    delaycompress
+    sharedscripts
+    postrotate
+        /bin/systemctl reload httpd.service >/dev/null 2>&1 || true
+    endscript
+}
+
+# The panel's own logs. Low volume; truncated in place so its nginx and
+# PHP-FPM need no signal.
+/var/log/lpanel/*.log {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}

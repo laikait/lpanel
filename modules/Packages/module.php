@@ -75,7 +75,7 @@ return static function (ModuleContext $module): void {
             return 0;
         })->describe('List every hosting package.');
 
-        $create = $commands->add('packages:create', static function (Output $output, Packages $packages, PanelUsers $users, AuditLog $audit, Localization $localization, string $name, ?string $owner = null, ?string $features = null, ?string $disk = null, ?string $inodes = null, ?string $bandwidth = null, ?string $domains = null, ?string $subdomains = null, ?string $mailboxes = null, ?string $databases = null, ?string $ftp = null): int {
+        $create = $commands->add('packages:create', static function (Output $output, Packages $packages, PanelUsers $users, AuditLog $audit, Localization $localization, string $name, ?string $owner = null, ?string $features = null, ?string $disk = null, ?string $inodes = null, ?string $bandwidth = null, ?string $domains = null, ?string $subdomains = null, ?string $mailboxes = null, ?string $databases = null, ?string $ftp = null, ?string $bandwidthAction = null): int {
             $ownerId = null;
 
             if ($owner !== null) {
@@ -93,6 +93,7 @@ return static function (ModuleContext $module): void {
             $input = [
                 'name' => $name, 'disk_mb' => $disk, 'inodes' => $inodes, 'bandwidth_mb' => $bandwidth, 'domains' => $domains,
                 'subdomains' => $subdomains, 'mailboxes' => $mailboxes, 'databases' => $databases, 'ftp_accounts' => $ftp,
+                'bandwidth_action' => $bandwidthAction,
                 'features' => $features === null ? Packages::DEFAULT_FEATURES : array_filter(array_map('trim', explode(',', $features))),
             ];
             [$clean, $errors] = $packages->validate($input, $ownerId);
@@ -113,7 +114,8 @@ return static function (ModuleContext $module): void {
         })->describe('Create a hosting package. Limits are numbers; 0 or nothing means unlimited.')
             ->argument('name', 'The package name.')
             ->option('owner', 'The reseller who owns it (default: the server).')
-            ->option('features', 'Comma-separated: ' . implode(',', Packages::FEATURES) . ' (default: all but ssh).');
+            ->option('features', 'Comma-separated: ' . implode(',', Packages::FEATURES) . ' (default: all but ssh).')
+            ->option('bandwidth-action', 'When the month\'s bandwidth is used: block (the sites stop until next month; default) or warn.');
 
         foreach (['disk' => 'Disk space in MB.', 'inodes' => 'Files and folders.', 'bandwidth' => 'Monthly bandwidth in MB.', 'domains' => 'Domains.', 'subdomains' => 'Subdomains.', 'mailboxes' => 'Mailboxes.', 'databases' => 'Databases.', 'ftp' => 'FTP accounts.'] as $option => $text) {
             $create->option($option, $text);

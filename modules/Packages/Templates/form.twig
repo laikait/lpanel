@@ -17,6 +17,16 @@
 </div>
 <p class="hint" style="margin:-4px 0 16px">{{ 'Packages.unlimited_hint'|local }}</p>
 
+<div class="field">
+    <label for="pkg-bandwidth_action">{{ 'Packages.bandwidth_action'|local }}</label>
+    <select class="input{% if errors.bandwidth_action is defined %} is-invalid{% endif %}" id="pkg-bandwidth_action" name="bandwidth_action">
+        {% for action in ['block', 'warn'] %}
+            <option value="{{ action }}"{% if old.bandwidth_action|default('block') == action %} selected{% endif %}>{{ ('Packages.bandwidth_action_' ~ action)|local }}</option>
+        {% endfor %}
+    </select>
+    {% if errors.bandwidth_action is defined %}<div class="error">{{ errors.bandwidth_action|local }}</div>{% endif %}
+</div>
+
 <fieldset class="field" style="border:0; padding:0; margin:0">
     <legend class="label" style="margin-bottom:8px; font-weight:600">{{ 'Packages.features'|local }}</legend>
     <div class="feature-grid">

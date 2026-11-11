@@ -190,9 +190,10 @@ final class WebTest extends TestCase
         $root = $this->app->container()->get(PanelUsers::class)->root()->identity;
         $token = $this->app->container()->get(ApiTokens::class)->issue((string) $root->id, 'billing')['token'];
 
+        // "8.2", as the API shows it, or "82".
         $added = $this->api('POST', '/admin/api/v1/accounts/shop/domains', $token, ['name' => 'api.test', 'php' => '8.2']);
-        self::assertSame(422, $added->status(), 'the version is two digits in the API too: "82"');
-        $added = $this->api('POST', '/admin/api/v1/accounts/shop/domains', $token, ['name' => 'api.test', 'php' => '82']);
+        self::assertSame('8.2', $this->json($added)['data']['php']);
+        self::assertSame(422, $this->api('POST', '/admin/api/v1/accounts/shop/domains', $token, ['name' => 'api2.test', 'php' => '8.9'])->status());
         $alias = $this->api('POST', '/admin/api/v1/accounts/shop/domains', $token, ['kind' => 'alias', 'name' => 'api-alias.test', 'target' => 'api.test']);
         $changed = $this->api('PUT', '/admin/api/v1/accounts/shop/domains/api.test', $token, ['php' => '83']);
         $blocked = $this->api('DELETE', '/admin/api/v1/accounts/shop/domains/api.test', $token);

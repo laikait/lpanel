@@ -94,7 +94,7 @@ final class PackagePages
     /** @return array<string, mixed> */
     public static function input(Request $request): array
     {
-        $input = ['name' => $request->input('name', ''), 'features' => $request->input('features', [])];
+        $input = ['name' => $request->input('name', ''), 'features' => $request->input('features', []), 'bandwidth_action' => $request->input('bandwidth_action', 'block')];
 
         foreach (Packages::LIMITS as $limit) {
             $input[$limit] = $request->input($limit, 0);

@@ -22,6 +22,12 @@ final class FakeServer
     /** @var list<string> the PHP versions installed */
     public array $php = ['82', '83'];
 
+    /** @var array<int|string, list<string>> version => its extensions, as php.info answers (PHP makes "82" an int key) */
+    public array $extensions = ['82' => ['gd', 'mbstring', 'zip'], '83' => ['intl', 'mbstring', 'mysqlnd', 'opcache', 'pdo', 'process', 'sodium', 'xml']];
+
+    /** @var array<string, array<string, int>> username => day => bytes, as web.traffic answers */
+    public array $traffic = [];
+
     /** @var list<string> operations actually carried out, not answered from the journal */
     public array $executed = [];
 
@@ -43,7 +49,7 @@ final class FakeServer
     {
         $answers = [];
 
-        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove'] as $op) {
+        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -52,6 +58,8 @@ final class FakeServer
             'server' => 'apache', 'installed' => true, 'running' => true, 'accounts' => \count($this->sites),
             'php' => \array_map(fn(string $v): array => ['version' => $v, 'pools' => 0, 'running' => true], $this->php),
         ]];
+        $answers['php.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->phpInfo()];
+        $answers['web.traffic'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['accounts' => (object) $this->traffic, 'more' => false]];
         $answers['system.facts'] = FakeAgent::unavailable();
 
         return new FakeAgent($answers);
@@ -88,8 +96,8 @@ final class FakeServer
             throw FakeAgent::unavailable();
         }
 
-        // terminate runs in the background: the first answer is "accepted".
-        return $op === 'account.terminate' && $response['status'] === 'done' ? ['status' => 'accepted'] : $response;
+        // These run in the background: the first answer is "accepted".
+        return ($op === 'account.terminate' && $response['status'] === 'done') || \str_starts_with($op, 'php.') ? ['status' => 'accepted'] : $response;
     }
 
     /**
@@ -106,6 +114,10 @@ final class FakeServer
             $this->failNext = null;
 
             return ['status' => 'failed', 'error' => ['code' => $fail['code'], 'message' => $fail['message']]];
+        }
+
+        if (\str_starts_with($op, 'php.')) {
+            return $this->runPhp($op, $args);
         }
 
         if ($op === 'account.create') {
@@ -181,6 +193,65 @@ final class FakeServer
         }
 
         return ['status' => 'done', 'result' => ['accounts' => $accounts, 'missing' => []]];
+    }
+
+    /**
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    private function runPhp(string $op, array $args): array
+    {
+        $v = (string) $args['version'];
+        $fail = static fn(string $code, string $message): array => ['status' => 'failed', 'error' => ['code' => $code, 'message' => $message]];
+
+        if ($op === 'php.install') {
+            $this->php = \array_values(\array_unique([...$this->php, $v]));
+            \sort($this->php);
+            $this->extensions[$v] = ['bcmath', 'gd', 'intl', 'mbstring', 'mysqlnd', 'opcache', 'process', 'xml', 'zip'];
+        } elseif ($op === 'php.remove') {
+            if ($v === '83') {
+                return $fail('panel_php', 'the panel itself runs on PHP 8.3');
+            }
+
+            foreach ($this->sites as $state) {
+                foreach ($state['sites'] as $site) {
+                    if ($site['php'] === $v) {
+                        return $fail('in_use', 'sites still use PHP ' . $v);
+                    }
+                }
+            }
+
+            $this->php = \array_values(\array_diff($this->php, [$v]));
+            unset($this->extensions[$v]);
+        } else {
+            $have = \array_values(\array_diff([...$this->extensions[$v] ?? [], ...$args['install']], $args['remove']));
+            \sort($have);
+            $this->extensions[$v] = \array_values(\array_unique($have));
+        }
+
+        return ['status' => 'done', 'result' => ['version' => $v]];
+    }
+
+    /** @return array<string, mixed> */
+    private function phpInfo(): array
+    {
+        $versions = [];
+
+        foreach (['74', '80', '81', '82', '83', '84', '85'] as $v) {
+            $installed = \in_array($v, $this->php, true);
+            $versions[] = [
+                'version' => $v, 'installed' => $installed, 'extensions' => $installed ? $this->extensions[$v] ?? [] : [],
+                'pools' => 0, 'running' => $installed, 'panel' => $v === '83',
+                'locked' => $v === '83' ? ['intl', 'mbstring', 'mysqlnd', 'opcache', 'pdo', 'process', 'sodium', 'xml'] : [],
+            ];
+        }
+
+        return [
+            'versions' => $versions,
+            'extensions' => ['apcu', 'bcmath', 'gd', 'gmp', 'imagick', 'intl', 'ioncube', 'ldap', 'mbstring', 'memcached', 'mysqlnd', 'opcache', 'pdo', 'pgsql', 'process', 'redis', 'soap', 'sodium', 'tidy', 'xml', 'zip'],
+            'defaults' => ['bcmath', 'gd', 'intl', 'mbstring', 'mysqlnd', 'opcache', 'process', 'xml', 'zip'],
+        ];
     }
 
     /** @return array<string, mixed> */

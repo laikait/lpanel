@@ -20,6 +20,7 @@ final class WebListeners
         private readonly Subusers $subusers,
         private readonly Authorizer $authorizer,
         private readonly Router $router,
+        private readonly Bandwidth $bandwidth,
     ) {}
 
     /**
@@ -37,6 +38,22 @@ final class WebListeners
             'account.create', 'account.suspend', 'account.unsuspend', 'account.modify' => $this->sync->touch((int) $row['id']),
             default => null,
         };
+
+        // Another package may have another bandwidth limit.
+        if ($op === 'account.modify') {
+            $this->bandwidth->enforce();
+        }
+    }
+
+    /**
+     * packages.updated: a package's limits changed, so its accounts may now be
+     * over their bandwidth, or no longer.
+     *
+     * @param array<string, mixed> $package
+     */
+    public function packageUpdated(array $package): void
+    {
+        $this->bandwidth->enforce();
     }
 
     /** accounts.domain_taken: a new account cannot take a name some site already answers to. */
@@ -67,6 +84,7 @@ final class WebListeners
         $cards[] = ['template' => '@Web/user-card', 'order' => 20, 'data' => [
             'domains' => \array_slice($this->domains->forAccount((int) $account['id']), 0, 6),
             'link' => $this->router->url('user.domains'),
+            'bandwidth' => $this->bandwidth->usage($account),
         ]];
 
         return $cards;
@@ -86,6 +104,7 @@ final class WebListeners
         $cards[] = ['template' => '@Web/admin-card', 'data' => [
             'domains' => $this->domains->forAccount((int) $account['id']),
             'web' => $this->sync->stateOf((int) $account['id']),
+            'bandwidth' => $this->bandwidth->usage($account),
         ]];
 
         return $cards;

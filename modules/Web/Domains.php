@@ -284,6 +284,18 @@ final class Domains
         $this->table()->where('id', $id)->delete();
     }
 
+    /** @return array<string, int> PHP version => how many sites use it */
+    public function phpInUse(): array
+    {
+        $counts = [];
+
+        foreach ($this->table()->whereNotNull('php')->get() as $row) {
+            $counts[(string) $row['php']] = ($counts[(string) $row['php']] ?? 0) + 1;
+        }
+
+        return $counts;
+    }
+
     public function deleteAccount(int $accountId): void
     {
         foreach ($this->forAccount($accountId) as $domain) {

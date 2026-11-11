@@ -255,7 +255,8 @@ t_phpini()    { printf '<?php echo ini_get("memory_limit"), " ", ini_get("date.t
                 && [ "$(get $O /ini.php)" = "200 " ] && grep -q "200M Asia/Dhaka" /tmp/site.out \
                 && grep -q 'php_value\[memory_limit\] = 200M' /etc/opt/remi/php82/php-fpm.d/lpanel-shop1.conf; }
 t_bad_ini()   { ! lpanel php:settings shop1 8.2 --set=disable_functions=x && ! lpanel php:settings shop1 8.2 --set='memory_limit=1M php_admin_value'; }
-t_shown()     { local out; out=$(lpanel domains:show shop1 $O) && echo "$out" >&2 && grep -q 'redirect   /old -> https://example.org/new (301)' <<<"$out"                 && grep -q 'protected  /private "Members": no logins' <<<"$out"; }
+t_shown()     { local out; out=$(lpanel domains:show shop1 $O) && echo "$out" >&2 && grep -q 'redirect   /old -> https://example.org/new (301)' <<<"$out" \
+                && grep -q 'protected  /private "Members": no logins' <<<"$out"; }
 check "a redirect keeps the rest of the path" t_redirect
 check "a temporary redirect is a 302" t_temporary
 check "visitors can be sent to www." t_canonical
@@ -268,6 +269,69 @@ check "hotlink protection refuses other sites, not the site or direct visits" t_
 check "php.ini settings reach PHP for that version" t_phpini
 check "settings that are not offered are refused" t_bad_ini
 check "lpanel domains:show lists it all" t_shown
+
+echo "== PHP versions"
+# Which PHP runs the page, and whether it has the soap extension.
+cat > /tmp/ext.php <<'PHP'
+<?php echo PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION, extension_loaded('soap') ? ' soap' : ' no-soap';
+PHP
+N=new84.example.test
+ND=/home/shop1/public_html/new84.example.test
+t_php_list()    { local out; out=$(lpanel php:list) && echo "$out" >&2 && grep -Eq '^8\.3 +running +[0-9]+ +default, the panel runs on it' <<<"$out" && grep -Eq '^8\.4 +- ' <<<"$out"; }
+t_php_stays()   { ! lpanel php:remove 8.3 && ! lpanel php:remove 8.2 && rpm -q php83-php-fpm php82-php-fpm >/dev/null; }
+t_php_install() { lpanel php:install 8.4 && [ -x /opt/remi/php84/root/usr/sbin/php-fpm ] && rpm -q php84-php-pecl-zip php84-php-mysqlnd >/dev/null \
+                  && ! grep -q '^\[www\]' /etc/opt/remi/php84/php-fpm.d/www.conf; }
+t_php_default() { lpanel php:default 8.4 && lpanel domains:add shop1 $N && put shop1 /tmp/ext.php $ND/index.php && says $N "8.4 no-soap"; }
+t_php_ext()     { lpanel php:extensions 8.4 --add=soap && rpm -q php84-php-soap >/dev/null && says $N "8.4 soap"; }
+t_php_ext_off() { lpanel php:extensions 8.4 --remove=soap && ! rpm -q php84-php-soap >/dev/null && says $N "8.4 no-soap"; }
+t_php_inuse()   { ! lpanel php:remove 8.4 && rpm -q php84-php-fpm >/dev/null; }
+t_php_panel_ext() { ! lpanel php:extensions 8.3 --remove=mysqlnd && rpm -q php83-php-mysqlnd >/dev/null; }
+t_php_remove()  { lpanel domains:remove shop1 $N && lpanel php:default 8.3 && lpanel php:remove 8.4 && ! rpm -q php84-php-fpm >/dev/null \
+                  && [ ! -e /opt/remi/php84/root/usr/sbin/php-fpm ] && says $O "8.2 as shop1"; }
+t_php_audited() { mariadb -uroot -N lpanel -e "select concat(action, ':', outcome) from audit_log where action like 'php.%' order by id" | tr '\n' ' ' | tee /dev/stderr \
+                  | grep -q "php.install:ok php.install:ok php.default:ok php.extensions:ok php.extensions:ok php.extensions:ok php.extensions:ok php.default:ok php.remove:ok php.remove:ok"; }
+check "lpanel php:list shows each version, the default and the panel's own" t_php_list
+check "the panel's PHP and a version in use cannot be removed" t_php_stays
+check "lpanel php:install 8.4: a new version with the usual extensions" t_php_install
+check "the default version is what a new site gets" t_php_default
+check "an extension added reaches the sites on that version" t_php_ext
+check "and removed, goes" t_php_ext_off
+check "a version a site uses stays" t_php_inuse
+check "the panel's own extensions stay" t_php_panel_ext
+check "a version no site uses is removed, and other sites keep running" t_php_remove
+check "PHP changes are in the audit log" t_php_audited
+
+echo "== bandwidth and log rotation"
+# Bytes sent plus received in an access log, as Apache wrote them (%O %I
+# after the status), to compare with what the panel counted.
+logged() { cat /var/log/httpd/lpanel/shop1.access.log* 2>/dev/null | awk 'match($0, /" [0-9][0-9][0-9] [0-9]+ [0-9]+ "/) { split(substr($0, RSTART + 2, RLENGTH - 3), f, " "); s += f[2] + f[3] } END { print s + 0 }'; }
+counted() { lpanel web:bandwidth shop1 | awk '/^used/ { print $2 }'; }
+export -f logged counted
+head -c 600000 /dev/urandom > /tmp/big.bin
+t_counted()  { put shop1 /tmp/big.bin $OD/big.bin && for _ in 1 2 3; do get $O /big.bin >/dev/null; done \
+               && lpanel web:traffic && [ "$(counted)" = "$(logged)" ] && [ "$(counted)" -gt 1800000 ]; }
+t_twice()    { local before; before=$(counted) && lpanel web:traffic && [ "$(counted)" = "$before" ]; }
+t_rotated()  { logrotate -f /etc/logrotate.d/lpanel && [ -f /var/log/httpd/lpanel/shop1.access.log.1 ] && get $O /big.bin >/dev/null \
+               && lpanel web:traffic && [ "$(counted)" = "$(logged)" ]; }
+# (A fresh machine has no logrotate state file yet; -d says so, harmlessly.)
+t_rotate_cfg() { logrotate -d /etc/logrotate.d/lpanel > /tmp/logrotate.out 2>&1; grep -q 'httpd/lpanel' /tmp/logrotate.out && ! grep '^error:' /tmp/logrotate.out | grep -v 'state file'; }
+t_gone_logs()  { echo "Owner-Pass-Word-5" | lpanel accounts:create shop5 five.example.test Starter && get five.example.test / >/dev/null \
+                 && [ -f /var/log/httpd/lpanel/shop5.access.log ] && lpanel accounts:terminate shop5 --yes \
+                 && for _ in $(seq 60); do getent passwd shop5 >/dev/null || break; lpanel accounts:settle >/dev/null; sleep 2; done \
+                 && ! getent passwd shop5 && ! ls /var/log/httpd/lpanel/shop5.* 2>/dev/null; }
+t_limited()  { lpanel packages:create Tiny --disk=3 --inodes=2000 --bandwidth=1 && lpanel accounts:package shop1 Tiny && lpanel web:traffic \
+               && [ "$(get $O /)" = "503 " ] && grep -q "used its bandwidth for this month" /tmp/site.out \
+               && lpanel web:bandwidth shop1 | grep -q "stopped"; }
+t_unlimited() { lpanel accounts:package shop1 Starter && says $O "8.2 as shop1" && lpanel web:bandwidth shop1 | grep -q "running"; }
+t_bw_audited() { mariadb -uroot -N lpanel -e "select action from audit_log where action like 'account.bandwidth%' order by id" | tr '\n' ' ' | grep -q "account.bandwidth_limited account.bandwidth_restored"; }
+check "each byte the sites sent and received is counted" t_counted
+check "counting again counts nothing twice" t_twice
+check "logrotate's own check accepts the configuration" t_rotate_cfg
+check "after the logs rotate, nothing is lost or counted twice" t_rotated
+check "over a blocking limit, the sites stop and say why" t_limited
+check "a package with room starts them again at once" t_unlimited
+check "both are in the audit log" t_bw_audited
+check "a terminated account takes its logs with it" t_gone_logs
 
 echo "== running the installer again"
 sum_before=$(sha256sum /usr/local/lpanel/.env /etc/lpanel/agent.key /etc/lpanel/tls/panel.crt)

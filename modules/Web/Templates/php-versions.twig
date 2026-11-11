@@ -1,0 +1,118 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Web.php_versions'|local }}</h1>
+        <p>{{ 'Web.php_versions_lead'|local }}</p>
+    </div>
+    {% if installed is not empty %}
+        <form class="php-default" method="post" action="{{ default_url }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <label for="php-default">{{ 'Web.php_default_label'|local }}</label>
+            <select class="input" id="php-default" name="version">
+                {% for v in installed %}<option value="{{ v.version }}"{% if v.default %} selected{% endif %}>PHP {{ v.label }}</option>{% endfor %}
+            </select>
+            <button class="btn" type="submit">{{ 'Web.save'|local }}</button>
+        </form>
+    {% endif %}
+</div>
+
+{% if not reachable %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Web.php_agent_down'|local }}</p></div>
+{% endif %}
+
+{% if running %}
+    <div class="alert alert-info" data-reload="5">
+        <span class="spinner" aria-hidden="true"></span>
+        <p><strong>{{ ('Web.php_job_' ~ running.op|replace({'php.': ''}))|local({version: running.version|slice(0,1) ~ '.' ~ running.version|slice(1)}) }}</strong> {{ 'Web.php_job_wait'|local }}</p>
+    </div>
+{% elseif jobs is not empty and jobs[0].state == 'failed' %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ ('Web.php_job_failed_' ~ jobs[0].op|replace({'php.': ''}))|local({version: jobs[0].label}) }}</strong> <span class="mono">{{ jobs[0].error }}</span></p></div>
+{% endif %}
+
+<div class="stack">
+{% for v in installed %}
+    <form class="card" method="post" action="{{ v.extensions_url }}" id="php{{ v.version }}">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <div class="card-head">
+            <div>
+                <h2 class="php-title">PHP {{ v.label }}
+                    {% if v.default %}<span class="badge accent">{{ 'Web.php_badge_default'|local }}</span>{% endif %}
+                    {% if v.panel %}<span class="badge plain">{{ 'Web.php_badge_panel'|local }}</span>{% endif %}
+                    {% if v.eol %}<span class="badge warn">{{ 'Web.php_badge_eol'|local }}</span>{% endif %}
+                </h2>
+                <p>{{ v.sites ? 'Web.php_sites'|local({count: v.sites}) : 'Web.php_no_sites'|local }}</p>
+            </div>
+            {% if v.running %}<span class="badge ok">{{ 'Web.php_running'|local }}</span>{% else %}<span class="badge plain">{{ 'Web.php_idle'|local }}</span>{% endif %}
+        </div>
+        <div class="card-body">
+            <div class="stat-label" style="margin-bottom:10px">{{ 'Web.php_extensions'|local }}</div>
+            <div class="ext-grid">
+                {% for e in extensions %}
+                    {% set locked = e in v.locked %}
+                    <label class="check{% if locked %} is-locked{% endif %}"{% if locked %} title="{{ 'Web.php_locked_hint'|local }}"{% endif %}>
+                        <input type="checkbox" name="extensions[]" value="{{ e }}"{% if e in v.extensions %} checked{% endif %}{% if locked or running %} disabled{% endif %}>
+                        <span class="mono">{{ e }}</span>{% if locked %}{{ icon('lock', 'ic-sm') }}{% endif %}
+                    </label>
+                {% endfor %}
+            </div>
+        </div>
+        <div class="card-foot php-foot">
+            <span class="hint">{{ v.keeps ? v.keeps|local : 'Web.php_extensions_hint'|local }}</span>
+            <div class="php-actions">
+                {% if not v.keeps %}
+                    <button class="btn btn-danger" type="submit" form="php{{ v.version }}-remove"{% if running %} disabled{% endif %}>{{ icon('trash') }}{{ 'Web.php_remove'|local }}</button>
+                {% endif %}
+                <button class="btn btn-primary" type="submit"{% if running %} disabled{% endif %}>{{ icon('check') }}{{ 'Web.php_save_extensions'|local }}</button>
+            </div>
+        </div>
+    </form>
+    {% if not v.keeps %}
+        <form id="php{{ v.version }}-remove" method="post" action="{{ v.remove_url }}" data-confirm="{{ 'Web.php_remove_confirm'|local({version: v.label}) }}" hidden>
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+        </form>
+    {% endif %}
+{% endfor %}
+
+{% if available is not empty %}
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Web.php_available'|local }}</h2><p>{{ 'Web.php_available_lead'|local({extensions: defaults|join(', ')}) }}</p></div></div>
+        <ul class="list">
+            {% for v in available %}
+                <li>
+                    <div class="domain-name"><strong>PHP {{ v.label }}</strong>{% if v.eol %}<span class="badge warn">{{ 'Web.php_badge_eol'|local }}</span>{% endif %}</div>
+                    <form method="post" action="{{ v.install_url }}"{% if v.eol %} data-confirm="{{ 'Web.php_eol_confirm'|local({version: v.label}) }}"{% endif %}>
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button class="btn btn-sm" type="submit"{% if running or not reachable %} disabled{% endif %}>{{ icon('plus') }}{{ 'Web.php_install'|local }}</button>
+                    </form>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+{% endif %}
+
+{% if jobs is not empty %}
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Web.php_jobs'|local }}</h2></div></div>
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>{{ 'Web.php_job'|local }}</th><th class="hide-sm">{{ 'Web.php_job_by'|local }}</th><th class="hide-sm">{{ 'Web.php_job_when'|local }}</th><th>{{ 'Web.php_job_state'|local }}</th></tr></thead>
+            <tbody>
+            {% for j in jobs %}
+                <tr>
+                    <td>{{ ('Web.php_op_' ~ j.op|replace({'php.': ''}))|local({version: j.label}) }}</td>
+                    <td class="hide-sm">{{ j.actor_name ?: '—' }}</td>
+                    <td class="hide-sm nowrap">{{ j.created_at|when }}</td>
+                    <td>
+                        {% if j.state == 'running' %}<span class="badge info">{{ 'Web.php_state_running'|local }}</span>
+                        {% elseif j.state == 'done' %}<span class="badge ok">{{ 'Web.php_state_done'|local }}</span>
+                        {% else %}<span class="badge bad" title="{{ j.error }}">{{ 'Web.php_state_failed'|local }}</span>{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    </div>
+{% endif %}
+</div>
+{% endblock %}

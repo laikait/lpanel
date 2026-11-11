@@ -55,7 +55,8 @@ final class DomainApi
             'name' => (string) $request->input('name', ''),
             'target' => $target,
             'docroot' => (string) $request->input('docroot', ''),
-            'php' => (string) $request->input('php', ''),
+            // "8.3", as the API shows it, or "83".
+            'php' => \str_replace('.', '', (string) $request->input('php', '')),
             'wildcard' => $request->input('wildcard') === true,
         ]);
 
@@ -78,7 +79,11 @@ final class DomainApi
 
         foreach (['docroot', 'php', 'wildcard', 'canonical'] as $field) {
             if ($request->input($field) !== null) {
-                $input[$field] = $field === 'wildcard' ? $request->input($field) === true : (string) $request->input($field);
+                $input[$field] = match ($field) {
+                    'wildcard' => $request->input($field) === true,
+                    'php' => \str_replace('.', '', (string) $request->input($field)),
+                    default => (string) $request->input($field),
+                };
             }
         }
 

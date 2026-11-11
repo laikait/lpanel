@@ -116,3 +116,15 @@ document.querySelectorAll('form[data-show-from]').forEach((form) => {
     form.addEventListener('change', apply);
     apply();
 });
+
+// A page showing work in progress (data-reload="seconds" on any element)
+// looks again by itself, unless the person is typing in a form.
+const reload = document.querySelector('[data-reload]');
+if (reload) {
+    const seconds = Math.max(3, parseInt(reload.getAttribute('data-reload'), 10) || 5);
+    setTimeout(function again() {
+        const busy = document.activeElement && document.activeElement.closest('form') && document.activeElement.matches('input, select, textarea');
+        if (busy) { setTimeout(again, seconds * 1000); return; }
+        window.location.reload();
+    }, seconds * 1000);
+}

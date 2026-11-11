@@ -78,8 +78,11 @@ type Pool struct {
 type ApplyArgs struct {
 	Username  string `json:"username"`
 	Suspended bool   `json:"suspended"`
-	Sites     []Site `json:"sites"`
-	Pool      Pool   `json:"pool"`
+	// Limited is true when the account has used its bandwidth for the
+	// month: its sites answer 503 and say so, but keep their settings.
+	Limited bool   `json:"limited"`
+	Sites   []Site `json:"sites"`
+	Pool    Pool   `json:"pool"`
 	// PHPSettings are the owner's php.ini choices for each PHP version
 	// ("83" → "memory_limit" → "256M"), written into that version's pool.
 	PHPSettings map[string]map[string]string `json:"php_settings"`
@@ -132,6 +135,12 @@ type Manager struct {
 	// Owner describes an LPanel account and refuses anything else
 	// (accounts.Manager.Owner).
 	Owner func(name string) (uid, gid int, home string, err error)
+	// PanelPHP is the PHP version the panel itself runs on ("83"): it
+	// cannot be removed, nor the extensions the panel needs.
+	PanelPHP string
+	// TrafficState is the agent's own record of how far it has read each
+	// access log, and the bytes counted per account and day.
+	TrafficState string
 	// GroupID looks a group up; os/user when nil.
 	GroupID func(name string) (int, error)
 	// Chown sets a file's owner; os.Chown when nil, tests replace it.
@@ -149,6 +158,11 @@ type Manager struct {
 	ProbeFor time.Duration
 
 	mu sync.Mutex
+	// pkgMu keeps dnf runs one at a time (dnf has its own lock, and would
+	// fail the second rather than wait).
+	pkgMu sync.Mutex
+	// trafficMu keeps web.traffic runs one at a time.
+	trafficMu sync.Mutex
 }
 
 // Defaults fill in the paths of an AlmaLinux 9 server with Apache and Remi.
@@ -167,6 +181,8 @@ func (m *Manager) Defaults() {
 	set(&m.PHPConf, "/etc/opt/remi")
 	set(&m.PHPRun, "/var/opt/remi")
 	set(&m.WebGroup, "apache")
+	set(&m.PanelPHP, "83")
+	set(&m.TrafficState, "/var/lib/lpa/traffic.json")
 	if m.ProbeFor == 0 {
 		m.ProbeFor = 10 * time.Second
 	}
@@ -465,6 +481,10 @@ func (m *Manager) Remove(ctx context.Context, a NameArgs) (Result, error) {
 		files = append(files, file{path: path, data: true})
 	}
 	changed, err := m.change(ctx, files, nil)
+	if err == nil {
+		// After the reload, so Apache no longer writes to them.
+		err = m.forgetTraffic(a.Username)
+	}
 	return Result{Username: a.Username, Changed: changed, PHP: []string{}}, err
 }
 

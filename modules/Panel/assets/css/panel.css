@@ -375,3 +375,19 @@ textarea.input { height: auto; padding: 10px 12px; }
 .form-flex { display: flex; flex-wrap: wrap; gap: 0 16px; }
 .form-flex > .btn { margin-bottom: 1px; }
 .form-foot > .btn { margin-inline-start: auto; }
+
+/* PHP versions (Admin panel). */
+.php-default { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.php-default label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.php-default .input { width: auto; min-width: 120px; }
+.php-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px 16px; }
+.check.is-locked { color: var(--text-3); }
+.ic.ic-sm { width: 13px; height: 13px; }
+.php-foot { justify-content: space-between; align-items: center; flex-wrap: wrap; }
+.php-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-inline-start: auto; }
+.btn:disabled { opacity: .55; cursor: not-allowed; }
+.spinner { width: 16px; height: 16px; flex: none; margin-top: 2px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: lp-spin .8s linear infinite; }
+@keyframes lp-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
+.bw-stat { border-bottom: 1px solid var(--border); }

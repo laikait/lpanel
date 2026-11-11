@@ -7,5 +7,6 @@
   "max_running": 8,
   "homes_base": "/home",
   "quota": "on",
-  "web": "apache"
+  "web": "apache",
+  "panel_php": "83"
 }

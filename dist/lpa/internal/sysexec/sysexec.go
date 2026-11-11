@@ -27,6 +27,10 @@ var Tools = map[string]string{
 	// The web server: config tests, and reloads through systemd.
 	"httpd":     "/usr/sbin/httpd",
 	"systemctl": "/usr/bin/systemctl",
+	// PHP versions and extensions from Remi's repository. Package names are
+	// made by the agent from its own catalogue, never taken from the panel.
+	"dnf": "/usr/bin/dnf",
+	"rpm": "/usr/bin/rpm",
 }
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"

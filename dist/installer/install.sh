@@ -81,7 +81,7 @@ rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.n
 dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
     php83-php-pdo php83-php-mysqlnd php83-php-process php83-php-opcache php83-php-xml \
-    mariadb-server nginx httpd openssl policycoreutils-python-utils procps-ng iproute
+    mariadb-server nginx httpd openssl policycoreutils-python-utils procps-ng iproute logrotate
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -122,6 +122,8 @@ install -d -m 0750 -o root -g lpanel /etc/lpanel
 install -d -m 0750 -o lpanel -g lpanel /var/log/lpanel /var/lib/lpanel
 install -d -m 0700 -o nginx -g nginx /var/lib/lpanel/nginx
 install -d -m 0700 -o root -g root /etc/lpanel/tls
+# Accounts' Apache logs daily, the panel's own weekly (see the file).
+install -m 0644 "$BUNDLE/packaging/logrotate-lpanel" /etc/logrotate.d/lpanel
 note "lpanel user: uid $(id -u lpanel)"
 
 # ---------------------------------------------------------------------------
@@ -216,8 +218,8 @@ chmod 0750 /usr/local/sbin/lpanel
 LPA_QUOTA=on
 [ "$QUOTA_ON" -eq 1 ] || LPA_QUOTA=off
 $PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
-    $c["homes_base"] ??= "/home"; $c["quota"] = $argv[1]; $c["web"] ??= "apache";
-    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$LPA_QUOTA"
+    $c["homes_base"] ??= "/home"; $c["quota"] = $argv[1]; $c["web"] ??= "apache"; $c["panel_php"] = $argv[2];
+    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$LPA_QUOTA" "${PHP##*php}"
 note "disk quotas for accounts: $LPA_QUOTA"
 [ -f /etc/lpanel/authd.json ] || install -m 0644 "$BUNDLE/packaging/authd.json" /etc/lpanel/authd.json
 install -m 0644 "$BUNDLE/packaging/pam.d-lpanel.el" /etc/pam.d/lpanel

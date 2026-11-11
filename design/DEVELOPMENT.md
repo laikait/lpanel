@@ -144,7 +144,7 @@ dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
 dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (53 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
-tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 105 checks
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 123 checks
 KEEP=1 tests/e2e/install.sh  # the same, and leaves the container running to look inside
 ```
 
@@ -204,6 +204,11 @@ It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
 
 ## Gotchas
 
+- Headless Chrome on this machine will not make a window narrower than about
+  490px, so `--window-size=390,…` only crops a wider page and it looks cut
+  off. For a true phone-width screenshot, load the page in a
+  `<iframe style="width:390px">` and screenshot that.
+- Lang placeholders are `:name`, not `{name}`.
 - An empty PHP array encodes as `[]`, and the agent's Go decoder refuses `[]`
   for a map field (`error_pages`, `php_settings`). Cast such fields to
   `(object)`. Stored args you send again must be decoded as objects

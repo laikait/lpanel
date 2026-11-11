@@ -7,6 +7,7 @@
             {% else %}<span class="badge bad">{{ 'Web.state_failed'|local }}</span>{% endif %}
         {% endif %}
     </div>
+    {% include '@Web/bandwidth.twig' with {bw: bandwidth} %}
     {% if web and web.state == 'failed' %}
         <div class="card-body"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p><span class="mono">{{ web.error }}</span></p></div></div>
     {% endif %}

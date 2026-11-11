@@ -53,10 +53,14 @@ func (m *Manager) renderSites(a ApplyArgs, home string) ([]byte, string) {
 		b.WriteString("    Header always set X-LPanel-Revision \"@REVISION@\"\n")
 		fmt.Fprintf(&b, "    CustomLog \"%s/%s.access.log\" lpanel\n", m.LogDir, a.Username)
 		fmt.Fprintf(&b, "    ErrorLog \"%s/%s.error.log\"\n", m.LogDir, a.Username)
-		if a.Suspended {
+		if a.Suspended || a.Limited {
+			why := "This site is suspended."
+			if !a.Suspended {
+				why = "This site has used its bandwidth for this month."
+			}
 			b.WriteString("    RewriteEngine On\n")
 			b.WriteString("    RewriteRule ^ - [R=503,L]\n")
-			b.WriteString("    ErrorDocument 503 \"This site is suspended.\"\n")
+			fmt.Fprintf(&b, "    ErrorDocument 503 \"%s\"\n", why)
 			b.WriteString("</VirtualHost>\n")
 			continue
 		}

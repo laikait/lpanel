@@ -3,6 +3,7 @@
         <div><h2>{{ 'Web.your_sites'|local }}</h2><p>{{ 'Web.your_sites_lead'|local }}</p></div>
         <a class="btn btn-sm" href="{{ link }}">{{ 'Web.manage'|local }}</a>
     </div>
+    {% include '@Web/bandwidth.twig' with {bw: bandwidth} %}
     <ul class="list">
         {% for d in domains %}
             <li>

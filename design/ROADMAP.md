@@ -296,12 +296,40 @@ M2 is built in four parts.
   - `lpanel domains:show|redirect|unredirect|error-page|hotlink|protect|unprotect|protect-login`
     and `php:settings`.
 
-**M2c: PHP versions and bandwidth.**
-- Installing and removing PHP versions and extensions from the Admin panel.
-- Choosing the default version for new sites.
-- Bandwidth metering from the web server's logs (moved from M1c), counted
-  against each package's limit, with its over-limit action.
-- Rotating the accounts' Apache logs.
+**M2c: PHP versions and bandwidth. Built 2026-11-11.**
+- **PHP versions** (Admin panel → Server → PHP versions; capability
+  `server.php`, held by root and administrators, never resellers):
+  - install 7.4 to 8.5 from Remi with the usual extensions, add or remove
+    any of about twenty extensions, and remove a version no site uses;
+  - choose the version new sites get (`web_settings.default_php`; else the
+    newest installed);
+  - the version the panel runs on (`panel_php`) and the extensions it needs
+    stay; versions past end of life are marked and asked about.
+  - dnf takes minutes, so the agent runs these in the background. A job is
+    recorded with its operation id before it is sent (`php_jobs`);
+    `web:settle` and every look at the page ask again. One at a time.
+- **Bandwidth:**
+  - the agent counts bytes sent and received per account and day from the
+    access logs (`web.traffic`), by inode and offset, so log rotation
+    neither loses nor repeats any; the panel stores the running totals
+    (`web_traffic`) every 15 minutes (`web:traffic`);
+  - each package says what happens when the month's bandwidth is used:
+    `block` (the sites answer 503 and say why, until the month ends or the
+    limit is raised; the default) or `warn`;
+  - both panels show this month's use against the limit; raising a
+    package's limit, or moving the account, starts its sites at once.
+- **Log rotation:** `/etc/logrotate.d/lpanel` rotates accounts' Apache logs
+  daily (renamed, compressed a day later, 14 kept) and the panel's own
+  weekly.
+- **Where it shows:** the API (`/admin/api/v1/php…`,
+  `/admin/api/v1/accounts/{user}/bandwidth`) and `lpanel php:list|install|
+  remove|extensions|default`, `web:traffic`, `web:bandwidth`.
+- **Tests:** PHP 87; `tests/e2e/install.sh` 123 checks (installs PHP 8.4
+  from Remi, runs a site on it with and without an extension, removes it,
+  and compares the bytes counted with Apache's own log across a rotation);
+  agent e2e 37.
+- **Not yet:** a reseller's total bandwidth across their accounts, and
+  emailing an owner who goes over (M10 alerts).
 
 **M2d: the other two stacks.** Nginx only, and Nginx in front of Apache,
 chosen per server.

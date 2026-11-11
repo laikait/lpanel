@@ -38,6 +38,10 @@ return [
     'limit_mailboxes' => 'Mailboxes',
     'limit_databases' => 'Databases',
     'limit_ftp_accounts' => 'FTP accounts',
+    'bandwidth_action' => 'When the month\'s bandwidth is used up',
+    'bandwidth_action_block' => 'Stop the sites until next month',
+    'bandwidth_action_warn' => 'Keep the sites running and show a warning',
+    'error_bandwidth_action' => 'Choose what happens when the bandwidth is used up.',
 
     'feature_domains' => 'Domains',
     'feature_file_manager' => 'File manager',
