@@ -36,7 +36,11 @@ echo "== services"
 for unit in mariadb lpa lpanel-authd.socket lpanel-php-fpm lpanel-nginx lpanel-scheduler.timer; do
     check "$unit is active" systemctl is-active --quiet "$unit"
 done
-check "the stock nginx and php-fpm stay off" bash -c '! systemctl is-active --quiet nginx && ! systemctl is-active --quiet php83-php-fpm'
+check "the stock nginx stays off" bash -c '! systemctl is-active --quiet nginx'
+check "the panel's PHP is not among customers' pools" bash -c '! grep -rqs "lpanel/php-fpm.sock" /etc/opt/remi/php*/php-fpm.d/'
+check "Apache is running for customers' sites" systemctl is-active --quiet httpd
+check "Remi's sample pools are emptied" bash -c '! grep -qs "^\[www\]" /etc/opt/remi/php82/php-fpm.d/www.conf /etc/opt/remi/php83/php-fpm.d/www.conf'
+check "the agent is told to use Apache" grep -q '"web": "apache"' /etc/lpa/lpa.json
 check "scheduled tasks run" systemctl start lpanel-scheduler.service
 check "the agent is told quotas are on" grep -q '"quota": "on"' /etc/lpa/lpa.json
 check "root has the lpanel command" bash -c 'lpanel help | grep -q accounts:create'
@@ -176,12 +180,60 @@ check "lpanel accounts:terminate" t_terminate
 check "the scheduler finishes the removal" t_settled
 check "every change is in the audit log" t_audited
 
+echo "== websites"
+rm -f /home/shop1/public_html/f     # the quota check above filled it
+# A page that says which PHP runs it, and as which user.
+cat > /tmp/who.php <<'PHP'
+<?php echo PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION . ' as ' . posix_getpwuid(posix_geteuid())['name'];
+PHP
+cat > /tmp/peek.php <<'PHP'
+<?php var_dump(@file_get_contents('/home/shop1/public_html/index.php'));
+PHP
+put()  { install -o "$1" -g "$1" -m 0644 "$2" "$3"; }      # user, source, target
+site() { curl -s -o /tmp/site.out -w '%{http_code}' -H "Host: $1" http://127.0.0.1/; }
+says() { [ "$(site "$1")" = 200 ] && grep -q "$2" /tmp/site.out || { echo "$1: $(cat /tmp/site.out)"; return 1; }; }
+export -f put site says
+t_main()    { [ -f /etc/httpd/lpanel/sites/shop1.conf ] && put shop1 /tmp/who.php /home/shop1/public_html/index.php && says shop.example.test "8.3 as shop1"; }
+t_addon()   { lpanel domains:add shop1 other.example.test --php=8.2 && put shop1 /tmp/who.php /home/shop1/public_html/other.example.test/index.php && says other.example.test "8.2 as shop1"; }
+t_sub()     { lpanel domains:add shop1 blog.shop.example.test --type=sub && put shop1 /tmp/who.php /home/shop1/public_html/blog/index.php && says blog.shop.example.test "8.3 as shop1"; }
+t_alias()   { lpanel domains:add shop1 shop-alias.example.test --type=alias --target=shop.example.test && says shop-alias.example.test "8.3 as shop1" && says www.shop-alias.example.test "8.3 as shop1"; }
+t_list()    { lpanel domains:list shop1 | tee /dev/stderr | grep -Eq '^other\.example\.test +addon +public_html/other\.example\.test +8\.2'; }
+t_isolated() { put shop3 /tmp/peek.php /home/shop3/public_html/index.php && says three.example.test "bool(false)"; }
+t_suspend() { lpanel accounts:suspend shop3 && [ "$(site three.example.test)" = 503 ] && ! ls /etc/opt/remi/php*/php-fpm.d/lpanel-shop3.conf 2>/dev/null; }
+t_unsuspend() { lpanel accounts:unsuspend shop3 && says three.example.test "bool(false)"; }
+t_gone()    { [ ! -e /etc/httpd/lpanel/sites/shop2.conf ] && ! ls /etc/opt/remi/php*/php-fpm.d/lpanel-shop2.conf 2>/dev/null && [ "$(site two.example.test)" = 404 ]; }
+t_broken()  { echo "ThisIsNotADirective" > /etc/httpd/conf.d/zz-broken.conf
+              ! lpanel domains:add shop1 broken.example.test 2>&1 | tee /dev/stderr | grep -q added
+              local ok=$?; rm -f /etc/httpd/conf.d/zz-broken.conf
+              [ $ok = 0 ] && ! lpanel domains:list shop1 | grep -q broken && systemctl is-active --quiet httpd && says shop.example.test "8.3 as shop1"; }
+t_link()    { runuser -u shop1 -- ln -s /etc /home/shop1/public_html/evil
+              ! lpanel domains:add shop1 evil.example.test --docroot=public_html/evil/x && [ ! -e /etc/x ] && ! lpanel domains:list shop1 | grep -q evil; }
+t_page()    { signin_as 7444 /panel shop1 Owner-Pass-Word-1 >/dev/null && curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/domains | grep -q "blog.shop.example.test"; }
+t_domain_audit() { [ "$(mariadb -uroot -N lpanel -e "select count(*) from audit_log where action='domain.add' and outcome='ok'")" = 3 ]; }
+check "the main site runs PHP 8.3 as the account's own user" t_main
+check "www. answers too" says www.shop.example.test "8.3 as shop1"
+check "a name nobody serves is a 404, not someone's site" bash -c '[ "$(site nobody.example.test)" = 404 ]'
+check "lpanel domains:add: a website on PHP 8.2" t_addon
+check "a subdomain with its own folder" t_sub
+check "an alias shows its domain's site" t_alias
+check "PHP 8.2 and 8.3 run side by side" bash -c 'systemctl is-active --quiet php82-php-fpm && systemctl is-active --quiet php83-php-fpm'
+check "lpanel domains:list" t_list
+check "one account's PHP cannot read another's files" t_isolated
+check "a suspended account's sites say so and run no PHP" t_suspend
+check "unsuspending brings them back" t_unsuspend
+check "terminating took the account's site and pools away" t_gone
+check "a broken Apache config stops the change, and every site keeps running" t_broken
+check "a link planted in public_html is refused, not followed" t_link
+check "the owner's Domains page lists the sites" t_page
+check "the changes are in the audit log" t_domain_audit
+
 echo "== running the installer again"
 sum_before=$(sha256sum /usr/local/lpanel/.env /etc/lpanel/agent.key /etc/lpanel/tls/panel.crt)
 check "a second run finishes" bash -c '/bundle/install.sh --hostname e2e-panel.test > /tmp/install2.log 2>&1 || { tail -30 /tmp/install2.log; exit 1; }'
 check "and keeps every secret" bash -c "[ \"\$(sha256sum /usr/local/lpanel/.env /etc/lpanel/agent.key /etc/lpanel/tls/panel.crt)\" = '$sum_before' ]"
 check "root can still sign in" bash -c "rm -f $jar; [ \"\$(signin '$ROOT_PASSWORD')\" = '303 https://127.0.0.1:7443/admin' ]"
 check "and the accounts are still there" t_active
+check "and their sites are still served" says other.example.test "8.2 as shop1"
 
 if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     echo "== SELinux ($(getenforce))"

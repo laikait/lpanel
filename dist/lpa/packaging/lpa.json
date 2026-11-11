@@ -6,5 +6,6 @@
   "journal_days": 30,
   "max_running": 8,
   "homes_base": "/home",
-  "quota": "on"
+  "quota": "on",
+  "web": "apache"
 }

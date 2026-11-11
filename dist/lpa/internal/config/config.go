@@ -32,6 +32,9 @@ type Config struct {
 	// Quota is "on" (disk quotas are set and must work; ADR-0008) or "off"
 	// (containers and test machines only: the installer's --allow-no-quota).
 	Quota string `json:"quota"`
+	// Web is the web server the agent configures for accounts' sites:
+	// "apache", or "off" (no web operations).
+	Web string `json:"web"`
 }
 
 // Defaults are the values a fresh install uses.
@@ -45,6 +48,7 @@ func Defaults() Config {
 		MaxRunning:   8,
 		HomesBase:    "/home",
 		Quota:        "on",
+		Web:          "apache",
 	}
 }
 
@@ -81,6 +85,9 @@ func (c Config) validate() error {
 	}
 	if c.Quota != "on" && c.Quota != "off" {
 		return fmt.Errorf("quota must be \"on\" or \"off\", not %q", c.Quota)
+	}
+	if c.Web != "apache" && c.Web != "off" {
+		return fmt.Errorf("web must be \"apache\" or \"off\", not %q", c.Web)
 	}
 	if c.MaxRunning < 1 || c.JournalDays < 1 {
 		return errors.New("max_running and journal_days must be at least 1")

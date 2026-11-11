@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Accounts;
 
 use App\Engine\Auth\Identity;
+use App\Engine\Hook\HookEngine;
 use App\Engine\Http\Request;
 use App\Engine\Security\Secret;
 use App\Modules\Agent\AgentClient;
@@ -31,6 +32,10 @@ use App\Modules\Packages\Packages;
  *
  * One change at a time per account: a new one is refused while another is in
  * flight.
+ *
+ * When an operation is done, the accounts.changed hook (string $op, array
+ * $row) tells other modules, with the account's row as it now is (as it was,
+ * for account.terminate, whose row is gone).
  */
 final class Provisioner
 {
@@ -47,6 +52,7 @@ final class Provisioner
         private readonly AgentClient $agent,
         private readonly AuditLog $audit,
         private readonly AccountRules $rules,
+        private readonly HookEngine $hooks,
     ) {}
 
     /**
@@ -329,6 +335,8 @@ final class Provisioner
                 $this->accounts->delete($id);
                 break;
         }
+
+        $this->hooks->do('accounts.changed', $op, $this->accounts->byId($id) ?? $row);
 
         return Outcome::done($id);
     }

@@ -1,0 +1,144 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro limit(u) %}{{ u.used }} / {{ u.limit ? u.limit : '∞' }}{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Web.domains'|local }}</h1>
+        <p>{{ 'Web.lead'|local }}</p>
+    </div>
+</div>
+
+{% if web and web.state == 'failed' %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Web.last_failed'|local }}</strong><br><span class="mono">{{ web.error }}</span></p></div>
+{% elseif web and web.state == 'pending' %}
+    <div class="alert alert-info">{{ icon('clock') }}<p>{{ 'Web.pending_text'|local({since: web.changed_at|when}) }}</p></div>
+{% endif %}
+{% if account.status == 'suspended' %}
+    <div class="alert alert-warning">{{ icon('pause') }}<p>{{ 'Web.suspended_text'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-2 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('globe') }}</span>
+        <div><div class="stat-label">{{ 'Web.domains_used'|local }}</div><div class="stat-value">{{ _self.limit(usage.domains) }}</div><div class="stat-sub">{{ 'Web.domains_used_hint'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('link') }}</span>
+        <div><div class="stat-label">{{ 'Web.subdomains_used'|local }}</div><div class="stat-value">{{ _self.limit(usage.subdomains) }}</div></div>
+    </div>
+</div>
+
+<div class="grid grid-side">
+    <div class="card">
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Web.domain'|local }}</th>
+                <th class="hide-sm">{{ 'Web.folder'|local }}</th>
+                <th class="hide-sm">PHP</th>
+                <th style="text-align:end"><span class="sr-only">{{ 'Web.actions'|local }}</span></th>
+            </tr></thead>
+            <tbody>
+            {% for d in domains %}
+                <tr>
+                    <td>
+                        <div class="domain-name">
+                            <strong>{{ d.name }}</strong>
+                            <span class="badge {{ d.kind == 'main' ? 'accent' : 'plain' }}">{{ ('Web.kind_' ~ d.kind)|local }}</span>
+                            {% if d.wildcard %}<span class="badge plain mono">*.</span>{% endif %}
+                        </div>
+                        {% if d.kind == 'alias' %}
+                            <div class="domain-sub">{{ 'Web.points_to'|local({name: d.parent_name}) }}</div>
+                        {% else %}
+                            {# The folder and PHP columns are hidden at phone width; say them here instead. #}
+                            <div class="domain-sub show-sm"><span class="mono">{{ d.docroot }}</span> · PHP {{ d.php|slice(0,1) }}.{{ d.php|slice(1) }}</div>
+                        {% endif %}
+                    </td>
+                    <td class="hide-sm mono">{{ d.docroot ?: '—' }}</td>
+                    <td class="hide-sm">{{ d.php ? d.php|slice(0,1) ~ '.' ~ d.php|slice(1) : '—' }}</td>
+                    <td>
+                        <div style="display:flex; gap:6px; justify-content:flex-end">
+                            {% if d.kind != 'alias' %}
+                            <details style="position:relative">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Web.settings_for'|local({name: d.name}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Web.settings'|local }}</span></summary>
+                                <form method="post" action="{{ d.update_url }}" class="card popover-form">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <div class="field">
+                                        <label for="dr-{{ d.id }}">{{ 'Web.folder'|local }}</label>
+                                        <input class="input mono" id="dr-{{ d.id }}" name="docroot" value="{{ d.docroot }}" maxlength="255" autocapitalize="none" spellcheck="false" required>
+                                        <div class="hint">{{ 'Web.folder_hint'|local }}</div>
+                                    </div>
+                                    <div class="field">
+                                        <label for="php-{{ d.id }}">{{ 'Web.php_version'|local }}</label>
+                                        <select class="input" id="php-{{ d.id }}" name="php">
+                                            {% for v in php %}<option value="{{ v }}"{% if v == d.php %} selected{% endif %}>PHP {{ v|slice(0,1) }}.{{ v|slice(1) }}</option>{% endfor %}
+                                        </select>
+                                    </div>
+                                    {% if d.kind != 'sub' %}
+                                    <label class="check" style="margin-bottom:12px"><input type="checkbox" name="wildcard" value="1"{% if d.wildcard %} checked{% endif %}> {{ 'Web.wildcard'|local({name: d.name}) }}</label>
+                                    {% endif %}
+                                    <button class="btn btn-primary btn-sm" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button>
+                                </form>
+                            </details>
+                            {% endif %}
+                            {% if d.kind != 'main' %}
+                            <form class="inline-form" method="post" action="{{ d.delete_url }}" data-confirm="{{ 'Web.confirm_remove'|local({name: d.name}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Web.remove_name'|local({name: d.name}) }}">{{ icon('trash') }}</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    </div>
+
+    <form class="card" method="post" action="{{ action }}" data-show-from="kind">
+        <div class="card-head"><div><h2>{{ 'Web.add'|local }}</h2><p>{{ 'Web.add_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <span class="label">{{ 'Web.kind'|local }}</span>
+                <div class="segmented" role="radiogroup" aria-label="{{ 'Web.kind'|local }}">
+                    {% for k in ['addon', 'sub', 'alias'] %}
+                        <label><input type="radio" name="kind" value="{{ k }}"{% if old.kind|default('addon') == k %} checked{% endif %}>{{ ('Web.kind_' ~ k)|local }}</label>
+                    {% endfor %}
+                </div>
+                {% if errors.kind is defined %}<div class="error">{{ errors.kind|local }}</div>{% endif %}
+                <div class="hint" data-show-for="addon">{{ 'Web.kind_addon_hint'|local }}</div>
+                <div class="hint" data-show-for="sub">{{ 'Web.kind_sub_hint'|local({name: account.domain}) }}</div>
+                <div class="hint" data-show-for="alias">{{ 'Web.kind_alias_hint'|local }}</div>
+            </div>
+            <div class="field">
+                <label for="d-name">{{ 'Web.name'|local }}</label>
+                <input class="input mono{% if errors.name is defined %} is-invalid{% endif %}" id="d-name" name="name" maxlength="253" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.name|default('') }}" placeholder="example.com" required>
+                {% if errors.name is defined %}<div class="error">{{ errors.name|local }}</div>{% endif %}
+            </div>
+            <div class="field" data-show-for="alias">
+                <label for="d-target">{{ 'Web.target'|local }}</label>
+                <select class="input{% if errors.target is defined %} is-invalid{% endif %}" id="d-target" name="target">
+                    {% for s in sites %}<option value="{{ s.id }}"{% if old.target|default('') == s.id %} selected{% endif %}>{{ s.name }}</option>{% endfor %}
+                </select>
+                {% if errors.target is defined %}<div class="error">{{ errors.target|local }}</div>{% endif %}
+            </div>
+            <div class="field" data-show-for="addon sub">
+                <label for="d-docroot">{{ 'Web.folder'|local }} <span class="muted">({{ 'Web.optional'|local }})</span></label>
+                <input class="input mono{% if errors.docroot is defined %} is-invalid{% endif %}" id="d-docroot" name="docroot" maxlength="255" autocapitalize="none" spellcheck="false" value="{{ old.docroot|default('') }}" placeholder="public_html/…">
+                {% if errors.docroot is defined %}<div class="error">{{ errors.docroot|local }}</div>{% else %}<div class="hint">{{ 'Web.folder_default'|local }}</div>{% endif %}
+            </div>
+            <div class="field" data-show-for="addon sub">
+                <label for="d-php">{{ 'Web.php_version'|local }}</label>
+                <select class="input{% if errors.php is defined %} is-invalid{% endif %}" id="d-php" name="php">
+                    {% for v in php %}<option value="{{ v }}"{% if v == old.php|default(default_php) %} selected{% endif %}>PHP {{ v|slice(0,1) }}.{{ v|slice(1) }}</option>{% endfor %}
+                </select>
+                {% if errors.php is defined %}<div class="error">{{ errors.php|local }}</div>{% endif %}
+            </div>
+            <label class="check" data-show-for="addon"><input type="checkbox" name="wildcard" value="1"{% if old.wildcard|default(false) %} checked{% endif %}> {{ 'Web.wildcard_new'|local }}</label>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Web.add_button'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

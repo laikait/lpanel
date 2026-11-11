@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -23,6 +24,28 @@ var Tools = map[string]string{
 	"pkill":   "/usr/bin/pkill",
 	// Gives files the labels the SELinux policy says they should have.
 	"restorecon": "/usr/sbin/restorecon",
+	// The web server: config tests, and reloads through systemd.
+	"httpd":     "/usr/sbin/httpd",
+	"systemctl": "/usr/bin/systemctl",
+}
+
+// phpFPM is the one family of tools with a version in the name: "php-fpm83"
+// is Remi's PHP 8.3 FPM. The version is two digits, so the path cannot be
+// steered anywhere else.
+var phpFPM = regexp.MustCompile(`^php-fpm([5-8][0-9])$`)
+
+// PHPRoot is where Remi installs each PHP version (tests change it).
+var PHPRoot = "/opt/remi"
+
+// Path is the absolute path of an allowed tool.
+func Path(tool string) (string, bool) {
+	if p, ok := Tools[tool]; ok {
+		return p, true
+	}
+	if m := phpFPM.FindStringSubmatch(tool); m != nil {
+		return PHPRoot + "/php" + m[1] + "/root/usr/sbin/php-fpm", true
+	}
+	return "", false
 }
 
 // env is the whole environment a tool sees.
@@ -40,7 +63,7 @@ type Exec struct{}
 
 // Run implements Runner.
 func (Exec) Run(ctx context.Context, tool string, args ...string) (int, string, error) {
-	path, ok := Tools[tool]
+	path, ok := Path(tool)
 	if !ok {
 		return -1, "", fmt.Errorf("sysexec: %q is not an allowed tool", tool)
 	}

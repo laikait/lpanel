@@ -60,7 +60,7 @@ final class AccountRules
 
         if (\preg_match(self::DOMAIN, $domain) !== 1) {
             $errors['domain'] = 'Accounts.error_domain';
-        } elseif ($this->accounts->domainTaken($domain)) {
+        } elseif ($this->accounts->domainTaken($domain) || $this->filters->apply('accounts.domain_taken', false, $domain) === true) {
             $errors['domain'] = 'Accounts.error_domain_taken';
         }
 

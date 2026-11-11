@@ -27,6 +27,7 @@ docker exec "$name" mkdir -p /src
 docker cp "$HERE/lpanel.te" "$name:/src/"
 docker cp "$HERE/lpanel.fc" "$name:/src/"
 docker cp "$HERE/check-inside.sh" "$name:/src/"
+docker cp "$HERE/setup.sh" "$name:/src/"
 
 docker exec -w /src "$name" bash -euc '
 	dnf -y -q install selinux-policy-targeted selinux-policy-devel setools-console policycoreutils-python-utils >/dev/null

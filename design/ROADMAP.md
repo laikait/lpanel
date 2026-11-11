@@ -208,14 +208,70 @@ enforced by the kernel. Suspend and terminate work and appear in the audit
 log.
 
 ### M2: Web
-- Apache + PHP-FPM with one pool per account, and multi-PHP from Remi.
-- Bandwidth metering from the web server's logs (moved from M1c), counted
-  against each package's and reseller's bandwidth limit.
-- All domain types, redirects, error pages, directory privacy, hotlink
-  protection.
-- The staged config pipeline with rollback.
-- Then Nginx-only and the Nginx-proxy + Apache hybrid.
-- php.ini editor and extension manager.
+M2 is built in three parts.
+
+**M2a: Apache, PHP-FPM and domains. Built 2026-11-11.**
+- **Agent** (`internal/web`): `web.apply` takes an account's whole web state
+  (sites, aliases, folders, PHP versions, suspended). So a retry is always
+  safe, and the same state twice changes nothing.
+  - One Apache file per account, with a VirtualHost per site.
+  - One PHP-FPM pool per account for each PHP version its sites use, running
+    as the account's own user. Remi's 8.2 and 8.3 come installed.
+  - The staged pipeline:
+    1. test each pool (`php-fpm -t`) and the whole Apache tree with the
+       candidate (`httpd -t` with `Define LPANEL_SITES <copy>`), before
+       anything live changes;
+    2. swap the files in;
+    3. reload PHP, then Apache;
+    4. probe every site for its new revision header;
+    5. roll back if the probe fails.
+  - Also `web.remove`, run by `account.terminate` before the user goes, and
+    `web.info`.
+  - Document roots are `public_html` or folders under it, made without
+    following links.
+  - A suspended account's sites answer 503 and run no PHP.
+- **Panel** (`Web` module): domains of four kinds.
+  - **Main:** made with the account.
+  - **Website:** an addon domain with its own folder.
+  - **Subdomain:** under one of the account's domains.
+  - **Alias:** another name for a site.
+  - Every site also answers to `www.`, and optionally to `*.`. Names are
+    unique on the server, including against new accounts.
+  - Limits come from the package: `domains` (the main one included) and
+    `subdomains`.
+  - A new `domains` feature lets owners give sub-users the Domains page.
+    Packages made earlier get it through a migration.
+  - Every change records the account's whole state with a new operation id
+    before sending it. If the server refuses a change, it is undone in the
+    panel. If the agent cannot be reached, `web:settle` sends it later.
+  - Where it shows: the User panel's Domains page, a Websites card on the
+    Admin panel's account page, `/admin/api/v1/accounts/{user}/domains`, and
+    `lpanel domains:list|add|set|remove`, `web:info`, `web:settle` and
+    `web:sync`.
+- **Installer:** Apache, Remi PHP 8.2 and 8.3 for sites, ports 80 and 443
+  opened.
+- **SELinux:** `dist/selinux/setup.sh` holds every setting, and the
+  installer and the build check both run it.
+  - Accounts' `public_html`, `tmp` and `logs` are writable web content.
+  - The booleans customers' sites need are on.
+  - The build check now has 53 checks.
+- **Tests:**
+  - 69 PHP tests.
+  - Go tests for the pipeline, its refusals and the no-follow folder maker.
+  - `tests/e2e/install.sh`: 93 checks. On a real Apache, they cover PHP 8.3
+    and 8.2 side by side, each running as the account's own user, for every
+    domain kind. Also: one account's PHP cannot read another's files,
+    suspended sites answer 503, a broken Apache config elsewhere stops a
+    change while every site keeps serving, and a planted link is refused.
+
+**M2b: site features and bandwidth.** Redirects, custom error pages,
+directory privacy, hotlink protection. The php.ini editor and extension
+manager, and installing and removing PHP versions from the panel. Bandwidth
+metering from the web server's logs (moved from M1c), counted against each
+package's and reseller's limit.
+
+**M2c: the other two stacks.** Nginx only, and Nginx in front of Apache,
+chosen per server.
 
 **Exit:** each of the three web stacks serves a PHP site for every domain type.
 A deliberately broken config is rolled back automatically.

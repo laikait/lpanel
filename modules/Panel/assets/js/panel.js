@@ -97,3 +97,22 @@ document.querySelectorAll('[data-suggest-username]').forEach((domain) => {
         username.value = name.length >= 2 ? name : '';
     });
 });
+
+// Fields that apply to some choices only. A form names the field that
+// decides (data-show-from="kind"); an element inside it lists the values it
+// applies to (data-show-for="addon sub"). Hidden fields are disabled, so
+// they are not sent either.
+document.querySelectorAll('form[data-show-from]').forEach((form) => {
+    const name = form.getAttribute('data-show-from');
+    const apply = () => {
+        const chosen = form.querySelector(`[name="${name}"]:checked`) || form.querySelector(`select[name="${name}"]`);
+        const value = chosen ? chosen.value : '';
+        form.querySelectorAll('[data-show-for]').forEach((el) => {
+            const on = el.getAttribute('data-show-for').split(' ').includes(value);
+            el.hidden = !on;
+            el.querySelectorAll('input, select, textarea').forEach((input) => { input.disabled = !on; });
+        });
+    };
+    form.addEventListener('change', apply);
+    apply();
+});

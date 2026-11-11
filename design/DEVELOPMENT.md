@@ -35,7 +35,9 @@
 | User panel | `demo.dev` | `subuser-password-123` | sub-user of `demo` |
 
 `dev:seed-hosting` adds the owners `bakery`, `oldblog`, `agency` and `newsite`
-(password `<username>-password-123`) and gives `demo` an account.
+(password `<username>-password-123`) and gives `demo` an account. Run
+`php laika web:settle` afterwards to give each account its main domain. With
+no agent, the sites stay "waiting for the server", which is expected.
 `dev:seed`, `dev:seed-hosting` and the `dev` root verifier refuse to work
 unless `APP_ENV=local`.
 
@@ -52,6 +54,7 @@ unless `APP_ENV=local`.
 | `Accounts` | accounts, the `Provisioner` (every account change through the agent), `accounts:*`, `/admin/api/v1/accounts`, the dashboard cards |
 | `Resellers` | reseller allowance and ACL (enforced through filters), the resellers page, `resellers:*`, `/admin/api/v1/resellers` |
 | `Subusers` | the owner's Users page, sub-user grants, the gate on `feature.*` |
+| `Web` | domains, each account's sites on the server (`WebSync`, `web.apply`), the User panel's Domains page, `/admin/api/v1/accounts/{user}/domains`, `domains:*` and `web:*` |
 
 Who may do what is decided in layers:
 - Roles are listed in `Identity/module.php`.
@@ -60,8 +63,14 @@ Who may do what is decided in layers:
   login's own interface (Identity), a reseller's ACL (Resellers), and the
   package's features plus a sub-user's grants (Subusers).
 
-A screen for a hosting feature (from M2) protects its routes with
-`feature.<name>`.
+A screen for a hosting feature protects its routes with `feature.<name>`;
+the Domains page uses `feature.domains`.
+
+Another module's card can appear on the Admin panel's account page through
+the `accounts.show` filter (`list $cards, array $row, Identity $identity`),
+as `panel.dashboard` does for dashboards. When an account operation is done,
+the `accounts.changed` hook (`string $op, array $row`) runs; the Web module
+uses it to give a new account its site and to follow suspensions.
 
 "Log in as": `POST /admin/login-as/{login id}`. Into the User panel it hands
 over a ticket (`/panel/login-as?ticket=…`); `LoginAs::otherInterface()` swaps
@@ -133,9 +142,9 @@ packages in a fresh container.
 ```bash
 dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
-dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (38 checks)
+dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (53 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
-tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 72 checks
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 93 checks
 ```
 
 To poke at an installed panel by hand, start the same container and keep it:
@@ -195,7 +204,11 @@ It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
 ## Gotchas
 
 - `TemplateManager::render()` takes `@Module/name` without `.twig`. Twig's own
-  `{% extends %}` takes the full file name.
+  `{% extends %}` and `{% include %}` take the full file name. To render
+  another module's card by its `@Module/name`, use
+  `{{ view.render(card.template, card.data|merge({lp: lp}))|raw }}` as the
+  dashboard does. An `{% include %}` without `.twig` happened to work with
+  debug on and failed with it off.
 - Never pass a template variable named `view`: it is the framework's helper.
 - Route `defaults()` do not reach handler parameters that are not in the path.
   Derive the interface with `PanelPage::areaOf($request)`.

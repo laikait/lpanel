@@ -65,7 +65,7 @@ under `modules/`. The framework in `engine/` is not edited.
 | `Accounts` | accounts and their agent operations (the `Provisioner`), quotas, bandwidth |
 | `Resellers` | resellers: allowance, overselling, ACL; later nameservers and branding |
 | `Subusers` | sub-users and their grants; the gate on `feature.*` |
-| `Web` | domains, vhosts, PHP versions, redirects, error pages |
+| `Web` | domains (main, addon, sub, alias), each site's folder and PHP version, keeping Apache and PHP-FPM in step (`WebSync`); later redirects and error pages |
 | `Ssl` | AutoSSL, certificates |
 | `Databases` | MariaDB DBs/users, phpMyAdmin SSO |
 | `Dns` | PowerDNS zones and templates |
@@ -93,13 +93,20 @@ static binary, run by systemd as `lpa serve`, listening on `/run/lpa/lpa.sock`.
 Its README covers the wire format, the checks in order, the journal and the
 operation list.
 
-Each subsystem is a package under `internal/` (so far `sysinfo`, `accounts`
-and `quota`; later `web`, `php`, `mysql`, `dns`, `mail`, `ftp`, `backup`,
+Each subsystem is a package under `internal/` (so far `sysinfo`, `accounts`,
+`quota` and `web`; later `php`, `mysql`, `dns`, `mail`, `ftp`, `backup`,
 `firewall`), registered as operations in `internal/ops`. Each reads the system
 through paths it is given, so tests run against fixture files without root.
 Operations that need the system's own tools (`useradd`, `usermod`, `userdel`,
 `pkill`) run them through `internal/sysexec`: a fixed list of absolute paths,
 arguments as a list, never a shell, and a fixed minimal environment.
+
+Where a subsystem's state is small, the panel sends all of it at once
+instead of step by step. `web.apply` takes an account's whole web state, so
+applying it twice is harmless and a lost change is fixed by sending the
+current state again. `Web\WebSync` raises a revision for each change and
+records the state with its operation id before sending it, and `web:settle`
+resends what the agent has not answered.
 
 The panel never calls an operation that changes the system and forgets it.
 `Accounts\Provisioner` writes the operation, its arguments and a new id to the
@@ -140,6 +147,7 @@ whenever SELinux is on.
 | Process | Domain |
 |---|---|
 | the panel's nginx and PHP-FPM | `httpd_t` (their binaries are `httpd_exec_t`) |
+| customers' Apache and PHP-FPM pools | `httpd_t` too |
 | `lpa` | `lpanel_agent_t`, unconfined |
 | `lpanel-authd` | `lpanel_authd_t`, unconfined |
 | the scheduler and `lpanel` commands (php83 CLI) | `unconfined_service_t` / the caller's |
@@ -148,8 +156,20 @@ whenever SELinux is on.
 `lpanel_sock_t` sockets. That is the reason the two root programs have
 domains of their own: the panel can reach them without being allowed to
 reach every unconfined service. The module also labels the panel's paths
-(see the table below). The agent runs `restorecon` on each new home, so
-`public_html` becomes `httpd_user_content_t`.
+(see the table below).
+
+`dist/selinux/setup.sh` holds every setting, and the installer and the build
+check both run it:
+- the module;
+- the two panel ports;
+- accounts' `public_html`, `tmp` and `logs` as `httpd_user_rw_content_t`,
+  because sites write uploads and caches and PHP keeps sessions there;
+- the booleans sites need: `httpd_enable_homedirs`,
+  `httpd_can_network_connect`, `_connect_db` and `httpd_can_sendmail`.
+
+The agent runs `restorecon` on each new home and on each folder it makes for
+a site. Between accounts, isolation comes from each pool running as its own
+user, not from SELinux.
 
 ## Layout on an AlmaLinux 9 server
 
@@ -169,12 +189,20 @@ reach every unconfined service. The module also labels the panel's paths
 | `/var/lib/lpa/journal/` | agent journal |
 | `/run/lpa/lpa.sock`, `/run/lpanel-authd/authd.sock` | the two sockets, 0660 root:lpanel |
 | `/home/<user>/` | account homes (`public_html`, `mail`, `logs`, `tmp`, `.lpanel`) |
-| `/etc/httpd/conf.d/lpanel/` or `/etc/nginx/lpanel/` | generated vhosts for customers' sites (M2) |
-| `/etc/opt/remi/php<XY>/php-fpm.d/<user>.conf` | per-account pools, in each Remi PHP version's own pool folder (M2) |
+| `/etc/httpd/conf.d/lpanel.conf` | the agent's one addition to Apache: the log format, a 404 default site, and the include of the sites folder (through the `LPANEL_SITES` variable, so candidates can be tested whole) |
+| `/etc/httpd/lpanel/sites/<user>.conf` | each account's sites, a VirtualHost per site (labelled `httpd_config_t`) |
+| `/etc/opt/remi/php<XY>/php-fpm.d/lpanel-<user>.conf` | each account's pool for that PHP version, running as the account; Remi's sample `www.conf` is emptied |
+| `/var/opt/remi/php<XY>/run/php-fpm/lpanel-<user>.sock` | the pool's socket, usable only by Apache's group |
+| `/var/log/httpd/lpanel/<user>.access.log`, `.error.log` | each account's Apache logs, with bytes in and out for bandwidth |
+| `/home/<user>/public_html/` | every site's folder is this or one below it (0750, Apache's group, `httpd_user_rw_content_t`) |
+| `/home/<user>/tmp/`, `/home/<user>/logs/` | the account's PHP sessions and uploads, and its PHP error log |
 
 Services: `lpa`, `lpanel-authd.socket` (socket-activated), `lpanel-php-fpm`,
-`lpanel-nginx`, `lpanel-scheduler.timer` (every minute), and `mariadb`. The
-packages' own `nginx` and `php83-php-fpm` services stay off. The installer is
+`lpanel-nginx`, `lpanel-scheduler.timer` (every minute), and `mariadb`. For
+customers' sites: `httpd`, and `php<XY>-php-fpm` for each PHP version in use.
+The agent enables each of those when an account first uses it, and stops a
+version left with no pools. The stock `nginx` service stays off; the panel
+has its own. The installer is
 `dist/installer/install.sh`, run from a bundle made by
 `dist/installer/bundle.sh`.
 

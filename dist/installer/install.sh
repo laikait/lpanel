@@ -14,6 +14,7 @@ set -euo pipefail
 
 BUNDLE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 PANEL=/usr/local/lpanel
+HOMES=/home          # every account's home is made here (lpa.json "homes_base")
 PHP=/usr/bin/php83
 HOSTNAME_ARG=""
 ALLOW_NO_QUOTA=0
@@ -73,18 +74,43 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "Installing packages (EPEL, Remi's php83 for the panel, MariaDB, nginx)"
+step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites)"
 
 rpm -q epel-release >/dev/null 2>&1 || dnf -y -q install epel-release
 rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
 dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
     php83-php-pdo php83-php-mysqlnd php83-php-process php83-php-opcache php83-php-xml \
-    mariadb-server nginx openssl policycoreutils-python-utils procps-ng iproute
-note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1)"
+    mariadb-server nginx httpd openssl policycoreutils-python-utils procps-ng iproute
+note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
-# The packages' own services stay off: LPanel runs its own nginx and PHP-FPM.
-systemctl disable --now nginx php83-php-fpm >/dev/null 2>&1 || true
+# PHP for customers' sites: each version side by side, one PHP-FPM pool per
+# account in each (written by the agent). More versions come from the panel
+# later (M2b).
+CUSTOMER_PHP="82 83"
+pkgs=()
+for v in $CUSTOMER_PHP; do
+    for ext in fpm cli common mysqlnd gd intl mbstring opcache xml zip bcmath process; do
+        pkgs+=("php$v-php-$ext")
+    done
+done
+dnf -y -q install "${pkgs[@]}"
+for v in $CUSTOMER_PHP; do
+    # Remi's sample pool runs as apache; LPanel's pools run as each account.
+    # Emptied rather than removed, so a package update keeps it empty.
+    www="/etc/opt/remi/php$v/php-fpm.d/www.conf"
+    if [ -f "$www" ] && grep -q '^\[www\]' "$www"; then
+        printf '; Emptied by LPanel: every pool here is an account'"'"'s, written by the agent.\n' > "$www"
+    fi
+done
+note "PHP for sites: $(for v in $CUSTOMER_PHP; do printf '%s.%s ' "${v:0:1}" "${v:1}"; done)"
+
+# The stock nginx stays off: the panel runs its own (lpanel-nginx). Each PHP
+# version's FPM service is started by the agent once an account uses it, so
+# it is left alone here: stopping it would take customers' sites down.
+systemctl disable --now nginx >/dev/null 2>&1 || true
+# Apache serves customers' sites; the agent writes its sites and reloads it.
+systemctl enable -q --now httpd
 
 # ---------------------------------------------------------------------------
 step "Users and directories"
@@ -190,7 +216,7 @@ chmod 0750 /usr/local/sbin/lpanel
 LPA_QUOTA=on
 [ "$QUOTA_ON" -eq 1 ] || LPA_QUOTA=off
 $PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
-    $c["homes_base"] ??= "/home"; $c["quota"] = $argv[1];
+    $c["homes_base"] ??= "/home"; $c["quota"] = $argv[1]; $c["web"] ??= "apache";
     file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$LPA_QUOTA"
 note "disk quotas for accounts: $LPA_QUOTA"
 [ -f /etc/lpanel/authd.json ] || install -m 0644 "$BUNDLE/packaging/authd.json" /etc/lpanel/authd.json
@@ -228,19 +254,16 @@ done
 systemctl daemon-reload
 
 if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
-    # LPanel's policy module (dist/selinux): lpa and authd in their own
-    # domains, their sockets reachable by the panel's PHP-FPM (httpd_t), and
-    # the labels for every path the panel uses. Installed in permissive mode
-    # too, so switching to enforcing later needs nothing more.
-    semodule -i "$BUNDLE/packaging/lpanel.pp"
-    for port in 7443 7444; do
-        semanage port -a -t http_port_t -p tcp "$port" 2>/dev/null || semanage port -m -t http_port_t -p tcp "$port"
-    done
-    # Releases before the module labelled the code with local rules; the
-    # module's own rules replace them.
-    semanage fcontext -d "$PANEL(/.*)?" 2>/dev/null || true
-    semanage fcontext -d "$PANEL/system(/.*)?" 2>/dev/null || true
+    # LPanel's SELinux settings (dist/selinux/setup.sh): the policy module,
+    # the panel's ports, the labels of accounts' web content and the
+    # booleans customers' sites need. Installed in permissive mode too, so
+    # switching to enforcing later needs nothing more.
+    bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
     restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa
+    mkdir -p /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
+    for d in "$HOMES"/*/public_html "$HOMES"/*/tmp "$HOMES"/*/logs; do
+        if [ -d "$d" ]; then restorecon -R "$d"; fi
+    done
     for d in /run/lpa /run/lpanel /run/lpanel-nginx /run/lpanel-authd; do
         if [ -e "$d" ]; then restorecon -R "$d"; fi
     done
@@ -248,9 +271,9 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
 fi
 
 if systemctl is-active --quiet firewalld; then
-    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp
+    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-service=http --add-service=https
     firewall-cmd -q --reload
-    note "firewalld: 7443 and 7444 open"
+    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites) open"
 fi
 
 step "Database tables"

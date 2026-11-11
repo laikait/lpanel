@@ -2,12 +2,13 @@ package journal
 
 import (
 	"errors"
+	"os"
 	"testing"
 	"time"
 )
 
 func TestClaimIsExactlyOnce(t *testing.T) {
-	j, err := Open(t.TempDir())
+	j, err := Open(privateDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +30,7 @@ func TestClaimIsExactlyOnce(t *testing.T) {
 }
 
 func TestEntriesLeftRunningBecomeInterrupted(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateDir(t)
 	j, _ := Open(dir)
 	if _, err := j.Claim("cut-off-by-a-crash", "account.create", "aaa"); err != nil {
 		t.Fatal(err)
@@ -46,7 +47,7 @@ func TestEntriesLeftRunningBecomeInterrupted(t *testing.T) {
 }
 
 func TestPruneKeepsRunningAndRecentEntries(t *testing.T) {
-	j, _ := Open(t.TempDir())
+	j, _ := Open(privateDir(t))
 	now := time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 	j.Now = func() time.Time { return now.Add(-10 * 24 * time.Hour) }
 	old, _ := j.Claim("finished-long-ago", "x.y", "a")
@@ -65,4 +66,15 @@ func TestPruneKeepsRunningAndRecentEntries(t *testing.T) {
 			t.Errorf("%s was pruned", id)
 		}
 	}
+}
+
+// privateDir is a temporary folder with the mode the agent's journal folder
+// has. Open refuses a wider one, which a root test run would otherwise get.
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }

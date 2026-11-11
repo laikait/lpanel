@@ -66,6 +66,11 @@ limited by these:
 | T27 | A reseller selling more than their allowance, or acting outside their ACL | Allowance checked on every create, package move and package change, whoever acts; the ACL applied in the authorization filter, so pages, API and menus agree | `ResellersTest` (all) |
 | T28 | A sub-user using features they were not given | `feature.*` capabilities narrowed to the package and the sub-user's grants in the authorization filter; sub-users cannot manage users | `SubusersTest::test_an_owner_makes_a_sub_user_who_gets_only_what_was_granted`, `…grants_follow_the_package` |
 | T29 | Another service on the server (or a compromised one) talking to the agent or authd | Besides the file modes and SO_PEERCRED (T8), the SELinux module runs both in their own domains and lets only `httpd_t` connect to them, through sockets of their own type; `httpd_t` gets no other unconfined service and no generic run-time sockets | `dist/selinux/build.sh` checks "connect to the agent", "no other unconfined service", "no other generic run-time sockets"; on a VM, `tests/vm/run.sh` "nothing was denied during the whole run" |
+| T30 | An account taking over another account's domain, or its www. name | Names are unique on the server: a domain, an alias and every www. form are checked against every account, and new accounts against every site. www. is never a domain of its own | `WebTest::test_names_folders_and_limits_are_checked` |
+| T31 | A customer's symbolic link turning a document root into the agent making or chowning folders elsewhere | Document roots must be `public_html` or below. The agent walks from the home with `O_NOFOLLOW` directory descriptors, refuses any link on the way, and never takes over a folder someone else owns | Go `TestMakeDirsRefusesLinksAndSetsTheWebGroup`, e2e install "a link planted in public_html is refused, not followed" |
+| T32 | A bad site config, or a hand-edited one elsewhere, taking every site down | Each candidate is tested whole (`httpd -t`, `php-fpm -t`) before anything live changes. After a reload, every site must serve the new revision, or the old files go back. A refused change is undone in the panel too | Go `TestARejectedCandidateChangesNothingLive`, `TestAFailedProbePutsTheOldFilesBack`, e2e install "a broken Apache config stops the change, and every site keeps running" |
+| T33 | One account's PHP reading another's files or sessions | Each account's pool runs as its own user. `public_html` is 0750 with Apache's group, so only Apache and the owner may read it. Sessions and uploads go to the account's own `tmp/`. A pool's socket is usable only by Apache's group | e2e install "one account's PHP cannot read another's files" |
+| T34 | Site config injected through a domain name or folder (newlines, quotes, directives) | The panel and the agent both check names against a strict hostname rule and folders against plain names; the agent refuses anything else before rendering | Go `TestRefusals` ("a name with a newline", "a root with a quote") |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
 
 ## Known gaps
@@ -97,9 +102,19 @@ These are tracked, not forgotten. Each names the milestone that closes it.
   installer does not run it.
 - **Brute-force blocking stops at the panel.** A blocked address can still try
   SSH, FTP and mail. Closes in M9 (firewall-level blocking).
-- **Customer isolation is partial.** Homes are 0711 and `public_html` 0750,
-  and accounts have no login shell unless their package grants it. Per-user
-  PHP-FPM arrives in M2, `hidepid` and private `/tmp` in M9, and jailed SSH in
-  M7. Until M7 the `ssh` feature gives a plain bash shell.
+- **Customer isolation is partial.** Homes are 0711 and `public_html` 0750
+  with Apache's group, accounts have no login shell unless their package
+  grants it, and each account's PHP runs as its own user (M2a). `hidepid`
+  and private `/tmp` come in M9, and jailed SSH in M7. Until M7 the `ssh`
+  feature gives a plain bash shell.
+- **Customers' PHP has wide SELinux booleans.** `httpd_can_network_connect`,
+  `_connect_db` and `can_sendmail` are on, because ordinary sites call APIs,
+  remote databases and the mail server. SELinux therefore does not limit what
+  a customer's PHP may reach on the network; outbound limits come from the
+  firewall (M9) and mail limits (M6).
+- **Sites are plain HTTP until M3.** Certificates and HTTPS come with AutoSSL.
+- **Apache's per-account logs are not rotated yet.** They are written to
+  `/var/log/httpd/lpanel/`, which EL's logrotate rule does not cover. M2b
+  adds rotation together with bandwidth metering.
 - **Ubuntu and Debian are untested.** authd's Debian PAM file exists, but the
   installer refuses anything except AlmaLinux and Rocky 9 (v1.x).

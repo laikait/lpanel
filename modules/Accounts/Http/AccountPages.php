@@ -6,6 +6,7 @@ namespace App\Modules\Accounts\Http;
 
 use App\Engine\Auth\Authorizer;
 use App\Engine\Auth\Identity;
+use App\Engine\Filter\FilterEngine;
 use App\Engine\Http\HttpException;
 use App\Engine\Http\RedirectResponse;
 use App\Engine\Http\Request;
@@ -41,6 +42,7 @@ final class AccountPages
         private readonly Router $router,
         private readonly Authorizer $authorizer,
         private readonly LoginAs $loginAs,
+        private readonly FilterEngine $filters,
     ) {}
 
     public function index(Request $request, Session $session, Identity $identity): Response
@@ -142,6 +144,9 @@ final class AccountPages
             'limits' => Packages::LIMITS,
             'urls' => $actions + ['back' => $this->router->url('admin.accounts')],
             'min_password' => SecurityPage::MIN_PASSWORD,
+            // More cards from other modules (accounts.show: list $cards, array
+            // $row, Identity $identity), each {template, data}.
+            'cards' => $this->filters->apply('accounts.show', [], $row, $identity),
         ], title: (string) $row['username'], active: 'accounts');
     }
 

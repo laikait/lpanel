@@ -14,3 +14,6 @@
 /var/run/lpanel-nginx(/.*)?				gen_context(system_u:object_r:httpd_var_run_t,s0)
 /var/log/lpanel(/.*)?				gen_context(system_u:object_r:httpd_log_t,s0)
 /var/lib/lpanel(/.*)?				gen_context(system_u:object_r:httpd_var_lib_t,s0)
+
+# Accounts' Apache sites, written by the agent (internal/web).
+/etc/httpd/lpanel(/.*)?				gen_context(system_u:object_r:httpd_config_t,s0)

@@ -13,7 +13,8 @@ check() { # name, command...
     fi
 }
 
-semodule -n -i lpanel.pp || { echo "semodule could not load lpanel.pp"; exit 1; }
+# The same settings the installer makes, without a kernel to load them into.
+LPANEL_SELINUX_NO_RELOAD=1 bash setup.sh lpanel.pp || { echo "setup.sh failed"; exit 1; }
 P=$(ls /etc/selinux/targeted/policy/policy.* | tail -1)
 
 # Each helper takes a tool's whole output before looking at it: grep -q in a
@@ -50,7 +51,13 @@ check "nginx's pid file"                         label /run/lpanel-nginx/nginx.p
 check "the logs"                                 label /var/log/lpanel/nginx-error.log httpd_log_t
 check "nginx's temporary files"                  label /var/lib/lpanel/nginx/body httpd_var_lib_t
 check "the panel's PHP-FPM binary is httpd_exec_t" label /opt/remi/php83/root/usr/sbin/php-fpm httpd_exec_t
-check "public_html is web content for the account" label /home/shop1/public_html httpd_user_content_t
+check "an account's public_html is writable web content" label /home/shop1/public_html/wp-content/uploads/a.jpg httpd_user_rw_content_t
+check "its PHP sessions in tmp/ too"             label /home/shop1/tmp/sess_abc httpd_user_rw_content_t
+check "and its PHP error log"                    label /home/shop1/logs/php-error.log httpd_user_rw_content_t
+check "but not the rest of the home"             label /home/shop1/.ssh/authorized_keys ssh_home_t
+check "nor the home itself"                      label /home/shop1 user_home_dir_t
+check "the PHP-FPM sockets of accounts' pools"   label /var/opt/remi/php83/run/php-fpm/lpanel-shop1.sock httpd_var_run_t
+check "Apache's site files are its config"       label /etc/httpd/lpanel/sites/shop1.conf httpd_config_t
 
 echo "== the two root programs"
 check "systemd starts lpa in lpanel_agent_t"     trans init_t lpanel_agent_exec_t lpanel_agent_t
@@ -74,6 +81,18 @@ check "create and append its logs"               allowed -s httpd_t -t httpd_log
 check "nginx's temporary files"                  allowed -s httpd_t -t httpd_var_lib_t -c file -p create,write,unlink
 check "PHP-FPM makes its socket"                 allowed -s httpd_t -t httpd_var_run_t -c sock_file -p create
 check "nginx connects to PHP-FPM"                allowed -s httpd_t -t httpd_t -c unix_stream_socket -p connectto
+
+echo "== what accounts' sites (Apache and their PHP-FPM, also httpd_t) need"
+on_by_default() { local r; r=$(semanage boolean -l); grep -Eq "^$1 +\([a-z]+ *, *on\)" <<<"$r" || { grep -E "^$1 " <<<"$r"; return 1; }; }
+check "7443 and 7444 are web ports"              bash -c 'semanage port -l | grep -E "^http_port_t" | grep -q 7443'
+check "Apache may enter homes (httpd_enable_homedirs)" on_by_default httpd_enable_homedirs
+check "PHP may call other sites (httpd_can_network_connect)" on_by_default httpd_can_network_connect
+check "PHP may use databases over TCP"           on_by_default httpd_can_network_connect_db
+check "PHP may send mail"                        on_by_default httpd_can_sendmail
+check "PHP may write the account's web content"  allowed -s httpd_t -t httpd_user_rw_content_t -c file -p write -b httpd_builtin_scripting
+check "httpd_builtin_scripting is on"            on_by_default httpd_builtin_scripting
+check "Apache reads its site files"              allowed -s httpd_t -t httpd_config_t -c file -p read
+check "Apache connects to the pools"             allowed -s httpd_t -t httpd_t -c unix_stream_socket -p connectto
 
 echo "== what the panel (httpd_t) is not given"
 check "no other unconfined service"              refused -s httpd_t -t unconfined_service_t -c unix_stream_socket -p connectto

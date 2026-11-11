@@ -6,7 +6,8 @@ namespace App\Tests\Support;
 
 /**
  * The Linux side of hosting accounts, as the agent keeps it, for feature
- * tests: users with a shell, a quota and a suspended flag, and the agent's
+ * tests: users with a shell, a quota and a suspended flag, each account's
+ * web state as web.apply last set it, and the agent's
  * journal, so the same operation id gets the first outcome however often it
  * is asked (what makes retries safe).
  */
@@ -14,6 +15,12 @@ final class FakeServer
 {
     /** @var array<string, array{uid: int, shell: string, suspended: bool, quota: array<string, int>, used: int}> */
     public array $users = [];
+
+    /** @var array<string, array<string, mixed>> username => the web state last applied */
+    public array $sites = [];
+
+    /** @var list<string> the PHP versions installed */
+    public array $php = ['82', '83'];
 
     /** @var list<string> operations actually carried out, not answered from the journal */
     public array $executed = [];
@@ -36,11 +43,15 @@ final class FakeServer
     {
         $answers = [];
 
-        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate'] as $op) {
+        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
         $answers['account.info'] = fn(array $args): array => $this->read($args);
+        $answers['web.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'server' => 'apache', 'installed' => true, 'running' => true, 'accounts' => \count($this->sites),
+            'php' => \array_map(fn(string $v): array => ['version' => $v, 'pools' => 0, 'running' => true], $this->php),
+        ]];
         $answers['system.facts'] = FakeAgent::unavailable();
 
         return new FakeAgent($answers);
@@ -109,13 +120,34 @@ final class FakeServer
 
         if ($op === 'account.terminate') {
             $existed = isset($this->users[$name]);
-            unset($this->users[$name]);
+            // The agent removes the sites first (BeforeRemove).
+            unset($this->users[$name], $this->sites[$name]);
 
             return ['status' => 'done', 'result' => ['username' => $name, 'existed' => $existed]];
         }
 
+        if ($op === 'web.remove') {
+            $changed = isset($this->sites[$name]);
+            unset($this->sites[$name]);
+
+            return ['status' => 'done', 'result' => ['username' => $name, 'changed' => $changed, 'php' => []]];
+        }
+
         if (!isset($this->users[$name])) {
             return ['status' => 'failed', 'error' => ['code' => 'no_such_account', 'message' => 'there is no user named ' . $name]];
+        }
+
+        if ($op === 'web.apply') {
+            foreach ($args['sites'] as $site) {
+                if (!\in_array($site['php'], $this->php, true)) {
+                    return ['status' => 'failed', 'error' => ['code' => 'php_missing', 'message' => 'PHP ' . $site['php'] . ' is not installed']];
+                }
+            }
+
+            $changed = ($this->sites[$name] ?? null) !== $args;
+            $this->sites[$name] = $args;
+
+            return ['status' => 'done', 'result' => ['username' => $name, 'changed' => $changed, 'sites' => \count($args['sites'])]];
         }
 
         match ($op) {

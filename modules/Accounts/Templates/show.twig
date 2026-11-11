@@ -78,6 +78,10 @@
                 </dl>
             </div>
         </div>
+
+        {% for card in cards|default([]) %}
+            {{ view.render(card.template, card.data|default({})|merge({lp: lp}))|raw }}
+        {% endfor %}
     </div>
 
     <div class="stack">

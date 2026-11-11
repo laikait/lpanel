@@ -1,0 +1,29 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Web.websites'|local }}</h2><p>{{ 'Web.websites_lead'|local }}</p></div>
+        {% if web %}
+            {% if web.state == 'applied' %}<span class="badge ok">{{ 'Web.state_applied'|local }}</span>
+            {% elseif web.state == 'pending' %}<span class="badge warn">{{ 'Web.state_pending'|local }}</span>
+            {% else %}<span class="badge bad">{{ 'Web.state_failed'|local }}</span>{% endif %}
+        {% endif %}
+    </div>
+    {% if web and web.state == 'failed' %}
+        <div class="card-body"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p><span class="mono">{{ web.error }}</span></p></div></div>
+    {% endif %}
+    {% if domains is empty %}
+        <div class="card-body"><p class="muted">{{ 'Web.no_sites_yet'|local }}</p></div>
+    {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>{{ 'Web.domain'|local }}</th><th class="hide-sm">{{ 'Web.folder'|local }}</th><th>PHP</th></tr></thead>
+            <tbody>
+            {% for d in domains %}
+                <tr>
+                    <td><div class="domain-name"><strong>{{ d.name }}</strong><span class="badge {{ d.kind == 'main' ? 'accent' : 'plain' }}">{{ ('Web.kind_' ~ d.kind)|local }}</span>{% if d.wildcard %}<span class="badge plain mono">*.</span>{% endif %}</div></td>
+                    <td class="hide-sm mono">{{ d.docroot ?: '—' }}</td>
+                    <td>{{ d.php ? d.php|slice(0,1) ~ '.' ~ d.php|slice(1) : '—' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+</div>

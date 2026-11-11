@@ -63,6 +63,10 @@ type Manager struct {
 	// the policy's labels (public_html becomes web content), because a
 	// directory the agent makes itself would only inherit its parent's.
 	SELinux bool
+	// BeforeRemove runs before a terminated account's user is deleted, while
+	// it still exists: the web server's pools for it must go first, or
+	// PHP-FPM would refuse to reload with a pool for a missing user.
+	BeforeRemove func(ctx context.Context, username string) error
 }
 
 // Account is what the operations answer about an account.
@@ -129,6 +133,16 @@ func shellPath(shell string) (string, error) {
 		return "", badArgs("shell must be \"none\" or \"bash\", not %q", shell)
 	}
 	return path, nil
+}
+
+// Owner describes an account the agent made, for the other subsystems that
+// act for it (web, later mail and FTP); anything else is refused.
+func (m *Manager) Owner(name string) (uid, gid int, home string, err error) {
+	e, err := m.owned(name)
+	if err != nil {
+		return 0, 0, "", err
+	}
+	return e.UID, e.GID, m.home(name), nil
 }
 
 // owned finds an account the agent made, refusing anything else.
@@ -319,6 +333,11 @@ func (m *Manager) Terminate(ctx context.Context, a NameArgs) (TerminateResult, e
 	}
 	if err != nil {
 		return TerminateResult{}, err
+	}
+	if m.BeforeRemove != nil {
+		if err := m.BeforeRemove(ctx, a.Username); err != nil {
+			return TerminateResult{}, err
+		}
 	}
 	if err := m.killAll(ctx, a.Username); err != nil {
 		return TerminateResult{}, err

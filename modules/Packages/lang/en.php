@@ -39,6 +39,7 @@ return [
     'limit_databases' => 'Databases',
     'limit_ftp_accounts' => 'FTP accounts',
 
+    'feature_domains' => 'Domains',
     'feature_file_manager' => 'File manager',
     'feature_email' => 'Email',
     'feature_databases' => 'Databases',

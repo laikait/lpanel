@@ -330,3 +330,30 @@ textarea.input { height: auto; padding: 10px 12px; }
     .facts { grid-template-columns: 1fr; gap: 2px 0; }
     .facts dd { margin-bottom: 10px; }
 }
+
+/* Fields that apply to some choices only (panel.js, data-show-for). */
+[hidden] { display: none !important; }
+
+/* A choice of a few options shown side by side. */
+.segmented { display: flex; gap: 4px; padding: 4px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; }
+.segmented label { position: relative; flex: 1; text-align: center; padding: 7px 8px; border-radius: 7px; font-weight: 600; font-size: 13px; cursor: pointer; color: var(--text-2); margin: 0; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented label:has(input:checked) { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+.segmented label:has(input:focus-visible) { box-shadow: var(--ring); }
+
+/* A domain with what it is and where it points. */
+.domain-name { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.domain-name strong { overflow-wrap: anywhere; }
+.domain-sub { color: var(--text-3); font-size: 12.5px; margin-top: 2px; overflow-wrap: anywhere; }
+.popover-form { position: absolute; inset-inline-end: 0; top: 110%; z-index: 5; padding: 14px; width: min(300px, calc(100vw - 32px)); }
+
+/* Shown only at phone width, where .hide-sm columns are gone. */
+.show-sm { display: none; }
+@media (max-width: 560px) {
+    span.show-sm { display: inline; }
+    div.show-sm { display: block; }
+}
+
+/* A plain list of rows inside a card. */
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); min-width: 0; }

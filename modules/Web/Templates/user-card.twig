@@ -1,0 +1,16 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Web.your_sites'|local }}</h2><p>{{ 'Web.your_sites_lead'|local }}</p></div>
+        <a class="btn btn-sm" href="{{ link }}">{{ 'Web.manage'|local }}</a>
+    </div>
+    <ul class="list">
+        {% for d in domains %}
+            <li>
+                <div class="domain-name"><strong>{{ d.name }}</strong><span class="badge {{ d.kind == 'main' ? 'accent' : 'plain' }}">{{ ('Web.kind_' ~ d.kind)|local }}</span></div>
+                <span class="muted">{{ d.php ? 'PHP ' ~ d.php|slice(0,1) ~ '.' ~ d.php|slice(1) : '' }}</span>
+            </li>
+        {% else %}
+            <li class="muted">{{ 'Web.no_sites_yet'|local }}</li>
+        {% endfor %}
+    </ul>
+</div>

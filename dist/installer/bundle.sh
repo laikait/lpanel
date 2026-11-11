@@ -44,6 +44,7 @@ cp dist/lpa/packaging/lpa.service dist/lpa/packaging/lpa.json "$out/packaging/"
 cp dist/authd/packaging/authd.json dist/authd/packaging/lpanel-authd.service \
    dist/authd/packaging/lpanel-authd.socket dist/authd/packaging/pam.d-lpanel.el "$out/packaging/"
 install -m 0644 dist/selinux/bin/lpanel.pp "$out/packaging/lpanel.pp"
+install -m 0755 dist/selinux/setup.sh "$out/packaging/selinux-setup.sh"
 install -m 0755 dist/installer/install.sh "$out/install.sh"
 echo "$version" > "$out/VERSION"
 

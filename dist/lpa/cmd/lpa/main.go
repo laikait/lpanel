@@ -33,6 +33,7 @@ import (
 	"lpa/internal/server"
 	"lpa/internal/sysexec"
 	"lpa/internal/sysinfo"
+	"lpa/internal/web"
 )
 
 // version is set at build time: -ldflags "-X main.version=0.1.0".
@@ -77,10 +78,15 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Regis
 	}
 	reg := ops.NewRegistry()
 	ops.System(reg, sysinfo.New(), version, started)
-	ops.Accounts(reg, &accounts.Manager{
+	acc := &accounts.Manager{
 		HomesBase: cfg.HomesBase, Files: accounts.SystemFiles, Run: sysexec.Exec{}, Quota: quotas, Log: log,
 		SELinux: selinuxOn(),
-	})
+	}
+	sites := &web.Manager{Server: cfg.Web, Run: sysexec.Exec{}, Log: log, Owner: acc.Owner, SELinux: acc.SELinux}
+	sites.Defaults()
+	acc.BeforeRemove = sites.RemoveFor
+	ops.Accounts(reg, acc)
+	ops.Web(reg, sites)
 	return reg
 }
 

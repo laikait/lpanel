@@ -62,7 +62,8 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `internal/fsutil` | atomic writes |
 | `internal/accounts` | hosting accounts: users, homes, suspension; only users it made itself |
 | `internal/quota` | kernel user quotas through `quotactl(2)` (ext4 and XFS) |
-| `internal/sysexec` | runs `useradd`, `usermod`, `userdel`, `pkill` by absolute path, no shell, fixed environment |
+| `internal/web` | accounts' sites: an Apache file and PHP-FPM pools per account, through the staged pipeline below |
+| `internal/sysexec` | runs `useradd`, `usermod`, `userdel`, `pkill`, `restorecon`, `httpd`, `systemctl` and Remi's `php-fpm` by absolute path, no shell, fixed environment |
 | `packaging/` | the systemd unit and the default configuration |
 
 ## Operations
@@ -77,6 +78,9 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `account.unsuspend` | change | `{username}`: removes the expiry |
 | `account.terminate` | change, background | `{username}`: ends processes, removes the user, group, home (never following links) and mail spool. A name with no user is already gone |
 | `account.info` | read-only | `{usernames?}`: LPanel accounts with their disk use and limits |
+| `web.apply` | change | `{username, suspended, sites: [{name, aliases, docroot, php}], pool: {max_children}}`: the account's whole web state. Applying the same state again changes nothing |
+| `web.remove` | change | `{username}`: its Apache file and pools. Also run by `account.terminate` before the user goes |
+| `web.info` | read-only | the web server, whether it runs, and each PHP version installed with its pools |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -86,7 +90,39 @@ The account operations refuse (`not_ours`) any user without the comment
 
 `lpa.json` adds `homes_base` (default `/home`) and `quota`: `"on"`, or `"off"`
 on a machine without quotas, which the installer writes only with
-`--allow-no-quota`.
+`--allow-no-quota`. `web` is `"apache"` (the default) or `"off"`.
+
+### Sites (`web.apply`)
+
+Each account has one Apache file, `/etc/httpd/lpanel/sites/<user>.conf`,
+with a VirtualHost per site, and one PHP-FPM pool per PHP version its sites
+use, `/etc/opt/remi/php<XY>/php-fpm.d/lpanel-<user>.conf`. A pool runs as the
+account's own user, and only Apache's group may use its socket. A suspended
+account's sites answer 503 and it runs no PHP at all.
+
+A change goes through these steps:
+
+1. **Test** every candidate before anything live changes. Each new pool is
+   checked with `php-fpm -t`. Apache is checked with `httpd -t` over a copy of
+   the sites folder holding the candidate, chosen through
+   `-C "Define LPANEL_SITES <copy>"`; `/etc/httpd/conf.d/lpanel.conf` includes
+   whatever that variable names.
+2. **Swap** the files in, keeping the old ones in memory.
+3. **Reload** each PHP version involved, then Apache. A version left with no
+   pools is stopped, because PHP-FPM will not run without one.
+4. **Probe.** Every site must answer on 127.0.0.1:80 with the new revision
+   in its `X-LPanel-Revision` header, and every pool's socket must exist.
+5. **Roll back** if the probe fails: the old files go back and the services
+   are reloaded again.
+
+Error codes: `config_rejected` (the test failed; nothing live changed),
+`probe_failed` (the change was undone), `php_missing`, `docroot` (a link or
+someone else's folder on the way) and `web_off`.
+
+Document roots are `public_html` or folders under it. The agent makes them
+by walking from the home with `O_NOFOLLOW` directory descriptors, so a link
+planted by the customer is refused rather than followed. With SELinux on,
+the folders it makes are relabelled.
 
 ## Build and test
 
