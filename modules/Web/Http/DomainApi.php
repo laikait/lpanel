@@ -76,7 +76,7 @@ final class DomainApi
         $row = $this->domain($account, $domain);
         $input = [];
 
-        foreach (['docroot', 'php', 'wildcard'] as $field) {
+        foreach (['docroot', 'php', 'wildcard', 'canonical'] as $field) {
             if ($request->input($field) !== null) {
                 $input[$field] = $field === 'wildcard' ? $request->input($field) === true : (string) $request->input($field);
             }

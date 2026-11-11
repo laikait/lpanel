@@ -357,3 +357,21 @@ textarea.input { height: auto; padding: 10px 12px; }
 /* A plain list of rows inside a card. */
 .list { list-style: none; margin: 0; padding: 0; }
 .list li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); min-width: 0; }
+
+/* A form's last line: a hint on one side, its button on the other. */
+.form-foot { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+/* A name that opens its own page, in a list. */
+.domain-link { color: inherit; text-decoration: none; }
+.domain-link:hover strong { color: var(--accent-text); text-decoration: underline; }
+
+/* A removable chip: the button sits inside the badge. */
+.chip-form { display: inline-flex; }
+.chip-x { display: inline-grid; place-items: center; margin-inline-start: 2px; padding: 0; width: 18px; height: 18px; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; opacity: .6; }
+.chip-x:hover, .chip-x:focus-visible { opacity: 1; background: var(--surface-2); }
+.chip-x .ic { width: 12px; height: 12px; }
+
+/* Fields side by side that wrap as the width runs out (widths from flex). */
+.form-flex { display: flex; flex-wrap: wrap; gap: 0 16px; }
+.form-flex > .btn { margin-bottom: 1px; }
+.form-foot > .btn { margin-inline-start: auto; }

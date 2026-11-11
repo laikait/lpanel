@@ -45,6 +45,22 @@ final class FakeAgent implements Transport
             return \json_encode(['v' => 1, 'id' => $request['id'], 'status' => 'refused', 'error' => ['code' => 'bad_signature', 'message' => 'not signed by the panel']], \JSON_THROW_ON_ERROR);
         }
 
+        // As the agent's JSON decoder sees the line: Go map fields must be {}, never [].
+        if ($request['op'] === 'web.apply') {
+            $wire = \json_decode($m[1] ?? 'null', false);
+            $maps = [$wire->php_settings ?? null];
+
+            foreach ($wire->sites ?? [] as $site) {
+                $maps[] = $site->error_pages ?? null;
+            }
+
+            foreach ($maps as $map) {
+                if ($map !== null && !\is_object($map)) {
+                    return \json_encode(['v' => 1, 'id' => $request['id'], 'status' => 'refused', 'error' => ['code' => 'bad_args', 'message' => 'json: cannot unmarshal array into a map']], \JSON_THROW_ON_ERROR);
+                }
+            }
+        }
+
         $answer = $this->answers[$request['op']] ?? null;
 
         if ($answer instanceof \Throwable) {

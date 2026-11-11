@@ -144,7 +144,8 @@ dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
 dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (53 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
-tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 93 checks
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 105 checks
+KEEP=1 tests/e2e/install.sh  # the same, and leaves the container running to look inside
 ```
 
 To poke at an installed panel by hand, start the same container and keep it:
@@ -203,6 +204,17 @@ It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
 
 ## Gotchas
 
+- An empty PHP array encodes as `[]`, and the agent's Go decoder refuses `[]`
+  for a map field (`error_pages`, `php_settings`). Cast such fields to
+  `(object)`. Stored args you send again must be decoded as objects
+  (`json_decode($json, false)`), never `true`, or `{}` comes back as `[]`.
+  `FakeAgent` checks the `web.apply` map fields on the raw line, so a feature
+  test catches this. Add any new map field there too.
+- The agent runs with `UMask=0077`, so any folder it makes with `MkdirAll` is
+  0700 unless it sets the mode itself. Apache's parent process reads configs as
+  root, but its workers open files at request time as `apache` (htpasswd
+  logins), so every folder on that path must be reachable by `apache`. The
+  symptom is a 500 where a 401 was expected.
 - `TemplateManager::render()` takes `@Module/name` without `.twig`. Twig's own
   `{% extends %}` and `{% include %}` take the full file name. To render
   another module's card by its `@Module/name`, use
@@ -227,5 +239,10 @@ It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
 - `SessionUsers` decorates the user provider: the framework calls `byId()`
   once per request for the session's login, which is where session epochs and
   `impersonator` are applied. Code that needs the plain row uses `PanelUsers`.
+- Git Bash rewrites arguments that look like paths (`/old` becomes
+  `C:/Program Files/Git/old`) before passing them to Windows programs such
+  as `curl.exe`. With `MSYS_NO_PATHCONV=1` that stops, but then a curl cookie
+  jar must be a Windows path (`C:/…/jar.txt`), or curl cannot save it and
+  every form fails its CSRF check.
 - Headless Chrome cannot render a 390 px viewport directly. To check phone
   width, load the page inside a 390 px iframe.

@@ -67,6 +67,8 @@ func setup(t *testing.T) (*Manager, *fakeRun, *probeLog, string) {
 	m := &Manager{
 		Include:  filepath.Join(root, "httpd", "conf.d", "lpanel.conf"),
 		Sites:    filepath.Join(root, "httpd", "lpanel", "sites"),
+		Htpasswd: filepath.Join(root, "httpd", "lpanel", "htpasswd"),
+		Chown:    func(string, int, int) error { return nil },
 		LogDir:   filepath.Join(root, "log"),
 		PHPRoot:  filepath.Join(root, "opt"),
 		PHPConf:  filepath.Join(root, "etc-opt"),

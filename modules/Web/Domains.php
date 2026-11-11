@@ -34,7 +34,11 @@ final class Domains
 
     private const PART = '/^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/';
 
-    public function __construct(private readonly ConnectionManager $connections) {}
+    public function __construct(
+        private readonly ConnectionManager $connections,
+        private readonly SiteFeatures $features,
+        private readonly PhpSettings $php,
+    ) {}
 
     /** @return list<array<string, mixed>> an account's domains: main first, then by name */
     public function forAccount(int $accountId): array
@@ -218,6 +222,16 @@ final class Domains
             $clean['wildcard'] = $input['wildcard'] === true;
         }
 
+        if (\array_key_exists('canonical', $input) && $input['canonical'] !== null) {
+            $canonical = (string) $input['canonical'];
+
+            if (!\in_array($canonical, SiteFeatures::CANONICAL, true) || ($canonical === 'www' && $domain['kind'] === self::SUB)) {
+                $errors['canonical'] = 'Web.error_canonical';
+            } else {
+                $clean['canonical'] = $canonical === '' ? null : $canonical;
+            }
+        }
+
         return [$clean, $errors];
     }
 
@@ -238,11 +252,11 @@ final class Domains
         ], 'id');
     }
 
-    /** @param array<string, mixed> $changes */
+    /** @param array<string, mixed> $changes decoded values (error_pages and hotlink as arrays) */
     public function update(int $id, array $changes): void
     {
         if ($changes !== []) {
-            $this->table()->where('id', $id)->update($changes);
+            $this->table()->where('id', $id)->update(self::encode($changes));
         }
     }
 
@@ -264,6 +278,7 @@ final class Domains
         return null;
     }
 
+    /** Remove a domain row; its redirects and protected folders stay for undo(). */
     public function delete(int $id): void
     {
         $this->table()->where('id', $id)->delete();
@@ -271,7 +286,25 @@ final class Domains
 
     public function deleteAccount(int $accountId): void
     {
+        foreach ($this->forAccount($accountId) as $domain) {
+            $this->features->forgetDomain((int) $domain['id']);
+        }
+
         $this->table()->where('account_id', $accountId)->delete();
+        $this->php->forget($accountId);
+    }
+
+    /**
+     * Put a removed row back as it was, id and all (when the server refused
+     * the removal).
+     *
+     * @param array<string, mixed> $row as find() returned it
+     */
+    public function restore(array $row): void
+    {
+        $row = self::encode($row);
+        unset($row['parent_name'], $row['update_url'], $row['delete_url']);
+        $this->table()->insert($row);
     }
 
     /**
@@ -311,7 +344,7 @@ final class Domains
                 'aliases' => \array_merge($names, $aliases[(int) $row['id']] ?? []),
                 'docroot' => (string) $row['docroot'],
                 'php' => (string) $row['php'],
-            ];
+            ] + $this->features->stateOf($row);
         }
 
         return [
@@ -319,6 +352,7 @@ final class Domains
             'suspended' => $account['status'] === Accounts::SUSPENDED,
             'sites' => $sites,
             'pool' => ['max_children' => 5],
+            'php_settings' => (object) $this->php->all((int) $account['id']),
         ];
     }
 
@@ -402,6 +436,29 @@ final class Domains
         $row['account_id'] = (int) $row['account_id'];
         $row['parent_id'] = $row['parent_id'] === null ? null : (int) $row['parent_id'];
         $row['wildcard'] = (bool) $row['wildcard'];
+        $row['canonical'] = $row['canonical'] ?? null;
+        $pages = \json_decode((string) ($row['error_pages'] ?? ''), true);
+        $row['error_pages'] = \is_array($pages) ? $pages : [];
+        $hotlink = \json_decode((string) ($row['hotlink'] ?? ''), true);
+        $row['hotlink'] = \is_array($hotlink) ? $hotlink : null;
+
+        return $row;
+    }
+
+    /**
+     * @param array<string, mixed> $row decoded
+     *
+     * @return array<string, mixed> as stored
+     */
+    public static function encode(array $row): array
+    {
+        if (\array_key_exists('error_pages', $row)) {
+            $row['error_pages'] = $row['error_pages'] === [] || $row['error_pages'] === null ? null : \json_encode($row['error_pages'], \JSON_THROW_ON_ERROR);
+        }
+
+        if (\array_key_exists('hotlink', $row)) {
+            $row['hotlink'] = $row['hotlink'] === null ? null : \json_encode($row['hotlink'], \JSON_THROW_ON_ERROR);
+        }
 
         return $row;
     }

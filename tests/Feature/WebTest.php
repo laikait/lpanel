@@ -40,7 +40,9 @@ final class WebTest extends TestCase
 
         self::assertNotNull($site, 'the account was given its site');
         self::assertFalse($site['suspended']);
-        self::assertSame([['name' => 'shop.example.com', 'aliases' => ['www.shop.example.com'], 'docroot' => 'public_html', 'php' => '83']], $site['sites']);
+        self::assertCount(1, $site['sites']);
+        self::assertSame(['name' => 'shop.example.com', 'aliases' => ['www.shop.example.com'], 'docroot' => 'public_html', 'php' => '83'], \array_intersect_key($site['sites'][0], ['name' => 1, 'aliases' => 1, 'docroot' => 1, 'php' => 1]));
+        self::assertSame(['', [], [], [], null], [$site['sites'][0]['canonical'], $site['sites'][0]['redirects'], (array) $site['sites'][0]['error_pages'], $site['sites'][0]['protected'], $site['sites'][0]['hotlink']], 'no features yet');
         self::assertSame(WebSync::APPLIED, $this->web('shop')['state']);
     }
 

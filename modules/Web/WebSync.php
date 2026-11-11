@@ -185,10 +185,12 @@ final class WebSync
     /** @param array<string, mixed> $row */
     private function send(array $row): WebOutcome
     {
-        $args = \json_decode((string) $row['op_args'], true);
+        // Decoded as objects so an empty map (error_pages, php settings) stays
+        // {} on the wire; as an array it would become [] and the agent refuses it.
+        $args = \json_decode((string) $row['op_args'], false);
 
         try {
-            $reply = $this->agent->call('web.apply', \is_array($args) ? $args : [], id: (string) $row['op_id'], timeout: 150.0);
+            $reply = $this->agent->call('web.apply', \is_object($args) ? (array) $args : [], id: (string) $row['op_id'], timeout: 150.0);
         } catch (AgentUnavailable $e) {
             return WebOutcome::pending($e->getMessage());
         }

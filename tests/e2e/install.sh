@@ -4,7 +4,7 @@
 # the real root password through real PAM, and see live data from the agent.
 #
 #   dist/lpa/build.sh && dist/authd/test/run.sh && dist/installer/bundle.sh
-#   tests/e2e/install.sh
+#   tests/e2e/install.sh          (KEEP=1 keeps the container for a look inside)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 if ! command -v docker >/dev/null 2>&1; then
@@ -20,7 +20,8 @@ bundle=$(ls -d dist/build/lpanel-*/ 2>/dev/null | head -1)
 name=lpanel-install-e2e-$$
 docker run -d --name "$name" --hostname e2e-panel.test --privileged --cgroupns=host \
     -v /sys/fs/cgroup:/sys/fs/cgroup:rw almalinux/9-init >/dev/null
-trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
+# KEEP=1 leaves the container running afterwards, to look around in it.
+[ "${KEEP:-}" = 1 ] && echo "container: $name" || trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
 for _ in $(seq 30); do docker exec "$name" systemctl is-system-running >/dev/null 2>&1 && break; sleep 1; done
 
 docker exec "$name" mkdir -p /bundle /e2e

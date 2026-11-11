@@ -94,7 +94,7 @@ final class WebCommands
         return $this->report($output, $outcome, $domain . ' added to ' . $username . '.');
     }
 
-    public function set(Output $output, string $username, string $domain, ?string $docroot = null, ?string $php = null, ?string $wildcard = null): int
+    public function set(Output $output, string $username, string $domain, ?string $docroot = null, ?string $php = null, ?string $wildcard = null, ?string $canonical = null): int
     {
         $account = $this->account($output, $username);
         $row = $account === null ? null : $this->domains->findByName((int) $account['id'], $domain);
@@ -109,6 +109,7 @@ final class WebCommands
             'docroot' => $docroot,
             'php' => $php === null ? null : \str_replace('.', '', $php),
             'wildcard' => $wildcard === null ? null : \in_array($wildcard, ['1', 'yes', 'on', 'true'], true),
+            'canonical' => $canonical === null ? null : ($canonical === 'either' ? '' : $canonical),
         ]);
 
         if ($outcome === null) {

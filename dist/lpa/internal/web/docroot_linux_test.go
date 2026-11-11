@@ -61,3 +61,22 @@ func TestMakeDirsRefusesLinksAndSetsTheWebGroup(t *testing.T) {
 		}
 	}
 }
+
+// Under the agent's 077 umask, the logins' folder and its parent must still
+// be reachable by the web server's workers.
+func TestPrivateDirParentIsReachableUnderTheAgentsUmask(t *testing.T) {
+	old := syscall.Umask(0o077)
+	defer syscall.Umask(old)
+	m := &Manager{Chown: func(string, int, int) error { return nil }}
+	dir := filepath.Join(t.TempDir(), "lpanel", "htpasswd")
+
+	if err := m.privateDir(dir, os.Getgid()); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(filepath.Dir(dir)); err != nil || st.Mode().Perm() != 0o755 {
+		t.Fatalf("parent: %v %v", st, err)
+	}
+	if st, err := os.Stat(dir); err != nil || st.Mode().Perm() != 0o750 {
+		t.Fatalf("logins: %v %v", st, err)
+	}
+}

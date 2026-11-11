@@ -78,7 +78,7 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `account.unsuspend` | change | `{username}`: removes the expiry |
 | `account.terminate` | change, background | `{username}`: ends processes, removes the user, group, home (never following links) and mail spool. A name with no user is already gone |
 | `account.info` | read-only | `{usernames?}`: LPanel accounts with their disk use and limits |
-| `web.apply` | change | `{username, suspended, sites: [{name, aliases, docroot, php}], pool: {max_children}}`: the account's whole web state. Applying the same state again changes nothing |
+| `web.apply` | change | `{username, suspended, sites: [{name, aliases, docroot, php, canonical, redirects, error_pages, protected, hotlink}], pool: {max_children}, php_settings: {"83": {directive: value}}}`: the account's whole web state. Applying the same state again changes nothing |
 | `web.remove` | change | `{username}`: its Apache file and pools. Also run by `account.terminate` before the user goes |
 | `web.info` | read-only | the web server, whether it runs, and each PHP version installed with its pools |
 | `op.status` | built in | the journalled outcome of an earlier request |
@@ -118,6 +118,16 @@ A change goes through these steps:
 Error codes: `config_rejected` (the test failed; nothing live changed),
 `probe_failed` (the change was undone), `php_missing`, `docroot` (a link or
 someone else's folder on the way) and `web_off`.
+
+A site's features are written into its VirtualHost: redirects (mod_alias
+`Redirect`, longest path first), the www. choice and hotlink protection
+(mod_rewrite), `ErrorDocument`s, and protected folders. The protected
+sections come after the site's own `<Directory>`, so its
+`Require all granted` cannot undo them. Their logins go to
+`/etc/httpd/lpanel/htpasswd/` (0640 root:apache, bcrypt hashes only); a
+change of logins alone reloads nothing. php.ini settings go into the pool of
+their version, as `php_value` or `php_flag`. `features.go` holds the rule
+each value must match.
 
 Document roots are `public_html` or folders under it. The agent makes them
 by walking from the home with `O_NOFOLLOW` directory descriptors, so a link

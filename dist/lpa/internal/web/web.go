@@ -60,6 +60,13 @@ type Site struct {
 	Aliases []string `json:"aliases"`
 	Docroot string   `json:"docroot"`
 	PHP     string   `json:"php"`
+	// Canonical sends visitors to the www. name ("www") or away from it
+	// ("bare"); "" leaves both.
+	Canonical  string            `json:"canonical"`
+	Redirects  []Redirect        `json:"redirects"`
+	ErrorPages map[string]string `json:"error_pages"`
+	Protected  []Protected       `json:"protected"`
+	Hotlink    *Hotlink          `json:"hotlink"`
 }
 
 // Pool holds the PHP-FPM limits the package sets.
@@ -73,6 +80,9 @@ type ApplyArgs struct {
 	Suspended bool   `json:"suspended"`
 	Sites     []Site `json:"sites"`
 	Pool      Pool   `json:"pool"`
+	// PHPSettings are the owner's php.ini choices for each PHP version
+	// ("83" → "memory_limit" → "256M"), written into that version's pool.
+	PHPSettings map[string]map[string]string `json:"php_settings"`
 }
 
 // NameArgs name one account.
@@ -111,6 +121,7 @@ type Manager struct {
 	Server   string // "apache" or "off"
 	Include  string // /etc/httpd/conf.d/lpanel.conf
 	Sites    string // /etc/httpd/lpanel/sites
+	Htpasswd string // /etc/httpd/lpanel/htpasswd: logins of protected folders
 	LogDir   string // /var/log/httpd/lpanel
 	PHPRoot  string // /opt/remi: phpXY/root/usr/sbin/php-fpm
 	PHPConf  string // /etc/opt/remi: phpXY/php-fpm.d/
@@ -123,6 +134,8 @@ type Manager struct {
 	Owner func(name string) (uid, gid int, home string, err error)
 	// GroupID looks a group up; os/user when nil.
 	GroupID func(name string) (int, error)
+	// Chown sets a file's owner; os.Chown when nil, tests replace it.
+	Chown func(path string, uid, gid int) error
 	// MakeDirs makes an account's document roots and its tmp and logs
 	// folders without following links (docroot_linux.go), and returns the
 	// folders it made; tests replace it.
@@ -148,6 +161,7 @@ func (m *Manager) Defaults() {
 	set(&m.Server, "apache")
 	set(&m.Include, "/etc/httpd/conf.d/lpanel.conf")
 	set(&m.Sites, "/etc/httpd/lpanel/sites")
+	set(&m.Htpasswd, "/etc/httpd/lpanel/htpasswd")
 	set(&m.LogDir, "/var/log/httpd/lpanel")
 	set(&m.PHPRoot, "/opt/remi")
 	set(&m.PHPConf, "/etc/opt/remi")
@@ -161,6 +175,9 @@ func (m *Manager) Defaults() {
 	}
 	if m.MakeDirs == nil {
 		m.MakeDirs = makeDirs
+	}
+	if m.Chown == nil {
+		m.Chown = os.Chown
 	}
 	if m.GroupID == nil {
 		m.GroupID = func(name string) (int, error) {
@@ -268,8 +285,11 @@ func (a *ApplyArgs) check() error {
 		if !versionRule.MatchString(s.PHP) {
 			return badArgs("PHP version %q is not two digits such as \"83\"", s.PHP)
 		}
+		if err := s.checkFeatures(); err != nil {
+			return err
+		}
 	}
-	return nil
+	return checkPHPSettings(a.PHPSettings)
 }
 
 // installed lists the PHP versions with an FPM binary, sorted.
@@ -300,6 +320,19 @@ type file struct {
 	old      []byte
 	existed  bool
 	reloadPH string // the PHP version to reload for it, or "" for Apache
+	// mode and gid of the file; 0644 root when mode is 0. Logins of
+	// protected folders are 0640 with the web server's group.
+	mode os.FileMode
+	gid  int
+	// data files take no part in Apache's test (htpasswd files).
+	data bool
+}
+
+func (f file) fileMode() os.FileMode {
+	if f.mode == 0 {
+		return 0o644
+	}
+	return f.mode
 }
 
 // Apply makes the account's sites and pools what a says.
@@ -331,11 +364,14 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 		return Result{}, err
 	}
 
+	webGID, err := m.GroupID(m.WebGroup)
+	if err != nil {
+		return Result{}, fmt.Errorf("web group %s: %w", m.WebGroup, err)
+	}
+	if err := m.privateDir(m.Htpasswd, webGID); err != nil {
+		return Result{}, err
+	}
 	if !a.Suspended {
-		webGID, err := m.GroupID(m.WebGroup)
-		if err != nil {
-			return Result{}, fmt.Errorf("web group %s: %w", m.WebGroup, err)
-		}
 		roots := make([]string, 0, len(a.Sites))
 		for _, s := range a.Sites {
 			roots = append(roots, s.Docroot)
@@ -366,6 +402,23 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 	for _, v := range m.poolsOf(a.Username) {
 		if !keep[v] {
 			files = append(files, file{path: m.poolFile(v, a.Username), reloadPH: v})
+		}
+	}
+	// The logins of protected folders, and none for folders no longer
+	// protected. A suspended account's sites ask for nothing, so it has none.
+	logins := map[string]bool{}
+	if !a.Suspended {
+		for _, s := range a.Sites {
+			for _, p := range s.Protected {
+				path := m.htpasswdFile(a.Username, s.Name, p.Path)
+				logins[path] = true
+				files = append(files, file{path: path, content: renderHtpasswd(p), mode: 0o640, gid: webGID, data: true})
+			}
+		}
+	}
+	for _, path := range m.htpasswdOf(a.Username) {
+		if !logins[path] {
+			files = append(files, file{path: path, data: true})
 		}
 	}
 
@@ -408,6 +461,9 @@ func (m *Manager) Remove(ctx context.Context, a NameArgs) (Result, error) {
 	for _, v := range m.poolsOf(a.Username) {
 		files = append(files, file{path: m.poolFile(v, a.Username), reloadPH: v})
 	}
+	for _, path := range m.htpasswdOf(a.Username) {
+		files = append(files, file{path: path, data: true})
+	}
 	changed, err := m.change(ctx, files, nil)
 	return Result{Username: a.Username, Changed: changed, PHP: []string{}}, err
 }
@@ -448,6 +504,35 @@ func phpService(v string) string { return "php" + v + "-php-fpm" }
 func (m *Manager) active(ctx context.Context, unit string) bool {
 	code, _, err := m.Run.Run(ctx, "systemctl", "is-active", "--quiet", unit)
 	return err == nil && code == 0
+}
+
+// htpasswdOf lists the account's login files for protected folders.
+func (m *Manager) htpasswdOf(username string) []string {
+	matches, _ := filepath.Glob(filepath.Join(m.Htpasswd, username+"-*.htpasswd"))
+	sort.Strings(matches)
+	return matches
+}
+
+// privateDir makes dir 0750 root with the web server's group: Apache reads
+// the logins in it, other local users do not. Its parent (/etc/httpd/lpanel,
+// the agent's own) must be 0755: under the agent's 077 umask MkdirAll would
+// make it 0700, and Apache's workers, which open the logins on each request
+// as the web server's user, could not reach them (a 500, not a 401).
+func (m *Manager) privateDir(dir string, gid int) error {
+	parent := filepath.Dir(dir)
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(parent, 0o755); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o750); err != nil {
+		return err
+	}
+	return m.Chown(dir, 0, gid)
 }
 
 // poolsOf lists the PHP versions that have a pool file for the account.
@@ -533,6 +618,9 @@ func (m *Manager) change(ctx context.Context, files []file, probe func(context.C
 func (m *Manager) test(ctx context.Context, todo []file) error {
 	apache := false
 	for _, f := range todo {
+		if f.data {
+			continue
+		}
 		if f.reloadPH == "" {
 			apache = true
 			continue
@@ -584,7 +672,7 @@ func (m *Manager) testApache(ctx context.Context, todo []file) error {
 	defer os.RemoveAll(stage)
 	mine := map[string]file{}
 	for _, f := range todo {
-		if f.reloadPH == "" {
+		if f.reloadPH == "" && !f.data {
 			mine[filepath.Base(f.path)] = f
 		}
 	}
@@ -633,9 +721,19 @@ func (m *Manager) swap(todo []file) error {
 		if err := os.MkdirAll(filepath.Dir(f.path), 0o755); err != nil {
 			return err
 		}
-		if err := writeAtomic(f.path, f.content, 0o644); err != nil {
+		if err := m.write(f.path, f.content, f); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (m *Manager) write(path string, content []byte, f file) error {
+	if err := writeAtomic(path, content, f.fileMode()); err != nil {
+		return err
+	}
+	if f.gid != 0 {
+		return m.Chown(path, 0, f.gid)
 	}
 	return nil
 }
@@ -644,7 +742,7 @@ func (m *Manager) restore(todo []file) {
 	for _, f := range todo {
 		var err error
 		if f.existed {
-			err = writeAtomic(f.path, f.old, 0o644)
+			err = m.write(f.path, f.old, f)
 		} else {
 			err = os.Remove(f.path)
 			if errors.Is(err, os.ErrNotExist) {
@@ -664,6 +762,9 @@ func (m *Manager) reload(ctx context.Context, todo []file) error {
 	seen := map[string]bool{}
 	apache := false
 	for _, f := range todo {
+		if f.data {
+			continue // read by Apache on each request; nothing to reload
+		}
 		if f.reloadPH == "" {
 			apache = true
 			continue

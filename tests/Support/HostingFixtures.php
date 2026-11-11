@@ -59,7 +59,7 @@ trait HostingFixtures
         return $this->app->container()->get(Accounts::class)->findByUsernameUnscoped($username) ?? self::fail('no account ' . $username);
     }
 
-    /** @param array<string, mixed>|null $body */
+    /** @param array<int|string, mixed>|null $body */
     protected function api(string $method, string $path, string $token, ?array $body = null): Response
     {
         return $this->app->handle(Request::create($method, $path, [

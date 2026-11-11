@@ -208,7 +208,7 @@ enforced by the kernel. Suspend and terminate work and appear in the audit
 log.
 
 ### M2: Web
-M2 is built in three parts.
+M2 is built in four parts.
 
 **M2a: Apache, PHP-FPM and domains. Built 2026-11-11.**
 - **Agent** (`internal/web`): `web.apply` takes an account's whole web state
@@ -264,13 +264,46 @@ M2 is built in three parts.
     suspended sites answer 503, a broken Apache config elsewhere stops a
     change while every site keeps serving, and a planted link is refused.
 
-**M2b: site features and bandwidth.** Redirects, custom error pages,
-directory privacy, hotlink protection. The php.ini editor and extension
-manager, and installing and removing PHP versions from the panel. Bandwidth
-metering from the web server's logs (moved from M1c), counted against each
-package's and reseller's limit.
+**M2b: site features. Built 2026-11-11.**
+- Every feature stays part of the account's whole web state, so
+  `web.apply` remains one idempotent operation through the same staged
+  pipeline.
+- **Per site:**
+  - Redirects: 301 or 302, from a path and everything under it.
+  - Which address visitors end up on: with `www.`, without, or either.
+  - Custom error pages for 400, 401, 403, 404, 500 and 503.
+  - Password-protected folders, or the whole site.
+  - Hotlink protection by file kind, with other sites allowed.
+- **Protected folders:**
+  - The panel stores only bcrypt hashes. The agent writes them to
+    `/etc/httpd/lpanel/htpasswd/` as 0640 root:apache.
+  - Changing a password reloads nothing: Apache reads the file on each
+    request.
+- **The php.ini editor.** Owners set 14 directives per PHP version their
+  sites use, for example `memory_limit`, upload sizes, time limits, the time
+  zone and error display. Each value must match a strict rule, in both the
+  panel and the agent. The settings go into that version's pool.
+- **Tests:** PHP 77; `tests/e2e/install.sh` 105 checks (each feature on a
+  real Apache, as a visitor sees it); agent e2e 37.
+- **Checks.** Every value that ends up in Apache's or PHP-FPM's
+  configuration is checked twice, in the panel and in the agent. No quote,
+  space, newline or directive of its own gets through.
+- **Where it shows:**
+  - each domain has its own page in the User panel, and there is a new
+    "PHP settings" page (feature `php_settings`);
+  - the API under `/admin/api/v1/accounts/{user}/domains/{domain}/…` and
+    `/admin/api/v1/accounts/{user}/php`;
+  - `lpanel domains:show|redirect|unredirect|error-page|hotlink|protect|unprotect|protect-login`
+    and `php:settings`.
 
-**M2c: the other two stacks.** Nginx only, and Nginx in front of Apache,
+**M2c: PHP versions and bandwidth.**
+- Installing and removing PHP versions and extensions from the Admin panel.
+- Choosing the default version for new sites.
+- Bandwidth metering from the web server's logs (moved from M1c), counted
+  against each package's limit, with its over-limit action.
+- Rotating the accounts' Apache logs.
+
+**M2d: the other two stacks.** Nginx only, and Nginx in front of Apache,
 chosen per server.
 
 **Exit:** each of the three web stacks serves a PHP site for every domain type.

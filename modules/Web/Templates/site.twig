@@ -1,0 +1,275 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro err(form, name, current, errors) %}{% if current == form and errors[name] is defined %}<div class="error">{{ errors[name]|local }}</div>{% endif %}{% endmacro %}
+{% macro bad(form, name, current, errors) %}{% if current == form and errors[name] is defined %} is-invalid{% endif %}{% endmacro %}
+
+{% block content %}
+{% set d = domain %}
+{% set o = old %}
+<div class="page-head">
+    <div>
+        <h1 class="domain-name" style="gap:10px">{{ d.name }} <span class="badge {{ d.kind == 'main' ? 'accent' : 'plain' }}">{{ ('Web.kind_' ~ d.kind)|local }}</span></h1>
+        <p>{% if d.kind == 'alias' %}{{ 'Web.points_to'|local({name: parent.name|default('—')}) }}{% else %}<span class="mono">{{ root }}</span> · PHP {{ d.php|slice(0,1) }}.{{ d.php|slice(1) }}{% endif %}</p>
+    </div>
+    <div class="page-actions"><a class="btn" href="{{ urls.back }}">{{ 'Web.all_domains'|local }}</a></div>
+</div>
+
+{% if web and web.state == 'failed' %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Web.last_failed'|local }}</strong><br><span class="mono">{{ web.error }}</span></p></div>
+{% elseif web and web.state == 'pending' %}
+    <div class="alert alert-info">{{ icon('clock') }}<p>{{ 'Web.pending_text'|local({since: web.changed_at|when}) }}</p></div>
+{% endif %}
+{% if form and errors is not empty %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Web.form_refused'|local }}</p></div>
+{% endif %}
+
+{% if d.kind == 'alias' %}
+<div class="grid grid-side">
+    <div class="card">
+        <div class="card-body">
+            <div class="empty" style="padding:24px 8px">{{ icon('link') }}<h3>{{ 'Web.alias_title'|local({name: d.name}) }}</h3><p>{{ 'Web.alias_text'|local({name: parent.name|default('—')}) }}</p>
+                {% if parent %}<p><a class="btn" href="{{ urls.back }}/{{ parent.id }}">{{ 'Web.open_site'|local({name: parent.name}) }}</a></p>{% endif %}
+            </div>
+        </div>
+    </div>
+    {% include "@Web/site-remove.twig" %}
+</div>
+{% else %}
+<div class="grid grid-side">
+    <div class="stack">
+
+        {# ---- General ---------------------------------------------------- #}
+        <form class="card" id="general" method="post" action="{{ urls.general }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Web.general'|local }}</h2><p>{{ 'Web.general_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <div class="grid grid-2" style="gap:0 16px">
+                    <div class="field">
+                        <label for="g-docroot">{{ 'Web.folder'|local }}</label>
+                        <input class="input mono{{ _self.bad('general', 'docroot', form, errors) }}" id="g-docroot" name="docroot" value="{{ o.docroot|default(d.docroot) }}" maxlength="255" autocapitalize="none" spellcheck="false" required>
+                        {{ _self.err('general', 'docroot', form, errors) }}
+                        <div class="hint">{{ 'Web.folder_hint'|local }}</div>
+                    </div>
+                    <div class="field">
+                        <label for="g-php">{{ 'Web.php_version'|local }}</label>
+                        <select class="input" id="g-php" name="php">
+                            {% for v in php %}<option value="{{ v }}"{% if v == o.php|default(d.php) %} selected{% endif %}>PHP {{ v|slice(0,1) }}.{{ v|slice(1) }}</option>{% endfor %}
+                        </select>
+                        {{ _self.err('general', 'php', form, errors) }}
+                    </div>
+                </div>
+                {% if d.kind != 'sub' %}
+                <div class="field">
+                    <span class="label">{{ 'Web.canonical'|local }}</span>
+                    {% set canon = o.canonical is defined ? o.canonical : (d.canonical ?: '') %}
+                    <div class="segmented" role="radiogroup" aria-label="{{ 'Web.canonical'|local }}">
+                        <label><input type="radio" name="canonical" value=""{% if canon == '' %} checked{% endif %}>{{ 'Web.canonical_both'|local }}</label>
+                        <label><input type="radio" name="canonical" value="www"{% if canon == 'www' %} checked{% endif %}>www.{{ d.name|length > 18 ? '…' : d.name }}</label>
+                        <label><input type="radio" name="canonical" value="bare"{% if canon == 'bare' %} checked{% endif %}>{{ d.name|length > 22 ? 'Web.canonical_bare'|local : d.name }}</label>
+                    </div>
+                    {{ _self.err('general', 'canonical', form, errors) }}
+                    <div class="hint">{{ 'Web.canonical_hint'|local }}</div>
+                </div>
+                <label class="check"><input type="checkbox" name="wildcard" value="1"{% if d.wildcard %} checked{% endif %}> {{ 'Web.wildcard'|local({name: d.name}) }}</label>
+                {% endif %}
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button></div>
+        </form>
+
+        {# ---- Redirects ---------------------------------------------------- #}
+        <div class="card" id="redirect">
+            <div class="card-head"><div><h2>{{ 'Web.redirects'|local }}</h2><p>{{ 'Web.redirects_lead'|local }}</p></div></div>
+            {% if redirects is not empty %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr><th>{{ 'Web.redirect_from'|local }}</th><th>{{ 'Web.redirect_to'|local }}</th><th class="hide-sm">{{ 'Web.redirect_kind'|local }}</th><th><span class="sr-only">{{ 'Web.actions'|local }}</span></th></tr></thead>
+                <tbody>
+                {% for r in redirects %}
+                    <tr>
+                        <td class="mono">{{ r.path }}</td>
+                        <td class="mono" style="overflow-wrap:anywhere">{{ r.target }}<div class="show-sm muted">{{ ('Web.code_' ~ r.code)|local }}</div></td>
+                        <td class="hide-sm"><span class="badge plain">{{ ('Web.code_' ~ r.code)|local }}</span></td>
+                        <td style="text-align:end">
+                            <form class="inline-form" method="post" action="{{ r.delete_url }}" data-confirm="{{ 'Web.confirm_unredirect'|local({path: r.path}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Web.remove_name'|local({name: r.path}) }}">{{ icon('trash') }}</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+            <form method="post" action="{{ urls.redirect }}" class="card-body" style="border-top:1px solid var(--border)">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <div class="form-flex">
+                    <div class="field" style="flex:1 1 140px">
+                        <label for="r-path">{{ 'Web.redirect_from'|local }}</label>
+                        <input class="input mono{{ _self.bad('redirect', 'path', form, errors) }}" id="r-path" name="path" value="{{ form == 'redirect' ? o.path|default('') : '' }}" placeholder="/old-page" maxlength="500" autocapitalize="none" spellcheck="false" required>
+                        {{ _self.err('redirect', 'path', form, errors) }}
+                    </div>
+                    <div class="field" style="flex:2 1 220px">
+                        <label for="r-to">{{ 'Web.redirect_to'|local }}</label>
+                        <input class="input mono{{ _self.bad('redirect', 'to', form, errors) }}" id="r-to" name="to" type="url" value="{{ form == 'redirect' ? o.to|default('') : '' }}" placeholder="https://{{ d.name }}/new-page" maxlength="2048" required>
+                        {{ _self.err('redirect', 'to', form, errors) }}
+                    </div>
+                    <div class="field" style="flex:1 1 140px">
+                        <label for="r-code">{{ 'Web.redirect_kind'|local }}</label>
+                        <select class="input" id="r-code" name="code">
+                            <option value="301">{{ 'Web.code_301'|local }}</option>
+                            <option value="302"{% if form == 'redirect' and o.code|default('') == '302' %} selected{% endif %}>{{ 'Web.code_302'|local }}</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-foot">
+                    <span class="hint">{{ 'Web.redirect_hint'|local }}</span>
+                    <button class="btn" type="submit">{{ icon('plus') }}{{ 'Web.add_redirect'|local }}</button>
+                </div>
+            </form>
+        </div>
+
+        {# ---- Protected folders ------------------------------------------- #}
+        <div class="card" id="protect">
+            <div class="card-head"><div><h2>{{ 'Web.protected'|local }}</h2><p>{{ 'Web.protected_lead'|local }}</p></div></div>
+            {% for p in protected %}
+                <div class="card-body" style="border-top:1px solid var(--border)">
+                    <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap">
+                        <div style="min-width:0">
+                            <strong class="mono" style="overflow-wrap:anywhere">/{{ p.path }}</strong>{% if p.path == '' %} <span class="muted">{{ 'Web.whole_site'|local }}</span>{% endif %}
+                            <div class="domain-sub">{{ 'Web.prompt_says'|local({realm: p.realm}) }}</div>
+                        </div>
+                        <form class="inline-form" method="post" action="{{ p.delete_url }}" data-confirm="{{ 'Web.confirm_unprotect'|local({path: '/' ~ p.path}) }}">
+                            <input type="hidden" name="_token" value="{{ lp.token }}">
+                            <button class="btn btn-sm btn-ghost" type="submit">{{ icon('trash') }}{{ 'Web.unprotect'|local }}</button>
+                        </form>
+                    </div>
+                    <div class="chips" style="margin:12px 0">
+                        {% for login in p.logins %}
+                            <form class="inline-form chip-form" method="post" action="{{ p.logout_urls[login] }}" data-confirm="{{ 'Web.confirm_logout'|local({login: login}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <span class="badge plain">{{ icon('user') }}{{ login }}<button type="submit" class="chip-x" aria-label="{{ 'Web.remove_name'|local({name: login}) }}">{{ icon('x') }}</button></span>
+                            </form>
+                        {% else %}
+                            <span class="hint">{{ 'Web.no_logins'|local }}</span>
+                        {% endfor %}
+                    </div>
+                    {% set lf = 'login_' ~ p.id %}
+                    <form method="post" action="{{ p.login_url }}" class="form-flex" style="align-items:flex-end">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <div class="field" style="flex:1 1 140px; margin:0">
+                            <label for="l-{{ p.id }}">{{ 'Web.login'|local }}</label>
+                            <input class="input mono{{ _self.bad(lf, 'login', form, errors) }}" id="l-{{ p.id }}" name="login" value="{{ form == lf ? o.login|default('') : '' }}" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+                            {{ _self.err(lf, 'login', form, errors) }}
+                        </div>
+                        <div class="field" style="flex:1 1 160px; margin:0">
+                            <label for="lp-{{ p.id }}">{{ 'Web.password'|local }}</label>
+                            <input class="input{{ _self.bad(lf, 'password', form, errors) }}" id="lp-{{ p.id }}" name="password" type="password" minlength="8" autocomplete="new-password" required>
+                            {{ _self.err(lf, 'password', form, errors) }}
+                        </div>
+                        <button class="btn" type="submit">{{ icon('key') }}{{ 'Web.set_login'|local }}</button>
+                    </form>
+                </div>
+            {% endfor %}
+            <form method="post" action="{{ urls.protect }}" class="card-body" style="border-top:1px solid var(--border)">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <div class="label" style="margin-bottom:10px">{{ 'Web.protect_new'|local }}</div>
+                <div class="form-flex">
+                    <div class="field" style="flex:1 1 180px">
+                        <label for="p-path">{{ 'Web.protect_folder'|local }}</label>
+                        <div style="display:flex; align-items:center; gap:4px"><span class="mono muted">/</span><input class="input mono{{ _self.bad('protect', 'path', form, errors) }}" id="p-path" name="path" value="{{ form == 'protect' ? o.path|default('') : '' }}" placeholder="{{ 'Web.protect_placeholder'|local }}" maxlength="255" autocapitalize="none" spellcheck="false"></div>
+                        {{ _self.err('protect', 'path', form, errors) }}
+                    </div>
+                    <div class="field" style="flex:1 1 180px">
+                        <label for="p-realm">{{ 'Web.realm'|local }}</label>
+                        <input class="input{{ _self.bad('protect', 'realm', form, errors) }}" id="p-realm" name="realm" value="{{ form == 'protect' ? o.realm|default('') : '' }}" placeholder="{{ 'Web.realm_placeholder'|local }}" maxlength="60">
+                        {{ _self.err('protect', 'realm', form, errors) }}
+                    </div>
+                </div>
+                <div class="form-flex">
+                    <div class="field" style="flex:1 1 140px">
+                        <label for="p-login">{{ 'Web.first_login'|local }}</label>
+                        <input class="input mono{{ _self.bad('protect', 'login', form, errors) }}" id="p-login" name="login" value="{{ form == 'protect' ? o.login|default('') : '' }}" maxlength="32" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+                        {{ _self.err('protect', 'login', form, errors) }}
+                    </div>
+                    <div class="field" style="flex:1 1 160px">
+                        <label for="p-password">{{ 'Web.password'|local }}</label>
+                        <input class="input{{ _self.bad('protect', 'password', form, errors) }}" id="p-password" name="password" type="password" minlength="8" autocomplete="new-password" required>
+                        {{ _self.err('protect', 'password', form, errors) }}
+                    </div>
+                </div>
+                <div class="form-foot">
+                    <span class="hint">{{ 'Web.protect_hint'|local }}</span>
+                    <button class="btn" type="submit">{{ icon('lock') }}{{ 'Web.protect'|local }}</button>
+                </div>
+            </form>
+        </div>
+
+        {# ---- Error pages --------------------------------------------------- #}
+        <form class="card" id="errors" method="post" action="{{ urls.errors }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Web.error_pages'|local }}</h2><p>{{ 'Web.error_pages_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <div class="grid grid-2" style="gap:0 16px">
+                    {% for code in codes %}
+                        <div class="field">
+                            <label for="e-{{ code }}">{{ code }} · {{ ('Web.status_' ~ code)|local }}</label>
+                            <input class="input mono{{ _self.bad('errors', 'page_' ~ code, form, errors) }}" id="e-{{ code }}" name="page_{{ code }}" value="{{ form == 'errors' ? o[code]|default('') : d.error_pages[code]|default('') }}" placeholder="/errors/{{ code }}.html" maxlength="200" autocapitalize="none" spellcheck="false">
+                            {{ _self.err('errors', 'page_' ~ code, form, errors) }}
+                        </div>
+                    {% endfor %}
+                </div>
+                <div class="hint">{{ 'Web.error_pages_hint'|local }}</div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button></div>
+        </form>
+
+        {# ---- Hotlink protection --------------------------------------------- #}
+        {% set h = d.hotlink %}
+        <form class="card" id="hotlink" method="post" action="{{ urls.hotlink }}" data-show-from="on">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head">
+                <div><h2>{{ 'Web.hotlink'|local }}</h2><p>{{ 'Web.hotlink_lead'|local }}</p></div>
+                {% if h %}<span class="badge ok">{{ 'Web.on'|local }}</span>{% else %}<span class="badge plain">{{ 'Web.off'|local }}</span>{% endif %}
+            </div>
+            <div class="card-body">
+                {% set on = form == 'hotlink' ? o.on|default(false) : h is not null %}
+                <div class="segmented" role="radiogroup" aria-label="{{ 'Web.hotlink'|local }}" style="max-width:280px; margin-bottom:16px">
+                    <label><input type="radio" name="on" value="0"{% if not on %} checked{% endif %}>{{ 'Web.off'|local }}</label>
+                    <label><input type="radio" name="on" value="1"{% if on %} checked{% endif %}>{{ 'Web.on'|local }}</label>
+                </div>
+                <div data-show-for="1">
+                    <div class="field">
+                        <label for="h-ext">{{ 'Web.hotlink_kinds'|local }}</label>
+                        <input class="input mono{{ _self.bad('hotlink', 'extensions', form, errors) }}" id="h-ext" name="extensions" value="{{ form == 'hotlink' ? o.extensions|default('') : (h ? h.extensions|join(', ') : hotlink_default) }}" autocapitalize="none" spellcheck="false">
+                        {{ _self.err('hotlink', 'extensions', form, errors) }}
+                    </div>
+                    <div class="field" style="margin:0">
+                        <label for="h-allow">{{ 'Web.hotlink_allow'|local }} <span class="muted">({{ 'Web.optional'|local }})</span></label>
+                        <input class="input mono{{ _self.bad('hotlink', 'allow', form, errors) }}" id="h-allow" name="allow" value="{{ form == 'hotlink' ? o.allow|default('') : (h ? h.allow|join(', ') : '') }}" placeholder="partner.example.com" autocapitalize="none" spellcheck="false">
+                        {{ _self.err('hotlink', 'allow', form, errors) }}
+                        <div class="hint">{{ 'Web.hotlink_hint'|local }}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button></div>
+        </form>
+    </div>
+
+    <div class="stack">
+        <div class="card">
+            <div class="card-head"><div><h2>{{ 'Web.at_a_glance'|local }}</h2></div></div>
+            <div class="card-body">
+                <dl class="facts">
+                    <dt>{{ 'Web.address'|local }}</dt><dd><a href="http://{{ d.name }}/" rel="noopener" target="_blank">http://{{ d.name }}/</a></dd>
+                    <dt>{{ 'Web.folder'|local }}</dt><dd class="mono" style="overflow-wrap:anywhere">{{ root }}</dd>
+                    <dt>PHP</dt><dd>{{ d.php|slice(0,1) }}.{{ d.php|slice(1) }}</dd>
+                    <dt>{{ 'Web.redirects'|local }}</dt><dd>{{ redirects|length }}</dd>
+                    <dt>{{ 'Web.protected'|local }}</dt><dd>{{ protected|length }}</dd>
+                    <dt>{{ 'Web.hotlink'|local }}</dt><dd>{{ (h ? 'Web.on' : 'Web.off')|local }}</dd>
+                </dl>
+            </div>
+        </div>
+        {% if d.kind != 'main' %}{% include "@Web/site-remove.twig" %}{% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

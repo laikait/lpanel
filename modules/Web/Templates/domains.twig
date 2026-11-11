@@ -44,7 +44,7 @@
                 <tr>
                     <td>
                         <div class="domain-name">
-                            <strong>{{ d.name }}</strong>
+                            <a href="{{ d.show_url }}" class="domain-link"><strong>{{ d.name }}</strong></a>
                             <span class="badge {{ d.kind == 'main' ? 'accent' : 'plain' }}">{{ ('Web.kind_' ~ d.kind)|local }}</span>
                             {% if d.wildcard %}<span class="badge plain mono">*.</span>{% endif %}
                         </div>
@@ -59,29 +59,7 @@
                     <td class="hide-sm">{{ d.php ? d.php|slice(0,1) ~ '.' ~ d.php|slice(1) : '—' }}</td>
                     <td>
                         <div style="display:flex; gap:6px; justify-content:flex-end">
-                            {% if d.kind != 'alias' %}
-                            <details style="position:relative">
-                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Web.settings_for'|local({name: d.name}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Web.settings'|local }}</span></summary>
-                                <form method="post" action="{{ d.update_url }}" class="card popover-form">
-                                    <input type="hidden" name="_token" value="{{ lp.token }}">
-                                    <div class="field">
-                                        <label for="dr-{{ d.id }}">{{ 'Web.folder'|local }}</label>
-                                        <input class="input mono" id="dr-{{ d.id }}" name="docroot" value="{{ d.docroot }}" maxlength="255" autocapitalize="none" spellcheck="false" required>
-                                        <div class="hint">{{ 'Web.folder_hint'|local }}</div>
-                                    </div>
-                                    <div class="field">
-                                        <label for="php-{{ d.id }}">{{ 'Web.php_version'|local }}</label>
-                                        <select class="input" id="php-{{ d.id }}" name="php">
-                                            {% for v in php %}<option value="{{ v }}"{% if v == d.php %} selected{% endif %}>PHP {{ v|slice(0,1) }}.{{ v|slice(1) }}</option>{% endfor %}
-                                        </select>
-                                    </div>
-                                    {% if d.kind != 'sub' %}
-                                    <label class="check" style="margin-bottom:12px"><input type="checkbox" name="wildcard" value="1"{% if d.wildcard %} checked{% endif %}> {{ 'Web.wildcard'|local({name: d.name}) }}</label>
-                                    {% endif %}
-                                    <button class="btn btn-primary btn-sm" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button>
-                                </form>
-                            </details>
-                            {% endif %}
+                            <a class="btn btn-sm btn-ghost" href="{{ d.show_url }}" aria-label="{{ 'Web.settings_for'|local({name: d.name}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Web.manage'|local }}</span></a>
                             {% if d.kind != 'main' %}
                             <form class="inline-form" method="post" action="{{ d.delete_url }}" data-confirm="{{ 'Web.confirm_remove'|local({name: d.name}) }}">
                                 <input type="hidden" name="_token" value="{{ lp.token }}">

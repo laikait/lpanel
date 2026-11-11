@@ -1,0 +1,64 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Web.php_settings'|local }}</h1>
+        <p>{{ 'Web.php_lead'|local }}</p>
+    </div>
+</div>
+
+{% if cards is empty %}
+    <div class="card"><div class="empty">{{ icon('code') }}<h3>{{ 'Web.php_none'|local }}</h3><p>{{ 'Web.php_none_text'|local }}</p></div></div>
+{% endif %}
+
+<div class="stack">
+{% for c in cards %}
+    {% set errs = errors[c.version]|default({}) %}
+    {% set olds = old[c.version]|default(null) %}
+    <form class="card" method="post" action="{{ c.action }}" id="php{{ c.version }}">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <div class="card-head">
+            <div><h2>PHP {{ c.label }}</h2><p>{{ 'Web.php_used_by'|local({sites: c.sites|join(', ')}) }}</p></div>
+            <span class="badge plain">{{ 'Web.php_changed'|local({count: c.values|length}) }}</span>
+        </div>
+        {% if errs is not empty %}<div class="card-body" style="padding-bottom:0"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p>{{ 'Web.form_refused'|local }}</p></div></div>{% endif %}
+        <div class="card-body">
+            <div class="grid grid-3" style="gap:0 16px">
+            {% for d in directives %}
+                {% set value = olds is not null ? olds[d.name]|default('') : c.values[d.name]|default('') %}
+                {% set id = 'p' ~ c.version ~ '-' ~ d.field %}
+                <div class="field">
+                    <label for="{{ id }}" class="mono" style="font-size:12.5px">{{ d.name }}</label>
+                    {% if d.kind == 'flag' %}
+                        <select class="input{% if errs[d.name] is defined %} is-invalid{% endif %}" id="{{ id }}" name="{{ d.field }}">
+                            <option value="">{{ 'Web.php_default'|local }}</option>
+                            {% for v in ['On', 'Off'] %}<option value="{{ v }}"{% if v == value %} selected{% endif %}>{{ v }}</option>{% endfor %}
+                        </select>
+                    {% elseif d.kind == 'choice' %}
+                        <select class="input{% if errs[d.name] is defined %} is-invalid{% endif %}" id="{{ id }}" name="{{ d.field }}">
+                            <option value="">{{ 'Web.php_default'|local }}</option>
+                            {% for v in d.choices %}<option value="{{ v }}"{% if v == value %} selected{% endif %}>{{ v }}</option>{% endfor %}
+                            {% if value and value not in d.choices %}<option value="{{ value }}" selected>{{ value }}</option>{% endif %}
+                        </select>
+                    {% elseif d.kind == 'zone' %}
+                        <select class="input{% if errs[d.name] is defined %} is-invalid{% endif %}" id="{{ id }}" name="{{ d.field }}">
+                            <option value="">{{ 'Web.php_default'|local }}</option>
+                            {% for z in zones %}<option value="{{ z }}"{% if z == value %} selected{% endif %}>{{ z }}</option>{% endfor %}
+                        </select>
+                    {% else %}
+                        <input class="input mono{% if errs[d.name] is defined %} is-invalid{% endif %}" id="{{ id }}" name="{{ d.field }}" value="{{ value }}" inputmode="numeric" placeholder="{{ 'Web.php_default'|local }}" maxlength="8">
+                    {% endif %}
+                    {% if errs[d.name] is defined %}<div class="error">{{ errs[d.name]|local }}</div>{% else %}<div class="hint">{{ ('Web.php_hint_' ~ d.field)|local }}</div>{% endif %}
+                </div>
+            {% endfor %}
+            </div>
+        </div>
+        <div class="card-foot" style="justify-content:space-between; flex-wrap:wrap; gap:8px">
+            <span class="hint">{{ 'Web.php_applies'|local({version: c.label}) }}</span>
+            <button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button>
+        </div>
+    </form>
+{% endfor %}
+</div>
+{% endblock %}

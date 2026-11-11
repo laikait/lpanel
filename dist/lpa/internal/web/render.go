@@ -62,6 +62,7 @@ func (m *Manager) renderSites(a ApplyArgs, home string) ([]byte, string) {
 		}
 		root := home + "/" + s.Docroot
 		fmt.Fprintf(&b, "    DocumentRoot \"%s\"\n", root)
+		renderFeatures(&b, s)
 		fmt.Fprintf(&b, "    <Directory \"%s\">\n", root)
 		b.WriteString("        Options -Indexes +SymLinksIfOwnerMatch\n")
 		// .htaccess works, but cannot turn on following any link or
@@ -70,6 +71,7 @@ func (m *Manager) renderSites(a ApplyArgs, home string) ([]byte, string) {
 		b.WriteString("        Require all granted\n")
 		b.WriteString("        DirectoryIndex index.php index.html index.htm\n")
 		b.WriteString("    </Directory>\n")
+		m.renderProtected(&b, a, s, root)
 		b.WriteString("    <FilesMatch \"\\.php$\">\n")
 		fmt.Fprintf(&b, "        SetHandler \"proxy:unix:%s|fcgi://lpanel-%s-%s\"\n", m.socket(s.PHP, a.Username), a.Username, s.PHP)
 		b.WriteString("    </FilesMatch>\n")
@@ -104,6 +106,10 @@ func (m *Manager) renderPool(a ApplyArgs, home, version string) []byte {
 	}
 	fmt.Fprintf(&b, "php_admin_value[error_log] = %s/logs/php-error.log\n", home)
 	b.WriteString("php_admin_flag[log_errors] = on\n")
+	if settings := a.PHPSettings[version]; len(settings) > 0 {
+		b.WriteString("\n; The owner's php.ini settings for this version.\n")
+		renderPHPSettings(&b, settings)
+	}
 	return []byte(b.String())
 }
 

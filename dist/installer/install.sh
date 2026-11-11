@@ -260,7 +260,7 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     # switching to enforcing later needs nothing more.
     bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
     restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa
-    mkdir -p /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
+    install -d -m 0755 /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
     for d in "$HOMES"/*/public_html "$HOMES"/*/tmp "$HOMES"/*/logs; do
         if [ -d "$d" ]; then restorecon -R "$d"; fi
     done

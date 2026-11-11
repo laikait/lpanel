@@ -1,0 +1,5 @@
+<form class="card" method="post" action="{{ urls.delete }}" data-confirm="{{ 'Web.confirm_remove'|local({name: domain.name}) }}">
+    <input type="hidden" name="_token" value="{{ lp.token }}">
+    <div class="card-head"><div><h2 style="color:var(--bad)">{{ 'Web.remove_domain'|local }}</h2><p>{{ 'Web.remove_domain_lead'|local }}</p></div></div>
+    <div class="card-foot"><button class="btn btn-danger" type="submit">{{ icon('trash') }}{{ 'Web.remove_domain'|local }}</button></div>
+</form>

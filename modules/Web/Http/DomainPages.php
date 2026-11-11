@@ -62,25 +62,8 @@ final class DomainPages
         return new RedirectResponse($this->router->url('user.domains'), 303);
     }
 
-    public function update(Request $request, Session $session, Identity $identity, string $id): Response
-    {
-        $account = $this->account($identity);
-        $domain = $this->domains->find((int) $account['id'], $id) ?? throw HttpException::notFound();
-        [$outcome, $errors] = $this->actions->change($identity, $request, $account, $domain, [
-            'docroot' => $request->input('docroot'),
-            'php' => $request->input('php'),
-            'wildcard' => $domain['kind'] === Domains::SUB ? null : $request->input('wildcard') === '1',
-        ]);
 
-        if ($outcome === null) {
-            PanelPage::notice($session, 'error', (string) \reset($errors));
-        } else {
-            self::notify($session, $outcome, 'Web.saved');
-        }
-
-        return new RedirectResponse($this->router->url('user.domains'), 303);
-    }
-
+    /** Called from the list and from the domain's own page. */
     public function delete(Request $request, Session $session, Identity $identity, string $id): Response
     {
         $account = $this->account($identity);
@@ -120,7 +103,7 @@ final class DomainPages
 
         foreach ($rows as &$row) {
             $row['parent_name'] = $row['parent_id'] === null ? null : ($byId[$row['parent_id']] ?? null);
-            $row['update_url'] = $this->router->url('user.domains.update', ['id' => $row['id']]);
+            $row['show_url'] = $this->router->url('user.domains.show', ['id' => $row['id']]);
             $row['delete_url'] = $this->router->url('user.domains.delete', ['id' => $row['id']]);
 
             if ($row['php'] !== null) {

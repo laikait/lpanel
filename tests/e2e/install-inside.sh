@@ -227,6 +227,48 @@ check "a link planted in public_html is refused, not followed" t_link
 check "the owner's Domains page lists the sites" t_page
 check "the changes are in the audit log" t_domain_audit
 
+echo "== site features"
+O=other.example.test
+OD=/home/shop1/public_html/other.example.test
+get()  { curl -s -o /tmp/site.out -w '%{http_code} %{redirect_url}' -H "Host: $1" "${@:3}" "http://127.0.0.1$2" | tee -a /tmp/get.log; echo " <- $*" >> /tmp/get.log; }
+export -f get
+t_redirect()  { lpanel domains:redirect shop1 $O /old https://example.org/new && [ "$(get $O /old/page)" = "301 https://example.org/new/page" ]; }
+t_temporary() { lpanel domains:redirect shop1 $O /sale https://example.org/sale --temporary && [ "$(get $O /sale)" = "302 https://example.org/sale" ]; }
+t_canonical() { lpanel domains:set shop1 $O --canonical=www && [ "$(get $O /a?b=1)" = "301 http://www.$O/a?b=1" ] && says www.$O "8.2 as shop1"; }
+t_either()    { lpanel domains:set shop1 $O --canonical=either && says $O "8.2 as shop1"; }
+t_errorpage() { echo "custom missing page" > /tmp/missing.html && put shop1 /tmp/missing.html $OD/missing.html \
+                && lpanel domains:error-page shop1 $O 404 /missing.html && [ "$(get $O /nothing-here)" = "404 " ] && grep -q "custom missing page" /tmp/site.out; }
+t_protect()   { : > /tmp/get.log; mkdir -p $OD/private && echo "members only" > $OD/private/index.html && chown -R shop1:shop1 $OD/private \
+                && echo "Ann-Pass-Word-1" | lpanel domains:protect shop1 $O private --realm=Members --login=ann \
+                && [ "$(get $O /private/)" = "401 " ] && [ "$(get $O /private/ -u ann:wrong-password)" = "401 " ] \
+                && [ "$(get $O /private/ -u ann:Ann-Pass-Word-1)" = "200 " ] && grep -q "members only" /tmp/site.out \
+                && [ "$(get $O /)" = "200 " ]; }
+t_logins()    { local f; f=$(ls /etc/httpd/lpanel/htpasswd/shop1-*.htpasswd) && [ "$(stat -c '%a %U %G' "$f")" = "640 root apache" ] \
+                && grep -q '^ann:\$2y\$' "$f" && ! grep -q "Ann-Pass-Word-1" "$f" \
+                && ! runuser -u intruder -- cat "$f" 2>/dev/null; }
+t_logout()    { : > /tmp/get.log; lpanel domains:protect-login shop1 $O private ann --remove && [ "$(get $O /private/ -u ann:Ann-Pass-Word-1)" = "401 " ]; }
+t_hotlink()   { printf "not really a png" > /tmp/logo.png && put shop1 /tmp/logo.png $OD/logo.png && lpanel domains:hotlink shop1 $O --extensions=png,jpg \
+                && [ "$(get $O /logo.png -e http://elsewhere.test/page)" = "403 " ] \
+                && [ "$(get $O /logo.png -e http://$O/page)" = "200 " ] && [ "$(get $O /logo.png)" = "200 " ]; }
+t_phpini()    { printf '<?php echo ini_get("memory_limit"), " ", ini_get("date.timezone");' > /tmp/ini.php && put shop1 /tmp/ini.php $OD/ini.php \
+                && lpanel php:settings shop1 8.2 --set=memory_limit=200M,date.timezone=Asia/Dhaka \
+                && [ "$(get $O /ini.php)" = "200 " ] && grep -q "200M Asia/Dhaka" /tmp/site.out \
+                && grep -q 'php_value\[memory_limit\] = 200M' /etc/opt/remi/php82/php-fpm.d/lpanel-shop1.conf; }
+t_bad_ini()   { ! lpanel php:settings shop1 8.2 --set=disable_functions=x && ! lpanel php:settings shop1 8.2 --set='memory_limit=1M php_admin_value'; }
+t_shown()     { local out; out=$(lpanel domains:show shop1 $O) && echo "$out" >&2 && grep -q 'redirect   /old -> https://example.org/new (301)' <<<"$out"                 && grep -q 'protected  /private "Members": no logins' <<<"$out"; }
+check "a redirect keeps the rest of the path" t_redirect
+check "a temporary redirect is a 302" t_temporary
+check "visitors can be sent to www." t_canonical
+check "and back to either" t_either
+check "a custom error page" t_errorpage
+check "a protected folder asks for its password, and takes only the right one" t_protect
+check "its logins are bcrypt hashes, 640 root:apache, unreadable to others" t_logins
+check "a removed login no longer gets in" t_logout
+check "hotlink protection refuses other sites, not the site or direct visits" t_hotlink
+check "php.ini settings reach PHP for that version" t_phpini
+check "settings that are not offered are refused" t_bad_ini
+check "lpanel domains:show lists it all" t_shown
+
 echo "== running the installer again"
 sum_before=$(sha256sum /usr/local/lpanel/.env /etc/lpanel/agent.key /etc/lpanel/tls/panel.crt)
 check "a second run finishes" bash -c '/bundle/install.sh --hostname e2e-panel.test > /tmp/install2.log 2>&1 || { tail -30 /tmp/install2.log; exit 1; }'
