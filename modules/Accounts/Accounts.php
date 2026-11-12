@@ -116,6 +116,12 @@ final class Accounts
         return $this->table()->where('domain', $domain)->first() !== null;
     }
 
+    /** @return list<array<string, mixed>> accounts that are on the server and have sites: active or suspended */
+    public function withSites(): array
+    {
+        return \array_values($this->table()->whereIn('status', [self::ACTIVE, self::SUSPENDED])->orderBy('id')->get());
+    }
+
     /** @return list<array<string, mixed>> accounts with an agent operation in flight */
     public function pending(): array
     {

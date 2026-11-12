@@ -391,3 +391,4 @@ textarea.input { height: auto; padding: 10px 12px; }
 @keyframes lp-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
 .bw-stat { border-bottom: 1px solid var(--border); }
+.page-head p.stack-note { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; }

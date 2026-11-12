@@ -146,6 +146,8 @@ dist/selinux/build.sh        # the SELinux module, built and checked against EL9
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
 tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 123 checks
 KEEP=1 tests/e2e/install.sh  # the same, and leaves the container running to look inside
+WEB=nginx tests/e2e/install.sh   # the same on another web stack (nginx or hybrid); each run also
+                                 # switches to another stack at the end and checks every site moved
 ```
 
 To poke at an installed panel by hand, start the same container and keep it:
@@ -209,6 +211,10 @@ It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
   off. For a true phone-width screenshot, load the page in a
   `<iframe style="width:390px">` and screenshot that.
 - Lang placeholders are `:name`, not `{name}`.
+- PHP-FPM's graceful reload keeps each pool's listening socket as it was, so
+  a change to `listen.owner`/`listen.group`/`listen.mode` needs a restart
+  (the agent restarts that version then, and reloads otherwise).
+- The e2e containers have no `hostname` command; use `ip -4 -o addr`.
 - An empty PHP array encodes as `[]`, and the agent's Go decoder refuses `[]`
   for a map field (`error_pages`, `php_settings`). Cast such fields to
   `(object)`. Stored args you send again must be decoded as objects
@@ -249,5 +255,3 @@ It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
   as `curl.exe`. With `MSYS_NO_PATHCONV=1` that stops, but then a curl cookie
   jar must be a Windows path (`C:/…/jar.txt`), or curl cannot save it and
   every form fails its CSRF check.
-- Headless Chrome cannot render a 390 px viewport directly. To check phone
-  width, load the page inside a 390 px iframe.

@@ -76,11 +76,21 @@ limited by these:
 | T37 | The panel (or anyone who took it over) turning a PHP change into installing any package, or passing options to dnf | The agent takes only a version and extension names from its own catalogue and builds the package names itself; anything else is `bad_args` before dnf runs | Go `TestPHPVersionsAndExtensionsComeOnlyFromTheCatalogue`, `PhpVersionsTest::test_extensions_are_the_whole_set_and_the_panels_own_stay` |
 | T38 | Removing PHP from under live sites, or from under the panel itself | A version is removed only when no pool uses it (checked by the agent while it holds the sites lock, and by the panel) and never the panel's own (`panel_php`), nor the extensions the panel needs. Only root, administrators and API tokens of theirs (`server.php`) may change PHP | Go `TestThePanelsOwnPHPAndAVersionInUseStay`, `PhpVersionsTest::test_resellers_and_owners_cannot_change_the_servers_php`, e2e install "a version a site uses stays", "the panel's own extensions stay" |
 | T39 | A customer making their bandwidth look smaller, or another's larger | Bytes come from Apache's own access logs in `/var/log/httpd/lpanel` (root only), not from anything an account can write. Each file is read by inode and offset, so rotation neither loses nor repeats bytes, and totals are replaced, never added to, in the panel | Go `TestTrafficCountsEachByteOnceAcrossCallsAndRotation`, `BandwidthTest`, e2e install "after the logs rotate, nothing is lost or counted twice" |
+| T40 | A visitor claiming another address through Apache behind nginx (hybrid), to dodge a site's IP rules or poison its logs | nginx sets `X-Forwarded-For` to the address it sees, never appending the visitor's own; Apache takes it only from 127.0.0.1 (`mod_remoteip`); Apache listens on 127.0.0.1:8080 only | e2e install (hybrid) "and a visitor cannot claim another one", "Apache is not reachable from outside" |
+| T41 | nginx alone serving what Apache would not: hidden files (`.env`, `.git`, `.htaccess`), PHP source, or a file through a customer's link to another account's | Hidden files are refused except `.well-known`; `.php` goes only to the account's pool (a file kind in hotlink protection is checked in the rewrite phase, never as a location that could serve it); links are followed only to files of the link's owner (`disable_symlinks if_not_owner`). A protected folder repeats these rules inside its own location | Go `TestNginxAloneServesEverySiteWithItsFeatures` |
+| T42 | A broken file elsewhere in nginx's or Apache's configuration making a reload take every site down | Each change is tested over the server's whole configuration (`httpd -t`; `nginx -t` over nginx's own `nginx.conf` with a staged `conf.d`) before anything live changes | Go `TestNginxTestsTheCandidateAmongEveryOtherAccount`, e2e install (each stack) "a broken … config stops the change, and every site keeps running" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
 
 ## Known gaps
 
 These are tracked, not forgotten. Each names the milestone that closes it.
+
+- **The panel's nginx and the sites' nginx share the `nginx` user.** With
+  nginx serving sites (alone, or in front of Apache as a member of its
+  group), the panel's own nginx workers could read what the sites' nginx may
+  read: customers' `public_html`. Both are started by root and serve only
+  configuration LPanel writes, so this needs a flaw in nginx itself. A
+  dedicated user for the panel's nginx closes it (M9).
 
 - **SELinux enforcing has not yet been run on a VM.** The policy module is
   checked against EL9's compiled policy, and that check found and fixed real

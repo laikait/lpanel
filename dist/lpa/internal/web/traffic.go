@@ -64,8 +64,8 @@ func (m *Manager) Traffic(ctx context.Context) (Traffic, error) {
 	budget := int64(trafficChunk)
 	more := false
 
-	logs, _ := filepath.Glob(filepath.Join(m.LogDir, "*.access.log.1"))
-	current, _ := filepath.Glob(filepath.Join(m.LogDir, "*.access.log"))
+	logs, _ := filepath.Glob(filepath.Join(m.accessLogDir(), "*.access.log.1"))
+	current, _ := filepath.Glob(filepath.Join(m.accessLogDir(), "*.access.log"))
 	// The rotated file first: it holds the older lines.
 	for _, path := range append(logs, current...) {
 		if ctx.Err() != nil {
@@ -118,8 +118,10 @@ func (m *Manager) Traffic(ctx context.Context) (Traffic, error) {
 func (m *Manager) forgetTraffic(username string) error {
 	m.trafficMu.Lock()
 	defer m.trafficMu.Unlock()
-	for _, suffix := range []string{".access.log", ".error.log"} {
-		matches, _ := filepath.Glob(filepath.Join(m.LogDir, username+suffix+"*"))
+	for _, pattern := range []string{".access.log*", ".error.log*"} {
+		apache, _ := filepath.Glob(filepath.Join(m.LogDir, username+pattern))
+		nginx, _ := filepath.Glob(filepath.Join(m.NginxLogDir, username+pattern))
+		matches := append(apache, nginx...)
 		for _, p := range matches {
 			if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err

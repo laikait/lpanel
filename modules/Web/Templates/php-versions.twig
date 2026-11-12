@@ -5,6 +5,7 @@
     <div>
         <h1>{{ 'Web.php_versions'|local }}</h1>
         <p>{{ 'Web.php_versions_lead'|local }}</p>
+        {% if stack in ['apache', 'nginx', 'hybrid'] %}<p class="stack-note">{{ icon('server', 'ic-sm') }}{{ ('Web.stack_' ~ stack)|local }}</p>{% endif %}
     </div>
     {% if installed is not empty %}
         <form class="php-default" method="post" action="{{ default_url }}">

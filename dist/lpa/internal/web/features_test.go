@@ -64,7 +64,7 @@ func TestFeaturesAreRendered(t *testing.T) {
 		t.Fatalf("the protected block is not after the site's own:\n%s", site)
 	}
 
-	if files := m.htpasswdOf("shop1"); len(files) != 2 {
+	if files := htpasswdIn(m.Htpasswd, "shop1"); len(files) != 2 {
 		t.Fatalf("login files %v", files)
 	}
 	logins := read(t, m.htpasswdFile("shop1", "shop.example.test", "admin/area"))
@@ -118,7 +118,7 @@ func TestChangingOnlyAPasswordReloadsNothing(t *testing.T) {
 	if _, err := m.Remove(context.Background(), NameArgs{Username: "shop1"}); err != nil {
 		t.Fatal(err)
 	}
-	if left := m.htpasswdOf("shop1"); len(left) != 0 {
+	if left := htpasswdIn(m.Htpasswd, "shop1"); len(left) != 0 {
 		t.Fatalf("login files left: %v", left)
 	}
 }

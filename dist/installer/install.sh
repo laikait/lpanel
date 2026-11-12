@@ -3,6 +3,11 @@
 #
 # Run as root from an unpacked bundle (dist/installer/bundle.sh makes one):
 #     ./install.sh [--hostname panel.example.com] [--allow-no-quota]
+#                  [--web apache|nginx|hybrid]
+#
+# --web chooses what serves customers' sites: Apache (the default), nginx,
+# or nginx in front of Apache (hybrid). Run it again with another --web to
+# switch; every site is then written for the new stack.
 #
 # It is safe to run again: secrets (database password, APP_KEY, the agent's
 # signing key, the TLS certificate) are made once and kept; code, units and
@@ -18,8 +23,9 @@ HOMES=/home          # every account's home is made here (lpa.json "homes_base")
 PHP=/usr/bin/php83
 HOSTNAME_ARG=""
 ALLOW_NO_QUOTA=0
+WEB_ARG=""
 
-usage() { sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; }
 step() { printf '\n==> %s\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
 die() { printf '\nlpanel install: %s\n' "$*" >&2; exit 1; }
@@ -28,6 +34,8 @@ while [ $# -gt 0 ]; do
     case "$1" in
         --hostname) HOSTNAME_ARG="${2:-}"; shift 2 ;;
         --allow-no-quota) ALLOW_NO_QUOTA=1; shift ;;
+        --web) WEB_ARG="${2:-}"; shift 2 ;;
+        --web=*) WEB_ARG="${1#--web=}"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option $1 (see --help)" ;;
     esac
@@ -105,12 +113,48 @@ for v in $CUSTOMER_PHP; do
 done
 note "PHP for sites: $(for v in $CUSTOMER_PHP; do printf '%s.%s ' "${v:0:1}" "${v:1}"; done)"
 
-# The stock nginx stays off: the panel runs its own (lpanel-nginx). Each PHP
-# version's FPM service is started by the agent once an account uses it, so
-# it is left alone here: stopping it would take customers' sites down.
-systemctl disable --now nginx >/dev/null 2>&1 || true
-# Apache serves customers' sites; the agent writes its sites and reloads it.
-systemctl enable -q --now httpd
+# What serves customers' sites: --web, else what this server runs already.
+WEB_BEFORE=$($PHP -r '$c = json_decode((string) @file_get_contents("/etc/lpa/lpa.json"), true); echo is_array($c) ? ($c["web"] ?? "") : "";' 2>/dev/null || true)
+WEB="${WEB_ARG:-${WEB_BEFORE:-apache}}"
+case "$WEB" in apache|nginx|hybrid) ;; *) die "--web must be apache, nginx or hybrid, not '$WEB'." ;; esac
+
+# Each PHP version's FPM service is started by the agent once an account uses
+# it, so it is left alone here: stopping it would take customers' sites down.
+# The panel runs its own nginx (lpanel-nginx) whatever the stack.
+httpd_listen() { sed -i -E "s/^Listen .*/Listen $1/" /etc/httpd/conf/httpd.conf; }
+sites_nginx() {
+    [ -f /etc/nginx/nginx.conf.lpanel-orig ] || cp -p /etc/nginx/nginx.conf /etc/nginx/nginx.conf.lpanel-orig
+    install -m 0644 "$BUNDLE/packaging/nginx-sites.conf" /etc/nginx/nginx.conf
+    install -d -m 0755 /etc/nginx/lpanel /etc/nginx/lpanel/sites /var/log/nginx/lpanel
+}
+case "$WEB" in
+    apache)
+        # Apache on :80 alone.
+        systemctl disable --now nginx >/dev/null 2>&1 || true
+        httpd_listen 80
+        systemctl enable -q httpd && systemctl restart httpd
+        ;;
+    nginx)
+        # nginx on :80 alone; Apache stays installed but off.
+        systemctl disable --now httpd >/dev/null 2>&1 || true
+        sites_nginx
+        systemctl enable -q nginx && systemctl restart nginx
+        ;;
+    hybrid)
+        # nginx on :80 in front, Apache behind it on 127.0.0.1:8080. nginx
+        # serves static files itself, so it joins Apache's group, which may
+        # read public_html.
+        usermod -a -G apache nginx
+        httpd_listen 127.0.0.1:8080
+        sites_nginx
+        systemctl enable -q httpd nginx
+        systemctl stop nginx >/dev/null 2>&1 || true
+        systemctl restart httpd
+        systemctl start nginx
+        ;;
+esac
+[ "$WEB" = hybrid ] || gpasswd -d nginx apache >/dev/null 2>&1 || true
+note "sites are served by: $WEB${WEB_BEFORE:+ (was $WEB_BEFORE)}"
 
 # ---------------------------------------------------------------------------
 step "Users and directories"
@@ -218,8 +262,8 @@ chmod 0750 /usr/local/sbin/lpanel
 LPA_QUOTA=on
 [ "$QUOTA_ON" -eq 1 ] || LPA_QUOTA=off
 $PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
-    $c["homes_base"] ??= "/home"; $c["quota"] = $argv[1]; $c["web"] ??= "apache"; $c["panel_php"] = $argv[2];
-    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$LPA_QUOTA" "${PHP##*php}"
+    $c["homes_base"] ??= "/home"; $c["quota"] = $argv[1]; $c["web"] = $argv[3]; $c["panel_php"] = $argv[2];
+    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$LPA_QUOTA" "${PHP##*php}" "$WEB"
 note "disk quotas for accounts: $LPA_QUOTA"
 [ -f /etc/lpanel/authd.json ] || install -m 0644 "$BUNDLE/packaging/authd.json" /etc/lpanel/authd.json
 install -m 0644 "$BUNDLE/packaging/pam.d-lpanel.el" /etc/pam.d/lpanel
@@ -263,6 +307,9 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
     restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa
     install -d -m 0755 /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
+    for d in /etc/nginx/lpanel /var/log/nginx/lpanel /etc/nginx/nginx.conf; do
+        if [ -e "$d" ]; then restorecon -R "$d"; fi
+    done
     for d in "$HOMES"/*/public_html "$HOMES"/*/tmp "$HOMES"/*/logs; do
         if [ -d "$d" ]; then restorecon -R "$d"; fi
     done
@@ -286,6 +333,13 @@ systemctl enable -q --now lpa.service lpanel-authd.socket lpanel-php-fpm.service
 # and SELinux domains into effect (authd's socket is made again with its label).
 systemctl restart lpa.service lpanel-authd.socket lpanel-php-fpm.service lpanel-nginx.service
 for _ in $(seq 50); do [ -S /run/lpa/lpa.sock ] && [ -S /run/lpanel/php-fpm.sock ] && break; sleep 0.2; done
+
+# After a switch of stack, every account's sites are written for the new one
+# (the agent also removes the old stack's files).
+if [ -n "$WEB_BEFORE" ] && [ "$WEB_BEFORE" != "$WEB" ]; then
+    runuser -u lpanel -- $PHP "$PANEL/laika" web:sync --all && note "every site moved from $WEB_BEFORE to $WEB" \
+        || note "some sites did not move yet; web:settle retries them every minute"
+fi
 
 # ---------------------------------------------------------------------------
 step "Checking the installation"

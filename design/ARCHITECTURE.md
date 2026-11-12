@@ -122,9 +122,9 @@ AlmaLinux 9.
 
 Code from the earlier attempt, still to review and reuse where it fits:
 
-- `C:\xampp\htdocs\lpa\internal\websites`: the staged config pipeline, and the
-  Apache and Nginx renderers (M2).
-- The ACME client code there (M3).
+- The ACME client code in `C:\xampp\htdocs\lpa` (M3). Its staged config
+  pipeline and its Apache and nginx renderers were rewritten in `internal/web`
+  in M2.
 - `helpers/authd`: in this repo's git history at commit `ee0adbd` (M0c).
 
 Already carried over in M0b: `sysinfo`, `fsutil` and the SO_PEERCRED check.
@@ -193,9 +193,14 @@ user, not from SELinux.
 | `/etc/httpd/lpanel/sites/<user>.conf` | each account's sites, a VirtualHost per site with its redirects, error pages, hotlink rules and protected folders (labelled `httpd_config_t`) |
 | `/etc/httpd/lpanel/htpasswd/<user>-<hash>.htpasswd` | the logins of a protected folder, bcrypt hashes only (0640 root:apache) |
 | `/etc/opt/remi/php<XY>/php-fpm.d/lpanel-<user>.conf` | each account's pool for that PHP version, running as the account, with the owner's php.ini settings for that version; Remi's sample `www.conf` is emptied |
-| `/var/opt/remi/php<XY>/run/php-fpm/lpanel-<user>.sock` | the pool's socket, usable only by Apache's group |
+| `/var/opt/remi/php<XY>/run/php-fpm/lpanel-<user>.sock` | the pool's socket, usable only by the web server's group |
 | `/var/log/httpd/lpanel/<user>.access.log`, `.error.log` | each account's Apache logs, with bytes in and out for bandwidth |
-| `/home/<user>/public_html/` | every site's folder is this or one below it (0750, Apache's group, `httpd_user_rw_content_t`) |
+| `/etc/nginx/nginx.conf` | with nginx serving sites (`--web=nginx` or `hybrid`): the installer's own, which includes `conf.d/` only (the package's is kept as `nginx.conf.lpanel-orig`) |
+| `/etc/nginx/conf.d/lpanel.conf`, `/etc/nginx/lpanel/sites/<user>.conf` | the same for nginx: log format, 404 default site, and a server block per site |
+| `/etc/nginx/lpanel/htpasswd/` | protected folders' logins when nginx alone checks them (0640 root:nginx) |
+| `/var/log/nginx/lpanel/<user>.access.log`, `.error.log` | each account's nginx logs; bandwidth is counted from these when nginx is in front |
+| `/etc/logrotate.d/lpanel` | rotates the accounts' Apache and nginx logs daily and the panel's weekly |
+| `/home/<user>/public_html/` | every site's folder is this or one below it (0750 with the web server's group, `httpd_user_rw_content_t`) |
 | `/home/<user>/tmp/`, `/home/<user>/logs/` | the account's PHP sessions and uploads, and its PHP error log |
 
 Services: `lpa`, `lpanel-authd.socket` (socket-activated), `lpanel-php-fpm`,

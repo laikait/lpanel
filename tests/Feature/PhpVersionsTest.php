@@ -40,7 +40,7 @@ final class PhpVersionsTest extends TestCase
     {
         $page = $this->alice->get('/admin/php');
         self::assertSame(200, $page->status());
-        foreach (['PHP 8.3', 'PHP 8.2', 'Runs the panel', 'Available to install', 'PHP 8.4', 'End of life'] as $shown) {
+        foreach (['PHP 8.3', 'PHP 8.2', 'Runs the panel', 'Available to install', 'PHP 8.4', 'End of life', 'Sites are served by Apache.'] as $shown) {
             self::assertStringContainsString($shown, $page->body());
         }
 

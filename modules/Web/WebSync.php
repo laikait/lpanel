@@ -49,7 +49,7 @@ final class WebSync
      * Bring an account's sites in step. Accounts that are being made or
      * removed are left alone: their operation in flight comes first.
      */
-    public function touch(int $accountId): WebOutcome
+    public function touch(int $accountId, bool $force = false): WebOutcome
     {
         $account = $this->accounts->byId($accountId);
 
@@ -61,11 +61,13 @@ final class WebSync
         $row = $this->row($accountId);
         $args = \json_encode($this->domains->state($account) + ['limited' => (bool) $row['limited']], \JSON_THROW_ON_ERROR);
 
-        if ($row['op_args'] === $args && $row['state'] === self::APPLIED) {
+        // Forced: the same state again under a new id, for a server whose
+        // files must be written anew (another web stack).
+        if ($row['op_args'] === $args && $row['state'] === self::APPLIED && !$force) {
             return WebOutcome::done();
         }
 
-        if ($row['op_args'] !== $args || $row['state'] === self::FAILED) {
+        if ($row['op_args'] !== $args || $row['state'] === self::FAILED || $force) {
             $this->table()->where('id', (int) $row['id'])->update([
                 'revision' => (int) $row['revision'] + 1,
                 'op_id' => Protocol::newId(),

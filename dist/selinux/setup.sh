@@ -15,8 +15,9 @@ noreload=()
 # the panel's PHP-FPM, and the panel's own paths (lpanel.te, lpanel.fc).
 if [ "${#noreload[@]}" -gt 0 ]; then semodule -n -i "$pp"; else semodule -i "$pp"; fi
 
-# The panel's two ports are web ports.
-for port in 7443 7444; do
+# The panel's two ports, and Apache's behind nginx (hybrid; 8080 is otherwise
+# a proxy-cache port), are web ports.
+for port in 7443 7444 8080; do
     semanage port "${noreload[@]}" -a -t http_port_t -p tcp "$port" 2>/dev/null \
         || semanage port "${noreload[@]}" -m -t http_port_t -p tcp "$port"
 done

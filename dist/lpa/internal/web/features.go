@@ -216,7 +216,7 @@ func containsString(list []string, s string) bool {
 // from the account and the folder, so the same folder keeps its file.
 func (m *Manager) htpasswdFile(username, siteName, path string) string {
 	sum := sha256.Sum256([]byte(siteName + "\x00" + path))
-	return filepath.Join(m.Htpasswd, username+"-"+hex.EncodeToString(sum[:])[:12]+".htpasswd")
+	return filepath.Join(m.htpasswdDir(), username+"-"+hex.EncodeToString(sum[:])[:12]+".htpasswd")
 }
 
 func renderHtpasswd(p Protected) []byte {

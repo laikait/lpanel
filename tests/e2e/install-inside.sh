@@ -28,19 +28,41 @@ dnf -y -q install procps-ng >/dev/null 2>&1
 source /e2e/quota-home.sh
 quota_home 512M || exit 1
 
+# The web stack under test (WEB=apache, nginx or hybrid) and where its
+# files are: the front server's sites and logs, and the logins with the
+# server that checks them.
+WEB="${WEB:-apache}"
+case "$WEB" in
+    apache) SITES=/etc/httpd/lpanel/sites; LOGINS=/etc/httpd/lpanel/htpasswd; LOGIN_GROUP=apache; LOGS=/var/log/httpd/lpanel; CONFD=/etc/httpd/conf.d; FRONT=httpd ;;
+    nginx)  SITES=/etc/nginx/lpanel/sites; LOGINS=/etc/nginx/lpanel/htpasswd; LOGIN_GROUP=nginx; LOGS=/var/log/nginx/lpanel; CONFD=/etc/nginx/conf.d; FRONT=nginx ;;
+    hybrid) SITES=/etc/nginx/lpanel/sites; LOGINS=/etc/httpd/lpanel/htpasswd; LOGIN_GROUP=apache; LOGS=/var/log/nginx/lpanel; CONFD=/etc/httpd/conf.d; FRONT=nginx ;;
+    *) echo "WEB must be apache, nginx or hybrid"; exit 1 ;;
+esac
+export WEB SITES LOGINS LOGIN_GROUP LOGS CONFD FRONT
+echo "   web stack: $WEB"
+
 echo "== install"
-check "the installer finishes" bash -c '/bundle/install.sh --hostname e2e-panel.test > /tmp/install.log 2>&1 || { tail -40 /tmp/install.log; exit 1; }'
+check "the installer finishes" bash -c '/bundle/install.sh --hostname e2e-panel.test --web=$WEB > /tmp/install.log 2>&1 || { tail -40 /tmp/install.log; exit 1; }'
 grep -q "LPanel is installed." /tmp/install.log && echo "        (installer printed the sign-in details)"
 
 echo "== services"
 for unit in mariadb lpa lpanel-authd.socket lpanel-php-fpm lpanel-nginx lpanel-scheduler.timer; do
     check "$unit is active" systemctl is-active --quiet "$unit"
 done
-check "the stock nginx stays off" bash -c '! systemctl is-active --quiet nginx'
 check "the panel's PHP is not among customers' pools" bash -c '! grep -rqs "lpanel/php-fpm.sock" /etc/opt/remi/php*/php-fpm.d/'
-check "Apache is running for customers' sites" systemctl is-active --quiet httpd
+case "$WEB" in
+    apache)
+        check "the sites' nginx stays off" bash -c '! systemctl is-active --quiet nginx'
+        check "Apache serves customers' sites on :80" bash -c 'systemctl is-active --quiet httpd && grep -q "^Listen 80$" /etc/httpd/conf/httpd.conf' ;;
+    nginx)
+        check "nginx serves customers' sites" systemctl is-active --quiet nginx
+        check "Apache stays off" bash -c '! systemctl is-active --quiet httpd' ;;
+    hybrid)
+        check "nginx is in front, Apache behind it on 127.0.0.1:8080" bash -c 'systemctl is-active --quiet nginx && systemctl is-active --quiet httpd && grep -q "^Listen 127.0.0.1:8080$" /etc/httpd/conf/httpd.conf'
+        check "nginx may read what Apache may (its group)" bash -c 'id -nG nginx | grep -qw apache' ;;
+esac
 check "Remi's sample pools are emptied" bash -c '! grep -qs "^\[www\]" /etc/opt/remi/php82/php-fpm.d/www.conf /etc/opt/remi/php83/php-fpm.d/www.conf'
-check "the agent is told to use Apache" grep -q '"web": "apache"' /etc/lpa/lpa.json
+check "the agent is told which stack serves the sites" grep -q "\"web\": \"$WEB\"" /etc/lpa/lpa.json
 check "scheduled tasks run" systemctl start lpanel-scheduler.service
 check "the agent is told quotas are on" grep -q '"quota": "on"' /etc/lpa/lpa.json
 check "root has the lpanel command" bash -c 'lpanel help | grep -q accounts:create'
@@ -193,7 +215,7 @@ put()  { install -o "$1" -g "$1" -m 0644 "$2" "$3"; }      # user, source, targe
 site() { curl -s -o /tmp/site.out -w '%{http_code}' -H "Host: $1" http://127.0.0.1/; }
 says() { [ "$(site "$1")" = 200 ] && grep -q "$2" /tmp/site.out || { echo "$1: $(cat /tmp/site.out)"; return 1; }; }
 export -f put site says
-t_main()    { [ -f /etc/httpd/lpanel/sites/shop1.conf ] && put shop1 /tmp/who.php /home/shop1/public_html/index.php && says shop.example.test "8.3 as shop1"; }
+t_main()    { [ -f $SITES/shop1.conf ] && put shop1 /tmp/who.php /home/shop1/public_html/index.php && says shop.example.test "8.3 as shop1"; }
 t_addon()   { lpanel domains:add shop1 other.example.test --php=8.2 && put shop1 /tmp/who.php /home/shop1/public_html/other.example.test/index.php && says other.example.test "8.2 as shop1"; }
 t_sub()     { lpanel domains:add shop1 blog.shop.example.test --type=sub && put shop1 /tmp/who.php /home/shop1/public_html/blog/index.php && says blog.shop.example.test "8.3 as shop1"; }
 t_alias()   { lpanel domains:add shop1 shop-alias.example.test --type=alias --target=shop.example.test && says shop-alias.example.test "8.3 as shop1" && says www.shop-alias.example.test "8.3 as shop1"; }
@@ -201,14 +223,21 @@ t_list()    { lpanel domains:list shop1 | tee /dev/stderr | grep -Eq '^other\.ex
 t_isolated() { put shop3 /tmp/peek.php /home/shop3/public_html/index.php && says three.example.test "bool(false)"; }
 t_suspend() { lpanel accounts:suspend shop3 && [ "$(site three.example.test)" = 503 ] && ! ls /etc/opt/remi/php*/php-fpm.d/lpanel-shop3.conf 2>/dev/null; }
 t_unsuspend() { lpanel accounts:unsuspend shop3 && says three.example.test "bool(false)"; }
-t_gone()    { [ ! -e /etc/httpd/lpanel/sites/shop2.conf ] && ! ls /etc/opt/remi/php*/php-fpm.d/lpanel-shop2.conf 2>/dev/null && [ "$(site two.example.test)" = 404 ]; }
-t_broken()  { echo "ThisIsNotADirective" > /etc/httpd/conf.d/zz-broken.conf
+t_gone()    { [ ! -e $SITES/shop2.conf ] && ! ls /etc/opt/remi/php*/php-fpm.d/lpanel-shop2.conf 2>/dev/null && [ "$(site two.example.test)" = 404 ]; }
+t_broken()  { echo "ThisIsNotADirective" > $CONFD/zz-broken.conf
               ! lpanel domains:add shop1 broken.example.test 2>&1 | tee /dev/stderr | grep -q added
-              local ok=$?; rm -f /etc/httpd/conf.d/zz-broken.conf
-              [ $ok = 0 ] && ! lpanel domains:list shop1 | grep -q broken && systemctl is-active --quiet httpd && says shop.example.test "8.3 as shop1"; }
+              local ok=$?; rm -f $CONFD/zz-broken.conf
+              [ $ok = 0 ] && ! lpanel domains:list shop1 | grep -q broken && systemctl is-active --quiet $FRONT && says shop.example.test "8.3 as shop1"; }
 t_link()    { runuser -u shop1 -- ln -s /etc /home/shop1/public_html/evil
               ! lpanel domains:add shop1 evil.example.test --docroot=public_html/evil/x && [ ! -e /etc/x ] && ! lpanel domains:list shop1 | grep -q evil; }
-t_page()    { signin_as 7444 /panel shop1 Owner-Pass-Word-1 >/dev/null && curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/domains | grep -q "blog.shop.example.test"; }
+# Once it came back without the list in one run of many; it says what it got
+# and tries once more, so a second miss is a real one.
+t_page()    { local i code; for i in 1 2; do
+                  signin_as 7444 /panel shop1 Owner-Pass-Word-1 >/dev/null
+                  code=$(curl -ks -b /tmp/jar2 -o /tmp/domains.html -w '%{http_code}' https://127.0.0.1:7444/panel/domains)
+                  grep -q "blog.shop.example.test" /tmp/domains.html && return 0
+                  echo "try $i: $code $(grep -o '<title>[^<]*' /tmp/domains.html)"; sleep 3
+              done; return 1; }
 t_domain_audit() { [ "$(mariadb -uroot -N lpanel -e "select count(*) from audit_log where action='domain.add' and outcome='ok'")" = 3 ]; }
 check "the main site runs PHP 8.3 as the account's own user" t_main
 check "www. answers too" says www.shop.example.test "8.3 as shop1"
@@ -237,13 +266,13 @@ t_temporary() { lpanel domains:redirect shop1 $O /sale https://example.org/sale 
 t_canonical() { lpanel domains:set shop1 $O --canonical=www && [ "$(get $O /a?b=1)" = "301 http://www.$O/a?b=1" ] && says www.$O "8.2 as shop1"; }
 t_either()    { lpanel domains:set shop1 $O --canonical=either && says $O "8.2 as shop1"; }
 t_errorpage() { echo "custom missing page" > /tmp/missing.html && put shop1 /tmp/missing.html $OD/missing.html \
-                && lpanel domains:error-page shop1 $O 404 /missing.html && [ "$(get $O /nothing-here)" = "404 " ] && grep -q "custom missing page" /tmp/site.out; }
+                && lpanel domains:error-page shop1 $O 404 /missing.html && [ "$(get $O /nothing-here.html)" = "404 " ] && grep -q "custom missing page" /tmp/site.out; }
 t_protect()   { : > /tmp/get.log; mkdir -p $OD/private && echo "members only" > $OD/private/index.html && chown -R shop1:shop1 $OD/private \
                 && echo "Ann-Pass-Word-1" | lpanel domains:protect shop1 $O private --realm=Members --login=ann \
                 && [ "$(get $O /private/)" = "401 " ] && [ "$(get $O /private/ -u ann:wrong-password)" = "401 " ] \
                 && [ "$(get $O /private/ -u ann:Ann-Pass-Word-1)" = "200 " ] && grep -q "members only" /tmp/site.out \
                 && [ "$(get $O /)" = "200 " ]; }
-t_logins()    { local f; f=$(ls /etc/httpd/lpanel/htpasswd/shop1-*.htpasswd) && [ "$(stat -c '%a %U %G' "$f")" = "640 root apache" ] \
+t_logins()    { local f; f=$(ls $LOGINS/shop1-*.htpasswd) && [ "$(stat -c '%a %U %G' "$f")" = "640 root $LOGIN_GROUP" ] \
                 && grep -q '^ann:\$2y\$' "$f" && ! grep -q "Ann-Pass-Word-1" "$f" \
                 && ! runuser -u intruder -- cat "$f" 2>/dev/null; }
 t_logout()    { : > /tmp/get.log; lpanel domains:protect-login shop1 $O private ann --remove && [ "$(get $O /private/ -u ann:Ann-Pass-Word-1)" = "401 " ]; }
@@ -263,7 +292,7 @@ check "visitors can be sent to www." t_canonical
 check "and back to either" t_either
 check "a custom error page" t_errorpage
 check "a protected folder asks for its password, and takes only the right one" t_protect
-check "its logins are bcrypt hashes, 640 root:apache, unreadable to others" t_logins
+check "its logins are bcrypt hashes, 640 root and the web group, unreadable to others" t_logins
 check "a removed login no longer gets in" t_logout
 check "hotlink protection refuses other sites, not the site or direct visits" t_hotlink
 check "php.ini settings reach PHP for that version" t_phpini
@@ -304,21 +333,21 @@ check "PHP changes are in the audit log" t_php_audited
 echo "== bandwidth and log rotation"
 # Bytes sent plus received in an access log, as Apache wrote them (%O %I
 # after the status), to compare with what the panel counted.
-logged() { cat /var/log/httpd/lpanel/shop1.access.log* 2>/dev/null | awk 'match($0, /" [0-9][0-9][0-9] [0-9]+ [0-9]+ "/) { split(substr($0, RSTART + 2, RLENGTH - 3), f, " "); s += f[2] + f[3] } END { print s + 0 }'; }
+logged() { cat $LOGS/shop1.access.log* 2>/dev/null | awk 'match($0, /" [0-9][0-9][0-9] [0-9]+ [0-9]+ "/) { split(substr($0, RSTART + 2, RLENGTH - 3), f, " "); s += f[2] + f[3] } END { print s + 0 }'; }
 counted() { lpanel web:bandwidth shop1 | awk '/^used/ { print $2 }'; }
 export -f logged counted
 head -c 600000 /dev/urandom > /tmp/big.bin
 t_counted()  { put shop1 /tmp/big.bin $OD/big.bin && for _ in 1 2 3; do get $O /big.bin >/dev/null; done \
                && lpanel web:traffic && [ "$(counted)" = "$(logged)" ] && [ "$(counted)" -gt 1800000 ]; }
 t_twice()    { local before; before=$(counted) && lpanel web:traffic && [ "$(counted)" = "$before" ]; }
-t_rotated()  { logrotate -f /etc/logrotate.d/lpanel && [ -f /var/log/httpd/lpanel/shop1.access.log.1 ] && get $O /big.bin >/dev/null \
+t_rotated()  { logrotate -f /etc/logrotate.d/lpanel && [ -f $LOGS/shop1.access.log.1 ] && get $O /big.bin >/dev/null \
                && lpanel web:traffic && [ "$(counted)" = "$(logged)" ]; }
 # (A fresh machine has no logrotate state file yet; -d says so, harmlessly.)
-t_rotate_cfg() { logrotate -d /etc/logrotate.d/lpanel > /tmp/logrotate.out 2>&1; grep -q 'httpd/lpanel' /tmp/logrotate.out && ! grep '^error:' /tmp/logrotate.out | grep -v 'state file'; }
+t_rotate_cfg() { logrotate -d /etc/logrotate.d/lpanel > /tmp/logrotate.out 2>&1; grep -q "$LOGS" /tmp/logrotate.out && ! grep '^error:' /tmp/logrotate.out | grep -v 'state file'; }
 t_gone_logs()  { echo "Owner-Pass-Word-5" | lpanel accounts:create shop5 five.example.test Starter && get five.example.test / >/dev/null \
-                 && [ -f /var/log/httpd/lpanel/shop5.access.log ] && lpanel accounts:terminate shop5 --yes \
+                 && [ -f $LOGS/shop5.access.log ] && lpanel accounts:terminate shop5 --yes \
                  && for _ in $(seq 60); do getent passwd shop5 >/dev/null || break; lpanel accounts:settle >/dev/null; sleep 2; done \
-                 && ! getent passwd shop5 && ! ls /var/log/httpd/lpanel/shop5.* 2>/dev/null; }
+                 && ! getent passwd shop5 && ! ls /var/log/*/lpanel/shop5.* 2>/dev/null; }
 t_limited()  { lpanel packages:create Tiny --disk=3 --inodes=2000 --bandwidth=1 && lpanel accounts:package shop1 Tiny && lpanel web:traffic \
                && [ "$(get $O /)" = "503 " ] && grep -q "used its bandwidth for this month" /tmp/site.out \
                && lpanel web:bandwidth shop1 | grep -q "stopped"; }
@@ -340,6 +369,54 @@ check "and keeps every secret" bash -c "[ \"\$(sha256sum /usr/local/lpanel/.env 
 check "root can still sign in" bash -c "rm -f $jar; [ \"\$(signin '$ROOT_PASSWORD')\" = '303 https://127.0.0.1:7443/admin' ]"
 check "and the accounts are still there" t_active
 check "and their sites are still served" says other.example.test "8.2 as shop1"
+check "and on the same web stack" grep -q "\"web\": \"$WEB\"" /etc/lpa/lpa.json
+
+echo "== the web stack ($WEB)"
+ME=$(ip -4 -o addr show scope global | awk '{ split($4, a, "/"); print a[1]; exit }')   # this machine, not 127.0.0.1
+export ME O OD
+cat > /tmp/ip.php <<'PHP'
+<?php echo 'from ', $_SERVER['REMOTE_ADDR'];
+PHP
+put shop1 /tmp/ip.php $OD/ip.php
+printf 'body { color: red; }\n' > /tmp/x.css && put shop1 /tmp/x.css $OD/x.css
+headers() { curl -s -o /dev/null -D - -H "Host: $1" "http://127.0.0.1$2" | tr -d '\r'; }
+export -f headers
+case "$WEB" in
+    nginx)
+        check "an app's own addresses reach its index.php (there is no .htaccess)" bash -c '[ "$(get $O /shop/cart)" = "200 " ] && grep -q "8.2 as shop1" /tmp/site.out'
+        check "PHP sees the visitor's address" bash -c 'curl -s -H "Host: $O" "http://$ME/ip.php" | grep -qx "from $ME"' ;;
+    hybrid)
+        check "nginx serves static files itself" bash -c 'h=$(headers $O /x.css) && grep -q "^X-LPanel-Front:" <<<"$h" && ! grep -q "^X-LPanel-Revision:" <<<"$h"'
+        check "and passes PHP to Apache" bash -c 'h=$(headers $O /ip.php) && grep -q "^X-LPanel-Front:" <<<"$h" && grep -q "^X-LPanel-Revision:" <<<"$h"'
+        check "Apache sees the visitor's address, not nginx's" bash -c 'curl -s -H "Host: $O" "http://$ME/ip.php" | grep -qx "from $ME"'
+        check "and a visitor cannot claim another one" bash -c 'curl -s -H "Host: $O" -H "X-Forwarded-For: 203.0.113.9" "http://$ME/ip.php" | grep -qx "from $ME"'
+        check "Apache is not reachable from outside" bash -c '! curl -s -m 3 -o /dev/null "http://$ME:8080/"'
+        check "a password still guards a static file in a protected folder" bash -c 'echo x > '"$OD"'/private/note.txt && chown shop1: '"$OD"'/private/note.txt && [ "$(get $O /private/note.txt)" = "401 " ]' ;;
+    apache)
+        check "PHP sees the visitor's address" bash -c 'curl -s -H "Host: $O" "http://$ME/ip.php" | grep -qx "from $ME"' ;;
+esac
+
+# Each stack switches to another, and every site moves with it.
+NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
+echo "== switching to $NEXT"
+t_switched() {
+    /bundle/install.sh --hostname e2e-panel.test --web=$NEXT > /tmp/install3.log 2>&1 || { tail -30 /tmp/install3.log; return 1; }
+    grep -q "every site moved from $WEB to $NEXT" /tmp/install3.log && grep -q "\"web\": \"$NEXT\"" /etc/lpa/lpa.json
+}
+t_moved_files() {
+    case "$NEXT" in
+        apache) [ -f /etc/httpd/lpanel/sites/shop1.conf ] && [ ! -e /etc/nginx/lpanel/sites/shop1.conf ] && ! systemctl is-active --quiet nginx ;;
+        nginx)  [ -f /etc/nginx/lpanel/sites/shop1.conf ] && [ ! -e /etc/httpd/lpanel/sites/shop1.conf ] && ! systemctl is-active --quiet httpd \
+                && ls /etc/nginx/lpanel/htpasswd/shop1-*.htpasswd >/dev/null && ! ls /etc/httpd/lpanel/htpasswd/shop1-* 2>/dev/null ;;
+        hybrid) [ -f /etc/httpd/lpanel/sites/shop1.conf ] && [ -f /etc/nginx/lpanel/sites/shop1.conf ] && systemctl is-active --quiet nginx httpd ;;
+    esac
+}
+export NEXT
+check "the installer switches the stack and moves every site" t_switched
+check "only the new stack's files are left" t_moved_files
+check "every site is served by the new stack" bash -c 'says shop.example.test "8.3 as shop1" && says other.example.test "8.2 as shop1" && says three.example.test "bool(false)"'
+check "redirects, the protected folder and hotlink protection came along" bash -c '[ "$(get $O /old/page)" = "301 https://example.org/new/page" ] && [ "$(get $O /private/)" = "401 " ] && [ "$(get $O /logo.png -e http://elsewhere.test/page)" = "403 " ]'
+check "a name nobody serves is still a 404" bash -c '[ "$(site nobody.example.test)" = 404 ]'
 
 if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     echo "== SELinux ($(getenforce))"

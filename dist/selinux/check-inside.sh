@@ -85,6 +85,7 @@ check "nginx connects to PHP-FPM"                allowed -s httpd_t -t httpd_t -
 echo "== what accounts' sites (Apache and their PHP-FPM, also httpd_t) need"
 on_by_default() { local r; r=$(semanage boolean -l); grep -Eq "^$1 +\([a-z]+ *, *on\)" <<<"$r" || { grep -E "^$1 " <<<"$r"; return 1; }; }
 check "7443 and 7444 are web ports"              bash -c 'semanage port -l | grep -E "^http_port_t" | grep -q 7443'
+check "8080, Apache behind nginx, is a web port"     bash -c 'semanage port -l | grep -E "^http_port_t" | grep -q 8080'
 check "Apache may enter homes (httpd_enable_homedirs)" on_by_default httpd_enable_homedirs
 check "PHP may call other sites (httpd_can_network_connect)" on_by_default httpd_can_network_connect
 check "PHP may use databases over TCP"           on_by_default httpd_can_network_connect_db

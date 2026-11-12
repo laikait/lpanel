@@ -27,6 +27,7 @@ var Tools = map[string]string{
 	// The web server: config tests, and reloads through systemd.
 	"httpd":     "/usr/sbin/httpd",
 	"systemctl": "/usr/bin/systemctl",
+	"nginx":     "/usr/sbin/nginx",
 	// PHP versions and extensions from Remi's repository. Package names are
 	// made by the agent from its own catalogue, never taken from the panel.
 	"dnf": "/usr/bin/dnf",

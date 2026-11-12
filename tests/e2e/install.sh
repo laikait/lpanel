@@ -4,7 +4,8 @@
 # the real root password through real PAM, and see live data from the agent.
 #
 #   dist/lpa/build.sh && dist/authd/test/run.sh && dist/installer/bundle.sh
-#   tests/e2e/install.sh          (KEEP=1 keeps the container for a look inside)
+#   tests/e2e/install.sh          (KEEP=1 keeps the container for a look inside;
+#                                  WEB=nginx|hybrid tests that web stack)
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 if ! command -v docker >/dev/null 2>&1; then
@@ -29,4 +30,5 @@ docker cp "${bundle%/}/." "$name:/bundle/"
 docker cp tests/e2e/install-inside.sh "$name:/e2e/install-inside.sh"
 docker cp tests/e2e/quota-home.sh "$name:/e2e/quota-home.sh"
 # HOME_FS=xfs tests/e2e/install.sh puts /home on XFS with uquota instead of ext4.
-docker exec -e HOME_FS="${HOME_FS:-ext4}" "$name" bash /e2e/install-inside.sh
+# WEB=nginx or WEB=hybrid tests/e2e/install.sh installs that web stack instead of Apache.
+docker exec -e HOME_FS="${HOME_FS:-ext4}" -e WEB="${WEB:-apache}" "$name" bash /e2e/install-inside.sh

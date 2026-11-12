@@ -74,14 +74,19 @@ func setup(t *testing.T) (*Manager, *fakeRun, *probeLog, string) {
 		Include:  filepath.Join(root, "httpd", "conf.d", "lpanel.conf"),
 		Sites:    filepath.Join(root, "httpd", "lpanel", "sites"),
 		Htpasswd: filepath.Join(root, "httpd", "lpanel", "htpasswd"),
-		Chown:    func(string, int, int) error { return nil },
-		LogDir:   filepath.Join(root, "log"),
-		PHPRoot:  filepath.Join(root, "opt"),
-		PHPConf:  filepath.Join(root, "etc-opt"),
-		PHPRun:   filepath.Join(root, "var-opt"),
-		Run:      run,
-		Log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
-		ProbeFor: 300 * time.Millisecond,
+		// nginx's, used by the nginx and hybrid stacks.
+		NginxInclude:  filepath.Join(root, "nginx", "conf.d", "lpanel.conf"),
+		NginxSites:    filepath.Join(root, "nginx", "lpanel", "sites"),
+		NginxHtpasswd: filepath.Join(root, "nginx", "lpanel", "htpasswd"),
+		NginxLogDir:   filepath.Join(root, "log-nginx"),
+		Chown:         func(string, int, int) error { return nil },
+		LogDir:        filepath.Join(root, "log"),
+		PHPRoot:       filepath.Join(root, "opt"),
+		PHPConf:       filepath.Join(root, "etc-opt"),
+		PHPRun:        filepath.Join(root, "var-opt"),
+		Run:           run,
+		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ProbeFor:      300 * time.Millisecond,
 		Owner: func(name string) (int, int, string, error) {
 			if name != "shop1" {
 				return 0, 0, "", protocol.Fail("not_ours", name+" was not made by LPanel")
@@ -110,7 +115,11 @@ func setup(t *testing.T) (*Manager, *fakeRun, *probeLog, string) {
 	m.Defaults()
 	// PHP-FPM opens a socket for each pool it has when it reloads.
 	run.after = func(call string) {
-		if v, ok := strings.CutPrefix(call, "systemctl reload-or-restart php"); ok {
+		v, ok := strings.CutPrefix(call, "systemctl reload-or-restart php")
+		if !ok {
+			v, ok = strings.CutPrefix(call, "systemctl restart php")
+		}
+		if ok {
 			v = strings.TrimSuffix(v, "-php-fpm")
 			if _, err := os.Stat(m.poolFile(v, "shop1")); err == nil {
 				os.WriteFile(m.socket(v, "shop1"), nil, 0o660)
@@ -119,6 +128,7 @@ func setup(t *testing.T) (*Manager, *fakeRun, *probeLog, string) {
 	}
 	os.MkdirAll(filepath.Join(root, "httpd", "conf"), 0o755)
 	os.MkdirAll(filepath.Join(root, "httpd", "conf.d"), 0o755)
+	os.MkdirAll(filepath.Join(root, "nginx", "conf.d"), 0o755)
 	os.WriteFile(filepath.Join(root, "httpd", "conf", "httpd.conf"), nil, 0o644)
 	// Another account is already served; its file must survive everything.
 	os.MkdirAll(m.Sites, 0o755)

@@ -1,17 +1,24 @@
-// Package web configures the web server for hosting accounts: one Apache
-// file per account with a VirtualHost per site, and one PHP-FPM pool per
-// account for each PHP version its sites use (Remi's versions, side by side).
+// Package web configures the web server for hosting accounts: one file per
+// account with a site per domain, and one PHP-FPM pool per account for each
+// PHP version its sites use (Remi's versions, side by side).
+//
+// lpa.json "web" chooses the stack, for the whole server:
+//
+//	apache  Apache on :80 serves the sites and runs PHP through the pools;
+//	nginx   nginx on :80 does the same, without .htaccess;
+//	hybrid  nginx on :80 serves static files itself and passes the rest to
+//	        Apache on 127.0.0.1:8080, which runs PHP and reads .htaccess.
 //
 // The panel always sends an account's whole web state (web.apply). The agent
 // renders it, and when anything differs from what is live:
 //
 //  1. tests the candidate before anything live changes: each new pool with
-//     php-fpm -t, and Apache with the candidate file among copies of every
-//     other account's, through the LPANEL_SITES variable;
+//     php-fpm -t, Apache with httpd -t and nginx with nginx -t, each over
+//     the candidate file among copies of every other account's;
 //  2. swaps the files in, keeping the old ones;
-//  3. reloads the PHP versions involved, then Apache;
-//  4. probes: every site must answer with the new revision in its
-//     X-LPanel-Revision header, and every pool's socket must be there;
+//  3. reloads the PHP versions involved, then Apache, then nginx;
+//  4. probes: every site must answer with the new revision (from each
+//     server in the stack), and every pool's socket must be there;
 //  5. if the probe fails, puts the old files back and reloads again.
 //
 // Applying the same state twice changes nothing, so a retry is always safe.
@@ -121,17 +128,24 @@ type Info struct {
 // Manager carries out web changes. Paths are fields so tests can use a
 // temporary folder.
 type Manager struct {
-	Server   string // "apache" or "off"
+	Server   string // "apache", "nginx", "hybrid" or "off"
 	Include  string // /etc/httpd/conf.d/lpanel.conf
 	Sites    string // /etc/httpd/lpanel/sites
-	Htpasswd string // /etc/httpd/lpanel/htpasswd: logins of protected folders
+	Htpasswd string // /etc/httpd/lpanel/htpasswd: logins of protected folders (Apache checks them)
 	LogDir   string // /var/log/httpd/lpanel
-	PHPRoot  string // /opt/remi: phpXY/root/usr/sbin/php-fpm
-	PHPConf  string // /etc/opt/remi: phpXY/php-fpm.d/
-	PHPRun   string // /var/opt/remi: phpXY/run/php-fpm/
-	WebGroup string // apache
-	Run      sysexec.Runner
-	Log      *slog.Logger
+	// The same for nginx.
+	NginxInclude  string // /etc/nginx/conf.d/lpanel.conf
+	NginxSites    string // /etc/nginx/lpanel/sites
+	NginxHtpasswd string // /etc/nginx/lpanel/htpasswd: used when nginx checks the logins (nginx alone)
+	NginxLogDir   string // /var/log/nginx/lpanel
+	// BackendPort is where Apache listens behind nginx (hybrid), on 127.0.0.1.
+	BackendPort int
+	PHPRoot     string // /opt/remi: phpXY/root/usr/sbin/php-fpm
+	PHPConf     string // /etc/opt/remi: phpXY/php-fpm.d/
+	PHPRun      string // /var/opt/remi: phpXY/run/php-fpm/
+	WebGroup    string // apache
+	Run         sysexec.Runner
+	Log         *slog.Logger
 	// Owner describes an LPanel account and refuses anything else
 	// (accounts.Manager.Owner).
 	Owner func(name string) (uid, gid int, home string, err error)
@@ -177,6 +191,19 @@ func (m *Manager) Defaults() {
 	set(&m.Sites, "/etc/httpd/lpanel/sites")
 	set(&m.Htpasswd, "/etc/httpd/lpanel/htpasswd")
 	set(&m.LogDir, "/var/log/httpd/lpanel")
+	set(&m.NginxInclude, "/etc/nginx/conf.d/lpanel.conf")
+	set(&m.NginxSites, "/etc/nginx/lpanel/sites")
+	set(&m.NginxHtpasswd, "/etc/nginx/lpanel/htpasswd")
+	set(&m.NginxLogDir, "/var/log/nginx/lpanel")
+	if m.BackendPort == 0 {
+		m.BackendPort = 8080
+	}
+	// The group that reads public_html and may use the pools' sockets: the
+	// server that serves files and runs PHP. In hybrid that is Apache, and
+	// nginx is a member of its group (the installer adds it).
+	if m.Server == "nginx" {
+		set(&m.WebGroup, "nginx")
+	}
 	set(&m.PHPRoot, "/opt/remi")
 	set(&m.PHPConf, "/etc/opt/remi")
 	set(&m.PHPRun, "/var/opt/remi")
@@ -187,7 +214,7 @@ func (m *Manager) Defaults() {
 		m.ProbeFor = 10 * time.Second
 	}
 	if m.Probe == nil {
-		m.Probe = httpProbe
+		m.Probe = m.httpProbe
 	}
 	if m.MakeDirs == nil {
 		m.MakeDirs = makeDirs
@@ -216,6 +243,36 @@ func (m *Manager) poolFile(version, username string) string {
 
 func (m *Manager) siteFile(username string) string {
 	return filepath.Join(m.Sites, username+".conf")
+}
+
+func (m *Manager) nginxFile(username string) string {
+	return filepath.Join(m.NginxSites, username+".conf")
+}
+
+// usesApache and usesNginx say which servers the stack runs.
+func (m *Manager) usesApache() bool { return m.Server == "apache" || m.Server == "hybrid" }
+func (m *Manager) usesNginx() bool  { return m.Server == "nginx" || m.Server == "hybrid" }
+
+func (m *Manager) uses(server string) bool {
+	return (server == "httpd" && m.usesApache()) || (server == "nginx" && m.usesNginx())
+}
+
+// htpasswdDir is where the logins of protected folders go: with the server
+// that checks them (nginx alone, else Apache).
+func (m *Manager) htpasswdDir() string {
+	if m.Server == "nginx" {
+		return m.NginxHtpasswd
+	}
+	return m.Htpasswd
+}
+
+// accessLogDir holds the access logs that bandwidth is counted from: the
+// front server's, which sees every request once.
+func (m *Manager) accessLogDir() string {
+	if m.usesNginx() {
+		return m.NginxLogDir
+	}
+	return m.LogDir
 }
 
 func badArgs(format string, a ...any) error {
@@ -323,10 +380,11 @@ func (m *Manager) installed() []string {
 }
 
 func (m *Manager) on() error {
-	if m.Server != "apache" {
-		return protocol.Fail(CodeWebOff, "this server is set up without a web server (lpa.json \"web\": \"off\")")
+	switch m.Server {
+	case "apache", "nginx", "hybrid":
+		return nil
 	}
-	return nil
+	return protocol.Fail(CodeWebOff, "this server is set up without a web server (lpa.json \"web\": \"off\")")
 }
 
 // file is one file the pipeline writes or removes, with what was there.
@@ -335,12 +393,14 @@ type file struct {
 	content  []byte // nil: remove
 	old      []byte
 	existed  bool
-	reloadPH string // the PHP version to reload for it, or "" for Apache
+	reloadPH string // the PHP version to reload for it
+	server   string // "httpd" or "nginx": the server to test and reload for it
 	// mode and gid of the file; 0644 root when mode is 0. Logins of
 	// protected folders are 0640 with the web server's group.
 	mode os.FileMode
 	gid  int
-	// data files take no part in Apache's test (htpasswd files).
+	// data files take no part in any test or reload (htpasswd files: the
+	// server reads them on each request).
 	data bool
 }
 
@@ -384,7 +444,7 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("web group %s: %w", m.WebGroup, err)
 	}
-	if err := m.privateDir(m.Htpasswd, webGID); err != nil {
+	if err := m.privateDir(m.htpasswdDir(), webGID); err != nil {
 		return Result{}, err
 	}
 	if !a.Suspended {
@@ -403,8 +463,7 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 		}
 	}
 
-	site, rev := m.renderSites(a, home)
-	files := []file{{path: m.siteFile(a.Username), content: site}}
+	files, rev := m.siteFiles(a, home)
 	// A suspended account runs no PHP at all.
 	pools := wanted
 	if a.Suspended {
@@ -432,9 +491,13 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 			}
 		}
 	}
-	for _, path := range m.htpasswdOf(a.Username) {
-		if !logins[path] {
-			files = append(files, file{path: path, data: true})
+	// Any other file of the account's, including those of the other stack
+	// after a switch.
+	for _, dir := range []string{m.Htpasswd, m.NginxHtpasswd} {
+		for _, path := range htpasswdIn(dir, a.Username) {
+			if !logins[path] {
+				files = append(files, file{path: path, data: true})
+			}
 		}
 	}
 
@@ -473,12 +536,14 @@ func (m *Manager) Remove(ctx context.Context, a NameArgs) (Result, error) {
 	if err := m.prepare(); err != nil {
 		return Result{}, err
 	}
-	files := []file{{path: m.siteFile(a.Username)}}
+	files := []file{{path: m.siteFile(a.Username), server: "httpd"}, {path: m.nginxFile(a.Username), server: "nginx"}}
 	for _, v := range m.poolsOf(a.Username) {
 		files = append(files, file{path: m.poolFile(v, a.Username), reloadPH: v})
 	}
-	for _, path := range m.htpasswdOf(a.Username) {
-		files = append(files, file{path: path, data: true})
+	for _, dir := range []string{m.Htpasswd, m.NginxHtpasswd} {
+		for _, path := range htpasswdIn(dir, a.Username) {
+			files = append(files, file{path: path, data: true})
+		}
 	}
 	changed, err := m.change(ctx, files, nil)
 	if err == nil {
@@ -491,10 +556,7 @@ func (m *Manager) Remove(ctx context.Context, a NameArgs) (Result, error) {
 // RemoveFor is Remove for account.terminate's BeforeRemove hook. With no web
 // server configured, or none installed, there is nothing to remove.
 func (m *Manager) RemoveFor(ctx context.Context, username string) error {
-	if m.Server != "apache" {
-		return nil
-	}
-	if _, err := os.Stat(filepath.Dir(m.Include)); errors.Is(err, os.ErrNotExist) {
+	if m.on() != nil || !m.serversInstalled() {
 		return nil
 	}
 	_, err := m.Remove(ctx, NameArgs{Username: username})
@@ -504,13 +566,16 @@ func (m *Manager) RemoveFor(ctx context.Context, username string) error {
 // Info describes the web server and the PHP versions installed.
 func (m *Manager) Info(ctx context.Context) (Info, error) {
 	info := Info{Server: m.Server, PHP: []PHPVersion{}}
-	if m.Server != "apache" {
+	if m.on() != nil {
 		return info, nil
 	}
-	_, err := os.Stat(filepath.Join(filepath.Dir(m.Include), "..", "conf", "httpd.conf"))
-	info.Installed = err == nil
-	info.Running = m.active(ctx, "httpd")
-	sites, _ := filepath.Glob(filepath.Join(m.Sites, "*.conf"))
+	info.Installed = m.serversInstalled()
+	info.Running = (!m.usesApache() || m.active(ctx, "httpd")) && (!m.usesNginx() || m.active(ctx, "nginx"))
+	front := m.Sites
+	if m.usesNginx() {
+		front = m.NginxSites
+	}
+	sites, _ := filepath.Glob(filepath.Join(front, "*.conf"))
 	info.Accounts = len(sites)
 	for _, v := range m.installed() {
 		pools, _ := filepath.Glob(filepath.Join(m.PHPConf, "php"+v, "php-fpm.d", "lpanel-*.conf"))
@@ -521,16 +586,42 @@ func (m *Manager) Info(ctx context.Context) (Info, error) {
 
 func phpService(v string) string { return "php" + v + "-php-fpm" }
 
+// listenOf is a pool's socket settings (listen, listen.owner, listen.group,
+// listen.mode), which only a restart applies.
+func listenOf(pool []byte) string {
+	var out []string
+	for _, line := range strings.Split(string(pool), "\n") {
+		if strings.HasPrefix(line, "listen") {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 func (m *Manager) active(ctx context.Context, unit string) bool {
 	code, _, err := m.Run.Run(ctx, "systemctl", "is-active", "--quiet", unit)
 	return err == nil && code == 0
 }
 
-// htpasswdOf lists the account's login files for protected folders.
-func (m *Manager) htpasswdOf(username string) []string {
-	matches, _ := filepath.Glob(filepath.Join(m.Htpasswd, username+"-*.htpasswd"))
+// htpasswdIn lists the account's login files for protected folders in dir.
+func htpasswdIn(dir, username string) []string {
+	matches, _ := filepath.Glob(filepath.Join(dir, username+"-*.htpasswd"))
 	sort.Strings(matches)
 	return matches
+}
+
+// serversInstalled is true when every server of the stack is installed
+// (its configuration folder is there).
+func (m *Manager) serversInstalled() bool {
+	for server, include := range map[string]string{"httpd": m.Include, "nginx": m.NginxInclude} {
+		if !m.uses(server) {
+			continue
+		}
+		if st, err := os.Stat(filepath.Dir(include)); err != nil || !st.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 // privateDir makes dir 0750 root with the web server's group: Apache reads
@@ -569,21 +660,46 @@ func (m *Manager) poolsOf(username string) []string {
 	return out
 }
 
-// prepare makes LPanel's folders and include file, once per server.
+// prepare makes LPanel's folders and include files, once per server.
 func (m *Manager) prepare() error {
-	if st, err := os.Stat(filepath.Dir(m.Include)); err != nil || !st.IsDir() {
-		return protocol.Fail(CodeWebOff, "Apache is not installed here ("+filepath.Dir(m.Include)+" is missing)")
+	type server struct {
+		name, include string
+		dirs          []string
+		want          []byte
 	}
-	for _, d := range []string{m.Sites, m.LogDir} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+	var servers []server
+	if m.usesApache() {
+		servers = append(servers, server{"Apache", m.Include, []string{m.Sites, m.LogDir}, renderInclude(m.Sites, m.apacheListen(), m.Server == "hybrid")})
+	}
+	if m.usesNginx() {
+		servers = append(servers, server{"nginx", m.NginxInclude, []string{m.NginxSites, m.NginxLogDir}, renderNginxInclude(m.NginxSites)})
+	}
+	for _, sv := range servers {
+		if st, err := os.Stat(filepath.Dir(sv.include)); err != nil || !st.IsDir() {
+			return protocol.Fail(CodeWebOff, sv.name+" is not installed here ("+filepath.Dir(sv.include)+" is missing)")
+		}
+		for _, d := range sv.dirs {
+			if err := os.MkdirAll(d, 0o755); err != nil {
+				return err
+			}
+		}
+		if got, err := os.ReadFile(sv.include); err == nil && string(got) == string(sv.want) {
+			continue
+		}
+		if err := writeAtomic(sv.include, sv.want, 0o644); err != nil {
 			return err
 		}
 	}
-	want := renderInclude(m.Sites)
-	if got, err := os.ReadFile(m.Include); err == nil && string(got) == string(want) {
-		return nil
+	return nil
+}
+
+// apacheListen is the address Apache's sites answer on: *:80, or the
+// backend port behind nginx.
+func (m *Manager) apacheListen() string {
+	if m.Server == "hybrid" {
+		return "*:" + strconv.Itoa(m.BackendPort)
 	}
-	return writeAtomic(m.Include, want, 0o644)
+	return "*:80"
 }
 
 // change runs the pipeline over files: test, swap, reload, probe, and roll
@@ -634,26 +750,29 @@ func (m *Manager) change(ctx context.Context, files []file, probe func(context.C
 	return false, protocol.Fail(CodeProbe, "the web server did not serve the change, so it was undone: "+err.Error())
 }
 
-// test checks every candidate before anything live changes.
+// test checks every candidate before anything live changes. A file of a
+// server the stack does not run (left from before a switch) is only
+// removed: there is nothing to test it with.
 func (m *Manager) test(ctx context.Context, todo []file) error {
-	apache := false
+	servers := map[string]bool{}
 	for _, f := range todo {
-		if f.data {
-			continue
+		switch {
+		case f.data:
+		case f.server != "":
+			servers[f.server] = m.uses(f.server)
+		case f.content != nil:
+			if err := m.testPool(ctx, f); err != nil {
+				return err
+			}
 		}
-		if f.reloadPH == "" {
-			apache = true
-			continue
-		}
-		if f.content == nil {
-			continue
-		}
-		if err := m.testPool(ctx, f); err != nil {
+	}
+	if servers["httpd"] {
+		if err := m.testApache(ctx, todo); err != nil {
 			return err
 		}
 	}
-	if apache {
-		return m.testApache(ctx, todo)
+	if servers["nginx"] {
+		return m.testNginx(ctx, todo)
 	}
 	return nil
 }
@@ -692,7 +811,7 @@ func (m *Manager) testApache(ctx context.Context, todo []file) error {
 	defer os.RemoveAll(stage)
 	mine := map[string]file{}
 	for _, f := range todo {
-		if f.reloadPH == "" && !f.data {
+		if f.server == "httpd" {
 			mine[filepath.Base(f.path)] = f
 		}
 	}
@@ -777,16 +896,17 @@ func (m *Manager) restore(todo []file) {
 
 // reload restarts what the files concern: each PHP version first (a version
 // left without pools is stopped, since PHP-FPM refuses to run with none),
-// then Apache.
+// then Apache, then nginx in front of it. A server the stack does not run
+// is left stopped.
 func (m *Manager) reload(ctx context.Context, todo []file) error {
 	seen := map[string]bool{}
-	apache := false
+	servers := map[string]bool{}
 	for _, f := range todo {
 		if f.data {
-			continue // read by Apache on each request; nothing to reload
+			continue // read on each request; nothing to reload
 		}
-		if f.reloadPH == "" {
-			apache = true
+		if f.server != "" {
+			servers[f.server] = servers[f.server] || m.uses(f.server)
 			continue
 		}
 		v := f.reloadPH
@@ -795,24 +915,38 @@ func (m *Manager) reload(ctx context.Context, todo []file) error {
 		}
 		seen[v] = true
 		left, _ := filepath.Glob(filepath.Join(m.PHPConf, "php"+v, "php-fpm.d", "*.conf"))
+		// A graceful reload keeps each pool's listening socket as it was, so
+		// a socket whose owner or group changed (another web stack) needs
+		// the version restarted.
+		how := "reload-or-restart"
+		for _, g := range todo {
+			if g.reloadPH == v && g.existed && g.content != nil && listenOf(g.old) != listenOf(g.content) {
+				how = "restart"
+			}
+		}
 		var err error
 		if len(left) == 0 {
 			err = sysexec.Must(ctx, m.Run, "systemctl", "stop", phpService(v))
 		} else {
 			err = sysexec.Must(ctx, m.Run, "systemctl", "enable", "--quiet", phpService(v))
 			if err == nil {
-				err = sysexec.Must(ctx, m.Run, "systemctl", "reload-or-restart", phpService(v))
+				err = sysexec.Must(ctx, m.Run, "systemctl", how, phpService(v))
 			}
 		}
 		if err != nil {
 			return err
 		}
 	}
-	if apache {
-		if err := sysexec.Must(ctx, m.Run, "systemctl", "enable", "--quiet", "httpd"); err != nil {
+	for _, unit := range []string{"httpd", "nginx"} {
+		if !servers[unit] {
+			continue
+		}
+		if err := sysexec.Must(ctx, m.Run, "systemctl", "enable", "--quiet", unit); err != nil {
 			return err
 		}
-		return sysexec.Must(ctx, m.Run, "systemctl", "reload-or-restart", "httpd")
+		if err := sysexec.Must(ctx, m.Run, "systemctl", "reload-or-restart", unit); err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -178,11 +178,29 @@ final class WebCommands
     }
 
     /** Send an account's sites to the server again, as the panel has them. */
-    public function sync(Output $output, string $username): int
+    public function sync(Output $output, ?string $username = null, bool $all = false): int
     {
+        if ($all) {
+            $failed = 0;
+
+            foreach ($this->accounts->withSites() as $account) {
+                $outcome = $this->sync->touch((int) $account['id'], force: true);
+                $failed += $outcome->status === WebOutcome::FAILED ? 1 : 0;
+                $output->line(\sprintf('%-16s %s', $account['username'], $outcome->status . ($outcome->message ? ' (' . $outcome->message . ')' : '')));
+            }
+
+            return $failed > 0 ? 1 : 0;
+        }
+
+        if ($username === null) {
+            $output->error('Name an account, or use --all.');
+
+            return 2;
+        }
+
         $account = $this->account($output, $username);
 
-        return $account === null ? 1 : $this->report($output, $this->sync->touch((int) $account['id']), $username . '\'s sites are as the panel has them.');
+        return $account === null ? 1 : $this->report($output, $this->sync->touch((int) $account['id'], force: true), $username . '\'s sites are as the panel has them.');
     }
 
     /** @param array<string, string> $errors */

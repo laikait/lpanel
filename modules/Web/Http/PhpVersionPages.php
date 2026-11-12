@@ -24,6 +24,7 @@ final class PhpVersionPages
         private readonly PhpVersions $php,
         private readonly PanelPage $pages,
         private readonly Router $router,
+        private readonly WebSync $sync,
     ) {}
 
     public function index(Request $request, Session $session, Identity $identity): Response
@@ -73,6 +74,7 @@ final class PhpVersionPages
             'running' => $this->php->running(),
             'jobs' => $jobs,
             'default_url' => $this->router->url('admin.php.default'),
+            'stack' => (string) ($this->sync->info()['server'] ?? ''),
         ], title: 'Web.php_versions', active: 'php_versions');
     }
 

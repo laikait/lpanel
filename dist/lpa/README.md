@@ -95,27 +95,58 @@ The account operations refuse (`not_ours`) any user without the comment
 
 `lpa.json` adds `homes_base` (default `/home`) and `quota`: `"on"`, or `"off"`
 on a machine without quotas, which the installer writes only with
-`--allow-no-quota`. `web` is `"apache"` (the default) or `"off"`.
+`--allow-no-quota`. `web` is the stack for customers' sites, chosen with the
+installer's `--web`: `"apache"` (the default), `"nginx"`, `"hybrid"` (nginx in
+front of Apache) or `"off"`.
 `panel_php` (default `"83"`) is the Remi version the panel itself runs on.
 
 ### Sites (`web.apply`)
 
-Each account has one Apache file, `/etc/httpd/lpanel/sites/<user>.conf`,
-with a VirtualHost per site, and one PHP-FPM pool per PHP version its sites
-use, `/etc/opt/remi/php<XY>/php-fpm.d/lpanel-<user>.conf`. A pool runs as the
-account's own user, and only Apache's group may use its socket. A suspended
-account's sites answer 503 and it runs no PHP at all.
+Each account has one file per server of the stack, with a site per domain:
+`/etc/httpd/lpanel/sites/<user>.conf` (a VirtualHost each) for Apache and
+`/etc/nginx/lpanel/sites/<user>.conf` (a server block each) for nginx. It
+also has one PHP-FPM pool per PHP version its sites use,
+`/etc/opt/remi/php<XY>/php-fpm.d/lpanel-<user>.conf`. A pool runs as the
+account's own user, and only the web server's group may use its socket
+(`apache`, or `nginx` when nginx is alone). A suspended account's sites
+answer 503 and it runs no PHP at all.
+
+| Stack | On :80 | PHP | Features | Logins | Bandwidth from |
+|---|---|---|---|---|---|
+| `apache` | Apache | Apache → pool | in the VirtualHost; `.htaccess` works | `/etc/httpd/lpanel/htpasswd` | Apache's logs |
+| `nginx` | nginx | nginx → pool | in the server block; no `.htaccess` | `/etc/nginx/lpanel/htpasswd` | nginx's logs |
+| `hybrid` | nginx: static files itself, the rest to Apache on 127.0.0.1:8080 | Apache → pool | both; `.htaccess` works | Apache's (protected folders go to Apache whole) | nginx's logs |
+
+With nginx alone, an address with no file and no extension (`/shop/cart`)
+goes to the site's `index.php`, as an app's rewrite rules would send it;
+a missing file with an extension stays a 404. Hidden files are refused
+(`.well-known` stays reachable), and links are followed only to files of
+the link's owner (`disable_symlinks if_not_owner`). nginx has no escape for
+`$`, so one in a redirect address becomes `${lpanel_dollar}`, a variable
+holding it.
+
+In front of Apache, nginx sets `X-Forwarded-For` to the visitor's address
+(never appending what the visitor sent) and Apache takes it from there
+(`mod_remoteip`, trusting 127.0.0.1 only). Each probe asks Apache directly
+on 8080 for `X-LPanel-Revision` and nginx on :80 for `X-LPanel-Front`.
+
+A switch of stack (the installer again, with another `--web`) re-sends
+every account; the agent writes the new stack's files and removes the old
+one's, without touching the server the stack no longer runs.
 
 A change goes through these steps:
 
 1. **Test** every candidate before anything live changes. Each new pool is
-   checked with `php-fpm -t`. Apache is checked with `httpd -t` over a copy of
-   the sites folder holding the candidate, chosen through
+   checked with `php-fpm -t`. Apache is checked with `httpd -t` over a copy of the
+   sites folder holding the candidate, chosen through
    `-C "Define LPANEL_SITES <copy>"`; `/etc/httpd/conf.d/lpanel.conf` includes
-   whatever that variable names.
+   whatever that variable names. nginx is checked with `nginx -t` over its own
+   `nginx.conf` with `conf.d` replaced by a copy whose LPanel include names a
+   copy of the sites folder, so a broken file anywhere in nginx's
+   configuration stops the change too.
 2. **Swap** the files in, keeping the old ones in memory.
-3. **Reload** each PHP version involved, then Apache. A version left with no
-   pools is stopped, because PHP-FPM will not run without one.
+3. **Reload** each PHP version involved, then Apache, then nginx. A version
+   left with no pools is stopped, because PHP-FPM will not run without one.
 4. **Probe.** Every site must answer on 127.0.0.1:80 with the new revision
    in its `X-LPanel-Revision` header, and every pool's socket must exist.
 5. **Roll back** if the probe fails: the old files go back and the services

@@ -216,6 +216,18 @@ final class WebTest extends TestCase
         self::assertSame(200, $this->signedIn('user', 'shop', 'shop-owner-password')->get('/panel/domains')->status());
     }
 
+    public function test_after_a_switch_of_stack_every_site_is_sent_again(): void
+    {
+        $sync = $this->app->container()->get(WebSync::class);
+        $id = (int) $this->account('shop')['id'];
+        $before = $this->server->ran('web.apply');
+
+        self::assertSame('done', $sync->touch($id)->status);
+        self::assertSame($before, $this->server->ran('web.apply'), 'nothing changed, so nothing is sent');
+        self::assertSame('done', $sync->touch($id, force: true)->status);
+        self::assertSame($before + 1, $this->server->ran('web.apply'), 'forced: the same state under a new id');
+    }
+
     public function test_accounts_from_before_get_their_site_from_settle(): void
     {
         $this->db()->table('domains')->deleteAll();

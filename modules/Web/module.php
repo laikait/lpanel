@@ -259,8 +259,9 @@ return static function (ModuleContext $module): void {
         $commands->add('web:settle', [WebCommands::class, 'settle'])
             ->describe('Send site changes the agent has not answered yet.');
         $commands->add('web:sync', [WebCommands::class, 'sync'])
-            ->describe('Send an account\'s sites to the server again, as the panel has them.')
-            ->argument('username', 'The account.');
+            ->describe('Send an account\'s sites to the server again, as the panel has them (after switching the web stack: --all).')
+            ->argument('username', 'The account.', required: false)
+            ->flag('all', 'Every account.');
     });
 
     $module->schedules(static function (ScheduleCollector $schedules): void {

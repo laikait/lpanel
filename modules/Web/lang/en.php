@@ -232,6 +232,10 @@ return [
     'php_no_change' => 'Nothing to change: the version has those extensions already.',
     'php_busy' => 'Another PHP change is still in progress. Try again when it is done.',
 
+    'stack_apache' => 'Sites are served by Apache. Run install.sh --web=nginx or --web=hybrid to change it.',
+    'stack_nginx' => 'Sites are served by nginx. Run install.sh --web=apache or --web=hybrid to change it.',
+    'stack_hybrid' => 'Sites are served by nginx in front of Apache. Run install.sh --web=apache or --web=nginx to change it.',
+
     // Bandwidth.
     'bandwidth_month' => 'Bandwidth this month',
     'bandwidth_of' => ':percent% of :limit',

@@ -331,8 +331,32 @@ M2 is built in four parts.
 - **Not yet:** a reseller's total bandwidth across their accounts, and
   emailing an owner who goes over (M10 alerts).
 
-**M2d: the other two stacks.** Nginx only, and Nginx in front of Apache,
-chosen per server.
+**M2d: the other two stacks. Built 2026-11-12.**
+- **Choosing:** `install.sh --web=apache|nginx|hybrid`, for the whole server
+  (lpa.json `web`). Running the installer again with another `--web`
+  switches: it sets the services up, then re-sends every account
+  (`web:sync --all`), and the agent writes the new stack's files and removes
+  the old one's. The Admin panel's PHP page says which stack runs.
+- **nginx alone:** a server block per site, PHP through the account's pool.
+  Every site feature has its nginx form: the www. choice, redirects and
+  hotlink protection in the rewrite phase, error pages, protected folders
+  with `auth_basic` (logins in `/etc/nginx/lpanel/htpasswd`, group nginx).
+  Hidden files are refused, links are followed only to their owner's files,
+  and an app's own addresses reach its `index.php`.
+- **nginx in front of Apache (hybrid):** nginx on :80 serves static files
+  itself and passes the rest to Apache on 127.0.0.1:8080, which keeps
+  `.htaccess`. Protected folders go to Apache whole. Apache sees the
+  visitor's address (`mod_remoteip`), never one the visitor claims.
+  Bandwidth is counted once, from nginx's logs.
+- **Pipeline:** `nginx -t` over nginx's own configuration with the staged
+  sites; Apache reloaded before nginx; the probe asks each server. A pool
+  whose socket group changes is restarted, since a reload keeps the old
+  socket.
+- **Tests:** Go (every stack's rendering, tests and switching); PHP 88;
+  `tests/e2e/install.sh` with `WEB=apache` 130 checks, `WEB=nginx` 131,
+  `WEB=hybrid` 135. Each run also switches to another stack at the end
+  (apache → hybrid, nginx → apache, hybrid → nginx) and checks every site
+  and feature came along.
 
 **Exit:** each of the three web stacks serves a PHP site for every domain type.
 A deliberately broken config is rolled back automatically.

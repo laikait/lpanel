@@ -33,8 +33,9 @@ type Config struct {
 	// Quota is "on" (disk quotas are set and must work; ADR-0008) or "off"
 	// (containers and test machines only: the installer's --allow-no-quota).
 	Quota string `json:"quota"`
-	// Web is the web server the agent configures for accounts' sites:
-	// "apache", or "off" (no web operations).
+	// Web is the stack the agent configures for accounts' sites: "apache",
+	// "nginx", "hybrid" (nginx in front of Apache), or "off" (no web
+	// operations). The installer's --web chooses it.
 	Web string `json:"web"`
 	// PanelPHP is the Remi PHP version the panel itself runs on ("83"). It
 	// cannot be removed, nor the extensions the panel needs.
@@ -91,8 +92,10 @@ func (c Config) validate() error {
 	if c.Quota != "on" && c.Quota != "off" {
 		return fmt.Errorf("quota must be \"on\" or \"off\", not %q", c.Quota)
 	}
-	if c.Web != "apache" && c.Web != "off" {
-		return fmt.Errorf("web must be \"apache\" or \"off\", not %q", c.Web)
+	switch c.Web {
+	case "apache", "nginx", "hybrid", "off":
+	default:
+		return fmt.Errorf("web must be \"apache\", \"nginx\", \"hybrid\" or \"off\", not %q", c.Web)
 	}
 	if len(c.PanelPHP) != 2 || c.PanelPHP < "50" || c.PanelPHP > "89" || strings.Trim(c.PanelPHP, "0123456789") != "" {
 		return fmt.Errorf("panel_php must be two digits such as \"83\", not %q", c.PanelPHP)
