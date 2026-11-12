@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -40,6 +41,18 @@ type Config struct {
 	// PanelPHP is the Remi PHP version the panel itself runs on ("83"). It
 	// cannot be removed, nor the extensions the panel needs.
 	PanelPHP string `json:"panel_php"`
+	// ACME names the certificate authorities' directories. Only these are
+	// ever used; the panel chooses between them by name.
+	ACME ACME `json:"acme"`
+}
+
+// ACME is lpa.json's "acme".
+type ACME struct {
+	LetsEncrypt string `json:"letsencrypt"`
+	ZeroSSL     string `json:"zerossl"`
+	// Roots is a PEM file of extra roots to trust for the directories: only
+	// for a test authority (Pebble).
+	Roots string `json:"roots"`
 }
 
 // Defaults are the values a fresh install uses.
@@ -55,6 +68,10 @@ func Defaults() Config {
 		Quota:        "on",
 		Web:          "apache",
 		PanelPHP:     "83",
+		ACME: ACME{
+			LetsEncrypt: "https://acme-v02.api.letsencrypt.org/directory",
+			ZeroSSL:     "https://acme.zerossl.com/v2/DV90",
+		},
 	}
 }
 
@@ -99,6 +116,15 @@ func (c Config) validate() error {
 	}
 	if len(c.PanelPHP) != 2 || c.PanelPHP < "50" || c.PanelPHP > "89" || strings.Trim(c.PanelPHP, "0123456789") != "" {
 		return fmt.Errorf("panel_php must be two digits such as \"83\", not %q", c.PanelPHP)
+	}
+	for name, u := range map[string]string{"acme.letsencrypt": c.ACME.LetsEncrypt, "acme.zerossl": c.ACME.ZeroSSL} {
+		p, err := url.Parse(u)
+		if u != "" && (err != nil || p.Scheme != "https" || p.Host == "" || p.User != nil) {
+			return fmt.Errorf("%s must be an https URL, not %q", name, u)
+		}
+	}
+	if c.ACME.Roots != "" && !path.IsAbs(c.ACME.Roots) {
+		return fmt.Errorf("acme.roots must be an absolute path, not %q", c.ACME.Roots)
 	}
 	if c.MaxRunning < 1 || c.JournalDays < 1 {
 		return errors.New("max_running and journal_days must be at least 1")

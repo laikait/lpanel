@@ -10,9 +10,11 @@ use App\Engine\Hook\HookEngine;
 use App\Engine\Module\ModuleContext;
 use App\Engine\Routing\RouteCollector;
 use App\Engine\Scheduler\ScheduleCollector;
+use App\Modules\Web\AutoSsl;
 use App\Modules\Web\Bandwidth;
 use App\Modules\Web\Commands\PhpCommands;
 use App\Modules\Web\Commands\SiteCommands;
+use App\Modules\Web\Commands\SslCommands;
 use App\Modules\Web\Commands\WebCommands;
 use App\Modules\Web\DomainActions;
 use App\Modules\Web\Domains;
@@ -22,9 +24,12 @@ use App\Modules\Web\Http\PhpVersionApi;
 use App\Modules\Web\Http\PhpVersionPages;
 use App\Modules\Web\Http\SiteApi;
 use App\Modules\Web\Http\SitePages;
+use App\Modules\Web\Http\SslApi;
+use App\Modules\Web\Http\SslPages;
 use App\Modules\Web\PhpSettings;
 use App\Modules\Web\PhpVersions;
 use App\Modules\Web\SiteFeatures;
+use App\Modules\Web\SslSites;
 use App\Modules\Web\WebListeners;
 use App\Modules\Web\WebSettings;
 use App\Modules\Web\WebSync;
@@ -67,10 +72,16 @@ return static function (ModuleContext $module): void {
         $services->bind(PhpVersionPages::class);
         $services->bind(PhpVersionApi::class);
         $services->bind(PhpCommands::class);
+        $services->singleton(SslSites::class);
+        $services->singleton(AutoSsl::class);
+        $services->bind(SslPages::class);
+        $services->bind(SslApi::class);
+        $services->bind(SslCommands::class);
     });
 
     $module->access(static function (AccessCollector $access): void {
         $access->capability('server.php', 'Install and remove PHP versions and extensions, and choose the version new sites get.');
+        $access->capability('server.ssl', 'Set up AutoSSL (certificate authorities) and the server hostname\'s certificate.');
     });
 
     $module->routes(static function (RouteCollector $routes): void {
@@ -112,6 +123,46 @@ return static function (ModuleContext $module): void {
 
         $routes->get('/admin/api/v1/accounts/{username}/bandwidth', [PhpVersionApi::class, 'bandwidth'])->name('api.bandwidth')
             ->where('username', '[a-z][a-z0-9]{1,15}')->meta(['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '120/1m']);
+
+        // Certificates: each site's in the User panel, AutoSSL and the
+        // hostname in the Admin panel, and both through the API.
+        $routes->group('/panel/ssl', static function (RouteCollector $routes): void {
+            $routes->get('', [SslPages::class, 'index'])->name('');
+            $routes->post('/install', [SslPages::class, 'install'])->name('.install');
+            $routes->post('/csr', [SslPages::class, 'csr'])->name('.csr');
+            $routes->post('/{id}/issue', [SslPages::class, 'issue'])->name('.issue')->where('id', '\d+');
+            $routes->post('/{id}/options', [SslPages::class, 'options'])->name('.options')->where('id', '\d+');
+            $routes->post('/{id}/remove', [SslPages::class, 'remove'])->name('.remove')->where('id', '\d+');
+        }, name: 'user.ssl', meta: ['can' => 'feature.ssl']);
+
+        $routes->group('/admin/ssl', static function (RouteCollector $routes): void {
+            $routes->get('', [SslPages::class, 'admin'])->name('');
+            $routes->post('/settings', [SslPages::class, 'saveSettings'])->name('.settings');
+            $routes->post('/run', [SslPages::class, 'run'])->name('.run');
+            $routes->post('/hostname/issue', [SslPages::class, 'hostIssue'])->name('.host_issue');
+            $routes->post('/hostname/install', [SslPages::class, 'hostInstall'])->name('.host_install');
+        }, name: 'admin.ssl', meta: ['can' => 'server.ssl']);
+
+        $routes->group('/admin/api/v1/ssl', static function (RouteCollector $routes): void {
+            $routes->get('', [SslApi::class, 'settings'])->name('');
+            $routes->put('', [SslApi::class, 'saveSettings'])->name('.settings');
+            $routes->post('/autossl', [SslApi::class, 'run'])->name('.run');
+            $routes->post('/hostname', [SslApi::class, 'hostIssue'])->name('.host_issue');
+            $routes->put('/hostname/certificate', [SslApi::class, 'hostInstall'])->name('.host_install');
+            $routes->get('/orders/{id}', [SslApi::class, 'showOrder'])->name('.order')->where('id', '\d+');
+        }, name: 'api.ssl', meta: ['can' => 'server.ssl', 'csrf' => false, 'rate_limit' => '60/1m']);
+
+        $routes->group('/admin/api/v1/accounts/{username}/ssl', static function (RouteCollector $routes): void {
+            $user = '[a-z][a-z0-9]{1,15}';
+            $domain = '[a-z0-9.-]{4,253}';
+            $modify = ['can' => 'accounts.modify'];
+            $routes->get('', [SslApi::class, 'index'])->name('')->where('username', $user);
+            $routes->put('/{domain}', [SslApi::class, 'options'])->name('.options')->where('username', $user)->where('domain', $domain)->meta($modify);
+            $routes->post('/{domain}/issue', [SslApi::class, 'issue'])->name('.issue')->where('username', $user)->where('domain', $domain)->meta($modify);
+            $routes->put('/{domain}/certificate', [SslApi::class, 'install'])->name('.install')->where('username', $user)->where('domain', $domain)->meta($modify);
+            $routes->delete('/{domain}/certificate', [SslApi::class, 'remove'])->name('.remove')->where('username', $user)->where('domain', $domain)->meta($modify);
+            $routes->post('/{domain}/csr', [SslApi::class, 'csr'])->name('.csr')->where('username', $user)->where('domain', $domain)->meta($modify);
+        }, name: 'api.account_ssl', meta: ['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '120/1m']);
 
         $routes->group('/panel/php', static function (RouteCollector $routes): void {
             $routes->get('', [SitePages::class, 'php'])->name('');
@@ -254,6 +305,54 @@ return static function (ModuleContext $module): void {
         $commands->add('web:bandwidth', [PhpCommands::class, 'bandwidth'])
             ->describe('Show an account\'s bandwidth this month.')
             ->argument('username', 'The account.');
+        $commands->add('ssl:list', [SslCommands::class, 'list'])
+            ->describe('List an account\'s sites, their certificates and AutoSSL\'s state.')
+            ->argument('username', 'The account.');
+        $commands->add('ssl:issue', [SslCommands::class, 'issue'])
+            ->describe('Get a site a certificate now (Let\'s Encrypt, or ZeroSSL), and wait for it.')
+            ->argument('username', 'The account.')
+            ->argument('domain', 'The site.')
+            ->flag('no-wait', 'Order it and return; ssl:autossl follows it.');
+        $commands->add('ssl:install', [SslCommands::class, 'install'])
+            ->describe('Install a certificate read from standard input as PEM: the chain, and its key unless it answers ssl:csr.')
+            ->argument('username', 'The account.')
+            ->argument('domain', 'The site.');
+        $commands->add('ssl:csr', [SslCommands::class, 'csr'])
+            ->describe('Make a key (kept on the server) and print a certificate request for the site\'s names.')
+            ->argument('username', 'The account.')
+            ->argument('domain', 'The site.')
+            ->option('key-type', 'ecdsa (default) or rsa.')
+            ->option('country', 'Two letters, such as US.')
+            ->option('state', 'State or province.')
+            ->option('city', 'City.')
+            ->option('org', 'Organization.');
+        $commands->add('ssl:remove', [SslCommands::class, 'remove'])
+            ->describe('Stop serving a site\'s certificate (one from AutoSSL also turns AutoSSL off for it).')
+            ->argument('username', 'The account.')
+            ->argument('domain', 'The site.');
+        $commands->add('ssl:options', [SslCommands::class, 'options'])
+            ->describe('Turn AutoSSL or sending HTTP to HTTPS on or off for a site.')
+            ->argument('username', 'The account.')
+            ->argument('domain', 'The site.')
+            ->option('autossl', 'yes or no.')
+            ->option('force', 'yes or no.');
+        $commands->add('ssl:autossl', [SslCommands::class, 'autossl'])
+            ->describe('Order certificates for every site and hostname that needs one, and renew those near expiry.')
+            ->flag('wait', 'Follow the orders until they finish.');
+        $commands->add('ssl:hostname', [SslCommands::class, 'hostname'])
+            ->describe('Show the hostname\'s certificate; --issue gets one, --install reads one from standard input.')
+            ->flag('issue', 'Get one from the certificate authority now.')
+            ->flag('install', 'Install the key and chain given on standard input.')
+            ->flag('no-wait', 'With --issue: order it and return.');
+        $commands->add('ssl:settings', [SslCommands::class, 'settings'])
+            ->describe('Show or change AutoSSL\'s settings.')
+            ->option('enabled', 'yes or no: AutoSSL for every site.')
+            ->option('primary', 'letsencrypt or zerossl.')
+            ->option('fallback', 'yes or no: ask the other authority when the first does not issue.')
+            ->option('eab-kid', 'ZeroSSL\'s EAB key id.')
+            ->option('eab-hmac', 'ZeroSSL\'s EAB HMAC key; - reads it from standard input.')
+            ->option('hostname', 'The server\'s hostname, for its own certificate.')
+            ->option('host-autossl', 'yes or no: AutoSSL for the hostname too.');
         $commands->add('web:info', [WebCommands::class, 'info'])
             ->describe('Show the web server and the PHP versions installed.');
         $commands->add('web:settle', [WebCommands::class, 'settle'])
@@ -267,10 +366,13 @@ return static function (ModuleContext $module): void {
     $module->schedules(static function (ScheduleCollector $schedules): void {
         $schedules->command('web:settle')->everyMinute()->withoutOverlapping(600);
         $schedules->command('web:traffic')->everyFifteenMinutes()->withoutOverlapping(900);
+        $schedules->command('ssl:autossl')->everyFiveMinutes()->withoutOverlapping(900);
     });
 
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'php_versions', 'label' => 'Web.php_versions', 'icon' => 'code', 'route' => 'admin.php', 'can' => 'server.php', 'order' => 30];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'ssl', 'label' => 'Web.ssl', 'icon' => 'lock', 'route' => 'admin.ssl', 'can' => 'server.ssl', 'order' => 35];
+        $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'ssl', 'label' => 'Web.ssl', 'icon' => 'lock', 'route' => 'user.ssl', 'can' => 'feature.ssl', 'order' => 15];
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'domains', 'label' => 'Web.domains', 'icon' => 'globe', 'route' => 'user.domains', 'can' => 'feature.domains', 'order' => 10];
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'php', 'label' => 'Web.php_settings', 'icon' => 'code', 'route' => 'user.php', 'can' => 'feature.php_settings', 'order' => 20];
 

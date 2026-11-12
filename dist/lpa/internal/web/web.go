@@ -46,11 +46,12 @@ import (
 
 // Error codes particular to web operations.
 const (
-	CodeWebOff     = "web_off"         // the agent is configured without a web server
-	CodePHPMissing = "php_missing"     // a site asks for a PHP version that is not installed
-	CodeRejected   = "config_rejected" // the candidate failed its test; nothing live changed
-	CodeProbe      = "probe_failed"    // the reloaded server did not serve it; the old files are back
-	CodeDocroot    = "docroot"         // a document root could not be made safely
+	CodeWebOff      = "web_off"         // the agent is configured without a web server
+	CodePHPMissing  = "php_missing"     // a site asks for a PHP version that is not installed
+	CodeRejected    = "config_rejected" // the candidate failed its test; nothing live changed
+	CodeProbe       = "probe_failed"    // the reloaded server did not serve it; the old files are back
+	CodeDocroot     = "docroot"         // a document root could not be made safely
+	CodeCertMissing = "cert_missing"    // a site names a certificate the agent does not have
 )
 
 var (
@@ -58,6 +59,7 @@ var (
 	labelRule   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	versionRule = regexp.MustCompile(`^[5-8][0-9]$`)
 	partRule    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$`)
+	certRule    = regexp.MustCompile(`^[0-9a-f]{16}$`)
 )
 
 // Site is one VirtualHost: a domain, the other names it answers to, the
@@ -74,7 +76,20 @@ type Site struct {
 	ErrorPages map[string]string `json:"error_pages"`
 	Protected  []Protected       `json:"protected"`
 	Hotlink    *Hotlink          `json:"hotlink"`
+	// TLS serves the site over HTTPS too, with a certificate the agent
+	// stores (ssl.issue, ssl.install); nil serves HTTP only.
+	TLS *SiteTLS `json:"tls"`
 }
+
+// SiteTLS names a site's certificate, by its id in the certificate store,
+// and whether plain HTTP visitors are sent to HTTPS.
+type SiteTLS struct {
+	Cert  string `json:"cert"`
+	Force bool   `json:"force"`
+}
+
+// tlsFiles are a certificate's paths on disk.
+type tlsFiles struct{ crt, key string }
 
 // Pool holds the PHP-FPM limits the package sets.
 type Pool struct {
@@ -93,6 +108,9 @@ type ApplyArgs struct {
 	// PHPSettings are the owner's php.ini choices for each PHP version
 	// ("83" → "memory_limit" → "256M"), written into that version's pool.
 	PHPSettings map[string]map[string]string `json:"php_settings"`
+
+	// tls holds each HTTPS site's certificate files, found by Apply.
+	tls map[string]tlsFiles
 }
 
 // NameArgs name one account.
@@ -166,8 +184,21 @@ type Manager struct {
 	// SELinux is true on a host with SELinux on: folders the agent makes get
 	// the policy's labels (restorecon), not just their parent's.
 	SELinux bool
-	// Probe asks the web server for host and checks the revision it sends.
-	Probe func(ctx context.Context, host, revision string) error
+	// Probe asks the web server for host and checks the revision it sends;
+	// ProbeTLS does the same over HTTPS, for a site that has a certificate.
+	Probe    func(ctx context.Context, host, revision string) error
+	ProbeTLS func(ctx context.Context, host, revision string) error
+	// Challenges is the folder every site serves on port 80 at
+	// /.well-known/acme-challenge/, for certificate checks.
+	Challenges string
+	// HostCert and HostKey are the server's own certificate, which the
+	// default HTTPS site presents for names nobody serves (Apache).
+	HostCert, HostKey string
+	// The certificate store (certs.Store): a certificate's files, removing
+	// those no site names any more, and every one of an account.
+	CertFiles  func(username, id string) (crt, key string, err error)
+	CertPrune  func(username string, keep map[string]bool)
+	CertRemove func(username string) error
 	// ProbeFor is how long a reloaded server has to answer correctly.
 	ProbeFor time.Duration
 
@@ -216,6 +247,12 @@ func (m *Manager) Defaults() {
 	if m.Probe == nil {
 		m.Probe = m.httpProbe
 	}
+	if m.ProbeTLS == nil {
+		m.ProbeTLS = m.httpsProbe
+	}
+	set(&m.Challenges, "/var/www/lpanel-acme")
+	set(&m.HostCert, "/etc/lpanel/tls/panel.crt")
+	set(&m.HostKey, "/etc/lpanel/tls/panel.key")
 	if m.MakeDirs == nil {
 		m.MakeDirs = makeDirs
 	}
@@ -361,6 +398,9 @@ func (a *ApplyArgs) check() error {
 		if err := s.checkFeatures(); err != nil {
 			return err
 		}
+		if s.TLS != nil && !certRule.MatchString(s.TLS.Cert) {
+			return badArgs("%s: certificate id %q is not 16 hex digits", s.Name, s.TLS.Cert)
+		}
 	}
 	return checkPHPSettings(a.PHPSettings)
 }
@@ -463,6 +503,24 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 		}
 	}
 
+	// Each HTTPS site's certificate must be in the store already.
+	a.tls = map[string]tlsFiles{}
+	certIDs := map[string]bool{}
+	for _, s := range a.Sites {
+		if s.TLS == nil {
+			continue
+		}
+		if m.CertFiles == nil {
+			return Result{}, protocol.Fail(CodeCertMissing, "this agent keeps no certificates")
+		}
+		crt, key, err := m.CertFiles(a.Username, s.TLS.Cert)
+		if err != nil {
+			return Result{}, protocol.Fail(CodeCertMissing, s.Name+": "+err.Error())
+		}
+		a.tls[s.Name] = tlsFiles{crt: crt, key: key}
+		certIDs[s.TLS.Cert] = true
+	}
+
 	files, rev := m.siteFiles(a, home)
 	// A suspended account runs no PHP at all.
 	pools := wanted
@@ -507,8 +565,13 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 	}
 	changed, err := m.change(ctx, files, func(ctx context.Context) error {
 		for _, s := range a.Sites {
-			if err := m.probeUntil(ctx, s.Name, rev); err != nil {
+			if err := m.probeUntil(ctx, m.Probe, s.Name, rev); err != nil {
 				return err
+			}
+			if s.TLS != nil {
+				if err := m.probeUntil(ctx, m.ProbeTLS, s.Name, rev); err != nil {
+					return fmt.Errorf("HTTPS: %w", err)
+				}
 			}
 		}
 		for _, v := range pools {
@@ -519,6 +582,9 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (Result, error) {
 		return nil
 	})
 	res.Changed = changed
+	if err == nil && m.CertPrune != nil {
+		m.CertPrune(a.Username, certIDs)
+	}
 	return res, err
 }
 
@@ -549,6 +615,9 @@ func (m *Manager) Remove(ctx context.Context, a NameArgs) (Result, error) {
 	if err == nil {
 		// After the reload, so Apache no longer writes to them.
 		err = m.forgetTraffic(a.Username)
+	}
+	if err == nil && m.CertRemove != nil {
+		err = m.CertRemove(a.Username)
 	}
 	return Result{Username: a.Username, Changed: changed, PHP: []string{}}, err
 }
@@ -669,10 +738,10 @@ func (m *Manager) prepare() error {
 	}
 	var servers []server
 	if m.usesApache() {
-		servers = append(servers, server{"Apache", m.Include, []string{m.Sites, m.LogDir}, renderInclude(m.Sites, m.apacheListen(), m.Server == "hybrid")})
+		servers = append(servers, server{"Apache", m.Include, []string{m.Sites, m.LogDir}, m.renderInclude(m.Sites)})
 	}
 	if m.usesNginx() {
-		servers = append(servers, server{"nginx", m.NginxInclude, []string{m.NginxSites, m.NginxLogDir}, renderNginxInclude(m.NginxSites)})
+		servers = append(servers, server{"nginx", m.NginxInclude, []string{m.NginxSites, m.NginxLogDir}, m.renderNginxInclude(m.NginxSites)})
 	}
 	for _, sv := range servers {
 		if st, err := os.Stat(filepath.Dir(sv.include)); err != nil || !st.IsDir() {
@@ -690,7 +759,12 @@ func (m *Manager) prepare() error {
 			return err
 		}
 	}
-	return nil
+	// The folder certificate checks are answered from: readable by the web
+	// server's workers, written only by the agent.
+	if err := os.MkdirAll(m.Challenges, 0o755); err != nil {
+		return err
+	}
+	return os.Chmod(m.Challenges, 0o755)
 }
 
 // apacheListen is the address Apache's sites answer on: *:80, or the
@@ -951,10 +1025,10 @@ func (m *Manager) reload(ctx context.Context, todo []file) error {
 	return nil
 }
 
-func (m *Manager) probeUntil(ctx context.Context, host, rev string) error {
+func (m *Manager) probeUntil(ctx context.Context, probe func(context.Context, string, string) error, host, rev string) error {
 	var last error
 	for {
-		if last = m.Probe(ctx, host, rev); last == nil {
+		if last = probe(ctx, host, rev); last == nil {
 			return nil
 		}
 		select {

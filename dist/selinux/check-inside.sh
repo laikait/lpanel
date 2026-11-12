@@ -50,6 +50,8 @@ check "the PHP-FPM socket"                       label /run/lpanel/php-fpm.sock 
 check "nginx's pid file"                         label /run/lpanel-nginx/nginx.pid httpd_var_run_t
 check "the logs"                                 label /var/log/lpanel/nginx-error.log httpd_log_t
 check "nginx's temporary files"                  label /var/lib/lpanel/nginx/body httpd_var_lib_t
+check "phpMyAdmin's code is read-only web content" label /usr/local/lpanel-pma/phpmyadmin/index.php httpd_sys_content_t
+check "its sessions and sign-on tickets are writable" label /var/lib/lpanel-pma/tickets/abc httpd_sys_rw_content_t
 check "the panel's PHP-FPM binary is httpd_exec_t" label /opt/remi/php83/root/usr/sbin/php-fpm httpd_exec_t
 check "an account's public_html is writable web content" label /home/shop1/public_html/wp-content/uploads/a.jpg httpd_user_rw_content_t
 check "its PHP sessions in tmp/ too"             label /home/shop1/tmp/sess_abc httpd_user_rw_content_t

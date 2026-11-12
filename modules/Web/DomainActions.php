@@ -31,6 +31,7 @@ final class DomainActions
         private readonly WebSync $sync,
         private readonly Packages $packages,
         private readonly AuditLog $audit,
+        private readonly SslSites $ssl,
     ) {}
 
     /**
@@ -344,6 +345,7 @@ final class DomainActions
 
         if ($outcome->status !== WebOutcome::FAILED) {
             $this->features->forgetDomain((int) $domain['id']);
+            $this->ssl->forgetDomain((int) $domain['id']);
         }
 
         return [$outcome, null];

@@ -33,12 +33,14 @@ final class AccountView
     {
         $package = $this->package((int) $row['package_id']);
         $limitBytes = $package !== null && (int) $package['disk_mb'] > 0 ? (int) $package['disk_mb'] * 1048576 : 0;
-        $used = $row['disk_used_bytes'] === null ? null : (int) $row['disk_used_bytes'];
+        // Files in the home and databases together count against the package.
+        $used = $row['disk_used_bytes'] === null ? null : (int) $row['disk_used_bytes'] + (int) ($row['db_used_bytes'] ?? 0);
 
         $row['package'] = $package;
         $row['package_name'] = $package['name'] ?? '?';
         $row['owner_name'] = $row['owner_id'] === null ? null : $this->owner((int) $row['owner_id']);
         $row['disk_limit_bytes'] = $limitBytes;
+        $row['disk_total_bytes'] = $used;
         $row['disk_percent'] = $used !== null && $limitBytes > 0 ? (int) \min(100, \round($used * 100 / $limitBytes)) : null;
         $row['busy'] = $row['op_id'] !== null;
 
@@ -68,6 +70,7 @@ final class AccountView
             'home' => $row['home'],
             'disk' => [
                 'used_bytes' => $row['disk_used_bytes'] === null ? null : (int) $row['disk_used_bytes'],
+                'databases_bytes' => (int) ($row['db_used_bytes'] ?? 0),
                 'limit_bytes' => $row['disk_limit_bytes'] ?: null,
                 'inodes_used' => $row['inodes_used'] === null ? null : (int) $row['inodes_used'],
                 'read_at' => $row['usage_at'],

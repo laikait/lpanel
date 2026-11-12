@@ -44,6 +44,9 @@ echo "   web stack: $WEB"
 echo "== install"
 check "the installer finishes" bash -c '/bundle/install.sh --hostname e2e-panel.test --web=$WEB > /tmp/install.log 2>&1 || { tail -40 /tmp/install.log; exit 1; }'
 grep -q "LPanel is installed." /tmp/install.log && echo "        (installer printed the sign-in details)"
+# AutoSSL would ask the real Let's Encrypt (every five minutes, from the
+# scheduler) for names that point nowhere; it waits for the SSL section.
+lpanel ssl:settings --enabled=no --host-autossl=no >/dev/null
 
 echo "== services"
 for unit in mariadb lpa lpanel-authd.socket lpanel-php-fpm lpanel-nginx lpanel-scheduler.timer; do
@@ -149,7 +152,7 @@ t_suspended_out() { [ "$(signin_as 7444 /panel shop2 Owner-Pass-Word-2)" = "422 
 t_cookie_no()  { [ "$(curl -ks -b $jar -o /dev/null -w '%{http_code}' -H 'Accept: application/json' https://127.0.0.1:7443/admin/api/v1/accounts)" = 401 ]; }
 t_api_7444()   { [ "$(api -o /dev/null -w '%{http_code}' https://127.0.0.1:7444/admin/api/v1/accounts)" = 404 ]; }
 t_terminate()  { lpanel accounts:terminate shop2 --yes; }
-t_settled()    { for _ in $(seq 30); do systemctl start lpanel-scheduler.service; getent passwd shop2 >/dev/null || break; sleep 1; done
+t_settled()    { for _ in $(seq 30); do systemctl start lpanel-scheduler.service; getent passwd shop2 >/dev/null || lpanel accounts:list | grep -q shop2 || break; sleep 1; done
                  ! getent passwd shop2 && [ ! -e /home/shop2 ] && ! lpanel accounts:list | grep -q shop2; }
 t_audited()    { mariadb -uroot -N lpanel -e "select action from audit_log where action not like 'auth.%' order by id" | tr '\n' ' ' | tee /dev/stderr | grep -q "package.create account.create api_token.create account.create account.suspend reseller.create package.create account.create account.terminate"; }
 check "the API lists accounts with a token" t_api_list
@@ -396,6 +399,199 @@ case "$WEB" in
         check "PHP sees the visitor's address" bash -c 'curl -s -H "Host: $O" "http://$ME/ip.php" | grep -qx "from $ME"' ;;
 esac
 
+echo "== SSL/TLS (AutoSSL against Pebble)"
+# Two Pebbles: one in Let's Encrypt's place, one that asks for an external
+# account binding in ZeroSSL's. Both check names over HTTP on port 80, as
+# the real ones do, and find them through /etc/hosts.
+pebble_conf() { # file, port, management port, tls port, eab
+    local eab=""
+    [ "$5" = eab ] && eab='"externalAccountBindingRequired": true, "externalAccountMACKeys": {"kid-1": "zWNDZM6eQGHWpSRTPal5eIUYFTu7EajVIoguysqZ9wG44nMEtx3MUAsUDkMTQ12W"},'
+    cat > "$1" <<JSON
+{"pebble": {"listenAddress": "127.0.0.1:$2", "managementListenAddress": "127.0.0.1:$3",
+  "certificate": "/e2e/pebble/cert.pem", "privateKey": "/e2e/pebble/key.pem",
+  "httpPort": 80, "tlsPort": $4, "ocspResponderURL": "", $eab
+  "profiles": {"default": {"description": "90 days", "validityPeriod": 7776000}}}}
+JSON
+}
+chmod 0755 /e2e/pebble/pebble
+pebble_conf /tmp/pebble-le.json 14000 15000 5001 none
+pebble_conf /tmp/pebble-zs.json 14001 15001 5003 eab
+for c in le zs; do
+    PEBBLE_VA_NOSLEEP=1 PEBBLE_WFE_NONCEREJECT=0 PEBBLE_AUTHZREUSE=0 \
+        nohup /e2e/pebble/pebble -config /tmp/pebble-$c.json > /tmp/pebble-$c.log 2>&1 &
+done
+for _ in $(seq 30); do curl -s --cacert /e2e/pebble/pebble.minica.pem -o /dev/null https://127.0.0.1:14000/dir && curl -s --cacert /e2e/pebble/pebble.minica.pem -o /dev/null https://127.0.0.1:14001/dir && break; sleep 0.5; done
+acme() { # letsencrypt directory
+    php83 -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true);
+        $c["acme"] = ["letsencrypt" => $argv[1], "zerossl" => "https://127.0.0.1:14001/dir", "roots" => "/e2e/pebble/pebble.minica.pem"];
+        file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$1"
+    systemctl restart lpa && for _ in $(seq 50); do [ -S /run/lpa/lpa.sock ] && break; sleep 0.2; done
+}
+acme https://127.0.0.1:14000/dir
+# What points here: the main site, its www., the website with every feature
+# and a subdomain; the alias and the reseller's account do not.
+printf '127.0.0.1 shop.example.test www.shop.example.test other.example.test www.other.example.test blog.shop.example.test e2e-panel.test\n' >> /etc/hosts
+lpanel ssl:settings --enabled=yes --host-autossl=yes >/dev/null
+cat > /tmp/https.php <<'PHP'
+<?php echo 'https=', $_SERVER['HTTPS'] ?? 'off';
+PHP
+put shop1 /tmp/https.php /home/shop1/public_html/https.php
+sget()   { curl -sk -o /tmp/site.out -w '%{http_code} %{redirect_url}' --resolve "$1:443:127.0.0.1" "${@:3}" "https://$1$2"; }
+issuer() { echo | openssl s_client -connect "127.0.0.1:${2:-443}" -servername "$1" 2>/dev/null | openssl x509 -noout -issuer -serial; }
+ssl_row() { mariadb -uroot -N lpanel -e "select $2 from ssl_sites s join domains d on d.id = s.domain_id where d.name = '$1'"; }
+export -f sget issuer ssl_row
+t_autossl()   { lpanel ssl:autossl --wait > /tmp/autossl.out 2>&1; cat /tmp/autossl.out >&2
+                # Saved first: grep -q would close the pipe before the command is done writing.
+                lpanel ssl:list shop1 > /tmp/ssl.list; cat /tmp/ssl.list >&2
+                grep -Eq '^shop\.example\.test +auto +[0-9-]{10} .* ok$' /tmp/ssl.list \
+                && grep -Eq '^other\.example\.test +auto .* ok$' /tmp/ssl.list && grep -Eq '^blog\.shop\.example\.test +auto .* ok$' /tmp/ssl.list; }
+t_https()     { [ "$(sget shop.example.test /)" = "200 " ] && grep -q "8.3 as shop1" /tmp/site.out && issuer shop.example.test | grep -q "Pebble Intermediate"; }
+t_tohttps()   { [ "$(get shop.example.test /a?b=1)" = "301 https://shop.example.test/a?b=1" ]; }
+t_php_https() { [ "$(sget shop.example.test /https.php)" = "200 " ] && grep -qx "https=on" /tmp/site.out \
+                && lpanel ssl:options shop1 shop.example.test --force=no && [ "$(get shop.example.test /https.php)" = "200 " ] && grep -qx "https=off" /tmp/site.out; }
+t_features()  { [ "$(sget other.example.test /old/page)" = "301 https://example.org/new/page" ] && [ "$(sget other.example.test /private/)" = "401 " ] \
+                && [ "$(sget other.example.test /logo.png -e http://elsewhere.test/page)" = "403 " ] && [ "$(sget other.example.test /)" = "200 " ]; }
+t_left_out()  { lpanel ssl:list shop1 > /tmp/ssl.list && grep -q "left out shop-alias.example.test: it has no DNS address" /tmp/ssl.list \
+                && ssl_row shop.example.test names | grep -q "www.shop.example.test" && ! ssl_row shop.example.test names | grep -q "shop-alias"; }
+t_backoff()   { lpanel ssl:list shop3 > /tmp/ssl.list && cat /tmp/ssl.list >&2 && grep -q "failed, next try" /tmp/ssl.list && local n; n=$(mariadb -uroot -N lpanel -e "select count(*) from ssl_orders o join domains d on d.id = o.domain_id where d.name = 'three.example.test'") \
+                && lpanel ssl:autossl --wait >/dev/null && [ "$(mariadb -uroot -N lpanel -e "select count(*) from ssl_orders o join domains d on d.id = o.domain_id where d.name = 'three.example.test'")" = "$n" ] \
+                && [ "$(ssl_row three.example.test failures)" = 1 ]; }
+t_hostname()  { issuer e2e-panel.test 7443 | grep -q "Pebble Intermediate" && lpanel ssl:hostname > /tmp/ssl.host && grep -q "names     e2e-panel.test" /tmp/ssl.host; }
+t_default443() { case "$WEB" in
+                     apache) [ "$(sget nobody.example.test /)" = "404 " ] && issuer nobody.example.test | grep -q "Pebble Intermediate" ;;
+                     *) ! curl -sk -o /dev/null --resolve nobody.example.test:443:127.0.0.1 https://nobody.example.test/ ;;
+                 esac; }
+t_renew()     { local before; before=$(issuer shop.example.test | grep serial)
+                mariadb -uroot lpanel -e "update ssl_sites s join domains d on d.id = s.domain_id set s.not_before = now() - interval 80 day, s.not_after = now() + interval 10 day where d.name = 'shop.example.test'"
+                lpanel ssl:autossl --wait >/dev/null && local after; after=$(issuer shop.example.test | grep serial)
+                echo "$before -> $after" >&2; [ -n "$after" ] && [ "$before" != "$after" ] && [ "$(sget shop.example.test /)" = "200 " ]; }
+t_fallback()  { acme https://127.0.0.1:14999/dir \
+                && lpanel ssl:settings --eab-kid kid-1 --eab-hmac zWNDZM6eQGHWpSRTPal5eIUYFTu7EajVIoguysqZ9wG44nMEtx3MUAsUDkMTQ12W > /tmp/ssl.settings \
+                && grep -q "letsencrypt then zerossl" /tmp/ssl.settings \
+                && lpanel ssl:issue shop1 blog.shop.example.test && [ "$(ssl_row blog.shop.example.test authority)" = zerossl ] \
+                && [ "$(sget blog.shop.example.test /)" = "200 " ] && grep -q "8.3 as shop1" /tmp/site.out; }
+# A certificate from an authority of the owner's own (not self-signed, so
+# AutoSSL leaves it in place), given as key, leaf and issuer on stdin.
+t_custom()    { openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=E2E Own CA" -keyout /tmp/ca.key -out /tmp/ca.crt 2>/dev/null \
+                && openssl req -newkey rsa:2048 -nodes -subj "/CN=other.example.test" -addext "subjectAltName=DNS:other.example.test,DNS:www.other.example.test" \
+                    -keyout /tmp/own.key -out /tmp/own.csr 2>/dev/null \
+                && openssl x509 -req -in /tmp/own.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -days 30 -copy_extensions copy -out /tmp/own.crt 2>/dev/null \
+                && cat /tmp/own.key /tmp/own.crt /tmp/ca.crt | lpanel ssl:install shop1 other.example.test \
+                && issuer other.example.test | grep -q "CN *= *E2E Own CA" && [ "$(ssl_row other.example.test source)" = custom ] \
+                && [ "$(stat -c '%a %U' /etc/pki/lpanel/sites/shop1)" = "700 root" ] \
+                && [ "$(find /etc/pki/lpanel/sites/shop1 -name '*.key' ! -perm 600 | wc -l)" = 0 ]; }
+t_csr()       { lpanel ssl:csr shop1 shop.example.test --country=BD --org="Shop Ltd" > /tmp/req.csr && openssl req -in /tmp/req.csr -noout -text | tee /dev/stderr \
+                | grep -q "DNS:shop.example.test, DNS:www.shop.example.test" && ls /etc/pki/lpanel/sites/shop1/csr-*.key >/dev/null; }
+t_ssl_audit() { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'ssl.%'" | tr '\n' ' '); echo "$got" >&2
+                for want in ssl.settings:ok ssl.issue:ok ssl.host_issue:ok ssl.issue:failed ssl.options:ok ssl.install:ok ssl.csr:ok; do
+                    grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
+                done; }
+check "AutoSSL gets every site that points here a certificate" t_autossl
+check "the site answers over HTTPS with Pebble's certificate" t_https
+check "plain HTTP goes to HTTPS" t_tohttps
+check "PHP knows the visit came over HTTPS; HTTP stays HTTP when the owner says so" t_php_https
+check "redirects, the password and hotlink protection hold over HTTPS" t_features
+check "a name that does not point here is left out, and said why" t_left_out
+check "an account whose names do not point here fails, and waits before trying again" t_backoff
+check "the hostname gets a certificate, served on the panel's port" t_hostname
+check "a name nobody serves gets no customer's certificate" t_default443
+check "a certificate near its end is renewed and served" t_renew
+check "ZeroSSL issues when Let's Encrypt cannot be reached" t_fallback
+check "the owner's own certificate is installed; keys stay root's alone" t_custom
+check "lpanel ssl:csr makes a request for every name of the site" t_csr
+check "certificate changes are in the audit log" t_ssl_audit
+acme https://127.0.0.1:14000/dir
+# The checks after the switch below ask over plain HTTP.
+lpanel ssl:options shop1 other.example.test --force=no >/dev/null
+
+echo "== databases (MariaDB, phpMyAdmin)"
+DBPW='Db-Pass-Word-77'
+asapp() { mariadb -ushop1_app "-p$1" -N "${@:2}"; }   # password, mariadb args...
+t_db_create()  { lpanel db:create shop1 store && [ "$(mariadb -uroot -N -e "show databases like 'shop1\_store'")" = shop1_store ]; }
+t_db_user()    { echo "$DBPW" | lpanel db:user-create shop1 app --grant=store \
+                 && asapp "$DBPW" shop1_store -e 'create table t (id int); insert into t values (1), (2)' && [ "$(asapp "$DBPW" shop1_store -e 'select count(*) from t')" = 2 ]; }
+t_db_hash()    { [ "$(mariadb -uroot -N -e "select authentication_string from mysql.user where user='shop1_app' and host='localhost'")" = "$(mariadb -uroot -N lpanel -e "select hash from db_users where name='shop1_app'")" ] \
+                 && ! grep -rq "$DBPW" /var/log/lpanel /usr/local/lpanel/system/Logs /var/lib/lpa 2>/dev/null && ! mariadb -uroot -N lpanel -e 'select * from db_users, audit_log' | grep -q "$DBPW"; }
+t_db_alone()   { [ "$(asapp "$DBPW" -e 'show databases' | grep -v information_schema)" = shop1_store ] \
+                 && ! asapp "$DBPW" -e 'create database shop1_sneaky' 2>/dev/null && ! asapp "$DBPW" -e 'select * from lpanel.accounts' 2>/dev/null; }
+# A grant on shop1_store must not reach shop1xstore: _ is a wildcard unless escaped.
+t_db_escape()  { mariadb -uroot -e 'create database shop1xstore' && ! asapp "$DBPW" shop1xstore -e 'select 1' 2>/dev/null; local r=$?; mariadb -uroot -e 'drop database shop1xstore'; return $r; }
+t_db_php()     { printf '<?php $db = new mysqli("localhost", "shop1_app", "%s", "shop1_store"); echo "rows=", $db->query("select count(*) from t")->fetch_row()[0];' "$DBPW" > /tmp/db.php \
+                 && put shop1 /tmp/db.php /home/shop1/public_html/db.php && [ "$(sget shop.example.test /db.php)" = "200 " ] && grep -q "rows=2" /tmp/site.out; }
+t_db_select()  { lpanel db:grant shop1 app store --privileges=SELECT && asapp "$DBPW" shop1_store -e 'select * from t' >/dev/null && ! asapp "$DBPW" shop1_store -e 'insert into t values (3)' 2>/dev/null \
+                 && lpanel db:grant shop1 app store && asapp "$DBPW" shop1_store -e 'insert into t values (3)'; }
+t_db_password(){ echo 'New-Db-Pass-88' | lpanel db:user-password shop1 app && ! asapp "$DBPW" -e 'select 1' 2>/dev/null && asapp 'New-Db-Pass-88' -e 'select 1' >/dev/null; }
+DBPW2='New-Db-Pass-88'
+t_db_host()    { lpanel db:host-add shop1 203.0.113.9/24 --note=office && mariadb -uroot -N -e "select host from mysql.user where user='shop1_app'" | grep -qx '203.0.113.0/255.255.255.0' \
+                 && lpanel db:host-remove shop1 203.0.113.0/24 && ! mariadb -uroot -N -e "select host from mysql.user where user='shop1_app'" | grep -q 203.0.113; }
+t_db_rename()  { lpanel db:rename shop1 store shop && [ "$(asapp "$DBPW2" shop1_shop -e 'select count(*) from t')" = 3 ] && ! mariadb -uroot -N -e "show databases like 'shop1\_store'" | grep -q .; }
+t_db_kill()    { (asapp "$DBPW2" -e 'select sleep(120)' >/dev/null 2>&1; echo done > /tmp/sleeper) & sleep 2
+                 local id; id=$(lpanel db:info | awk '$2 == "shop1_app" { print $1 }' | head -1); [ -n "$id" ] || { lpanel db:info; return 1; }
+                 lpanel db:kill "$id" && for _ in 1 2 3 4 5; do [ -f /tmp/sleeper ] && return 0; sleep 1; done; return 1; }
+t_db_kill_root() { (mariadb -uroot -e 'select sleep(8)' >/dev/null 2>&1 &); sleep 1
+                 local id; id=$(mariadb -uroot -N -e "select id from information_schema.processlist where info = 'select sleep(8)'" | head -1)
+                 [ -n "$id" ] && ! lpanel db:kill "$id" 2>/dev/null && mariadb -uroot -N -e "select count(*) from information_schema.processlist where id = $id" | grep -qx 1; }
+# 2.5 MB of data comes off the home's 3 MB quota, so a 1 MB file no longer fits.
+t_db_quota()   { rm -f /home/shop1/tmp/q && runuser -u shop1 -- dd if=/dev/zero of=/home/shop1/tmp/q bs=1M count=1 2>/dev/null && rm -f /home/shop1/tmp/q \
+                 && asapp "$DBPW2" shop1_shop -e "create table big (b longblob); insert into big values (repeat('x', 2600000))" \
+                 && lpanel db:usage && [ "$(mariadb -uroot -N lpanel -e "select db_used_bytes from accounts where username='shop1'")" -gt 2500000 ] \
+                 && ! runuser -u shop1 -- dd if=/dev/zero of=/home/shop1/tmp/q bs=1M count=1 2>/dev/null; local r=$?; rm -f /home/shop1/tmp/q; return $r; }
+t_db_unquota() { asapp "$DBPW2" shop1_shop -e 'drop table big' && lpanel db:usage \
+                 && runuser -u shop1 -- dd if=/dev/zero of=/home/shop1/tmp/q bs=1M count=1 2>/dev/null; local r=$?; rm -f /home/shop1/tmp/q; return $r; }
+t_db_suspend() { lpanel db:create shop3 data && echo "$DBPW" | lpanel db:user-create shop3 app --grant=data \
+                 && mariadb -ushop3_app "-p$DBPW" -e 'select 1' >/dev/null && lpanel accounts:suspend shop3 \
+                 && ! mariadb -ushop3_app "-p$DBPW" -e 'select 1' 2>/dev/null && lpanel accounts:unsuspend shop3 && mariadb -ushop3_app "-p$DBPW" -e 'select 1' >/dev/null; }
+pma_get() { curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /tmp/pma.html -w '%{http_code} %{redirect_url}' "$@"; }
+t_pma_sso()    { [ "$(signin_as 7444 /panel shop1 Owner-Pass-Word-1)" = "303 https://127.0.0.1:7444/panel" ] || return 1
+                 curl -ks -b /tmp/jar2 -c /tmp/jar2 https://127.0.0.1:7444/panel/databases -o /tmp/dbpage.html
+                 local loc; loc=$(curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null -w '%{redirect_url}' --data-urlencode "_token=$(token /tmp/dbpage.html)" https://127.0.0.1:7444/panel/databases/phpmyadmin)
+                 echo "sign-on: $loc"; [[ "$loc" == https://127.0.0.1:7444/phpmyadmin/lpanel-signon.php\?ticket=* ]] || return 1
+                 echo "$loc" > /tmp/ticket.url
+                 [ "$(pma_get "$loc")" = "303 https://127.0.0.1:7444/phpmyadmin/index.php?route=/" ] || return 1
+                 pma_get 'https://127.0.0.1:7444/phpmyadmin/index.php?route=/' >/dev/null
+                 grep -q 'shop1_shop' /tmp/pma.html && ! grep -q 'name="pma_username"' /tmp/pma.html || { grep -o '<title>[^<]*' /tmp/pma.html; return 1; }; }
+t_pma_once()   { [ "$(pma_get "$(cat /tmp/ticket.url)" | cut -d' ' -f2)" = https://127.0.0.1:7444/panel/databases ]; }
+t_pma_only()   { pma_get 'https://127.0.0.1:7444/phpmyadmin/index.php?route=/server/databases' >/dev/null; ! grep -q 'shop3_data' /tmp/pma.html && ! grep -q '>lpanel<' /tmp/pma.html; }
+t_pma_closed() { [ "$(status https://127.0.0.1:7444/phpmyadmin/config.inc.php)" = 404 ] && [ "$(status https://127.0.0.1:7444/phpmyadmin/setup/)" = 404 ] \
+                 && [ "$(status https://127.0.0.1:7443/phpmyadmin/)" != 200 ] && [ "$(curl -ks -o /dev/null -w '%{redirect_url}' https://127.0.0.1:7444/phpmyadmin/index.php)" = https://127.0.0.1:7444/panel/databases ]; }
+t_pma_apart()  { [ "$(stat -c '%a %U %G' /var/lib/lpanel-pma/tickets)" = "2770 lpanel lpanel-pma" ] && ! runuser -u lpanel-pma -- cat /usr/local/lpanel/.env 2>/dev/null \
+                 && ! runuser -u lpanel -- cat /usr/local/lpanel-pma/phpmyadmin/config.inc.php 2>/dev/null && ps -o user:20= -C php-fpm | grep -qx lpanel-pma; }
+t_db_page()    { curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/databases | grep -q 'shop1_app' && curl -ks -b $jar https://127.0.0.1:7443/admin/databases | grep -q 'shop1_shop'; }
+t_db_drop()    { lpanel db:user-drop shop1 app && lpanel db:drop shop1 shop && ! mariadb -uroot -N -e "show databases like 'shop1\_%'" | grep -q . \
+                 && ! mariadb -uroot -N -e "select user from mysql.user where user like 'shop1\_%'" | grep -q .; }
+t_db_terminate() { echo "Owner-Pass-Word-6" | lpanel accounts:create shop6 six.example.test Starter >/dev/null && lpanel db:create shop6 gone && echo "$DBPW" | lpanel db:user-create shop6 app --grant=gone \
+                 && lpanel accounts:terminate shop6 --yes                  && for _ in $(seq 60); do getent passwd shop6 >/dev/null || break; lpanel accounts:settle >/dev/null; sleep 2; done                  && ! getent passwd shop6 && lpanel accounts:settle >/dev/null && [ "$(mariadb -uroot -N lpanel -e "select count(*) from db_databases d join accounts a on a.id = d.account_id where a.username = 'shop6'")" = 0 ]                  && ! mariadb -uroot -N -e "show databases like 'shop6\_%'" | grep -q . && ! mariadb -uroot -N -e "select user from mysql.user where user like 'shop6\_%' or user = 'lpsso-shop6'" | grep -q .; }
+t_db_audit()   { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'database.%'" | tr '\n' ' '); echo "$got" >&2
+                 for want in database.create:ok database.user_create:ok database.grant:ok database.user_password:ok database.host_add:ok database.host_remove:ok \
+                             database.rename:ok database.kill:ok database.phpmyadmin:ok database.user_drop:ok database.drop:ok; do
+                     grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
+                 done; }
+export -f asapp
+check "lpanel db:create makes the database, with the account's prefix" t_db_create
+check "a database user signs in with its password and uses its database" t_db_user
+check "only MariaDB's hash is kept; the password reached no log" t_db_hash
+check "the user sees its own database only, and cannot make others" t_db_alone
+check "a grant on shop1_store does not reach shop1xstore" t_db_escape
+check "the site's PHP reaches its database" t_db_php
+check "privileges narrow to SELECT, and back to all" t_db_select
+check "a new password replaces the old one" t_db_password
+check "a remote network becomes MariaDB's address/netmask, and goes again" t_db_host
+check "a rename moves the tables, and the user keeps its privileges" t_db_rename
+check "an account's running query is ended from the panel" t_db_kill
+check "root's and MariaDB's own connections cannot be" t_db_kill_root
+check "database space comes off the home's quota" t_db_quota
+check "and goes back when the data goes" t_db_unquota
+check "suspension locks the account's database users, and unsuspending unlocks them" t_db_suspend
+check "phpMyAdmin opens signed in, from the User panel" t_pma_sso
+check "a sign-on ticket works once" t_pma_once
+check "phpMyAdmin shows the account's databases only" t_pma_only
+check "phpMyAdmin's config and setup are not served, nor is it on the Admin panel's port" t_pma_closed
+check "phpMyAdmin runs as its own user, apart from the panel" t_pma_apart
+check "both panels list the databases" t_db_page
+check "dropping removes the database and the user" t_db_drop
+check "terminating an account drops its databases and users" t_db_terminate
+check "database changes are in the audit log" t_db_audit
+
 # Each stack switches to another, and every site moves with it.
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"
@@ -417,6 +613,7 @@ check "only the new stack's files are left" t_moved_files
 check "every site is served by the new stack" bash -c 'says shop.example.test "8.3 as shop1" && says other.example.test "8.2 as shop1" && says three.example.test "bool(false)"'
 check "redirects, the protected folder and hotlink protection came along" bash -c '[ "$(get $O /old/page)" = "301 https://example.org/new/page" ] && [ "$(get $O /private/)" = "401 " ] && [ "$(get $O /logo.png -e http://elsewhere.test/page)" = "403 " ]'
 check "a name nobody serves is still a 404" bash -c '[ "$(site nobody.example.test)" = 404 ]'
+check "HTTPS came along, with each site's certificate" bash -c '[ "$(sget shop.example.test /)" = "200 " ] && grep -q "8.3 as shop1" /tmp/site.out && issuer shop.example.test | grep -q "Pebble Intermediate" && issuer other.example.test | grep -q "CN *= *E2E Own CA"'
 
 if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     echo "== SELinux ($(getenforce))"

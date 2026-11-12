@@ -369,10 +369,110 @@ A deliberately broken config is rolled back automatically.
 **Exit:** a new domain gets a certificate on its own; renewals and failure
 backoff are tested against Pebble.
 
+**M3: certificates. Built 2026-11-12.**
+- **AutoSSL** (`ssl:autossl`, every five minutes; the Admin panel's SSL/TLS
+  page sets it up, capability `server.ssl`):
+  - every site of every active account gets a certificate covering its own
+    name, its www. and its aliases' names, from Let's Encrypt, or ZeroSSL
+    when Let's Encrypt does not issue (ZeroSSL needs its EAB key id and HMAC
+    key; either may be first);
+  - before ordering, the agent checks each name: it must resolve and the
+    site must answer a token of its own over HTTP. A name that fails is left
+    out and the reason shown, so the authorities' limits are spent only on
+    names that point here;
+  - **renewal:** a certificate is renewed in its last third (at most 30 days
+    before it ends). A name it does not cover yet is tried again a day later;
+  - **failures** wait 1, 2, 4… up to 24 hours before the next try. A failed
+    domain check is not retried at the other authority.
+- **Serving HTTPS** on all three stacks:
+  - Apache alone has a `:443` VirtualHost per site;
+  - nginx, alone or in front of Apache, listens on 443 in each site's server
+    block, and Apache behind it learns HTTPS from `X-Forwarded-Proto`;
+  - plain HTTP goes to HTTPS unless the owner turns that off. Domain checks
+    are answered before every other rule, even for a suspended site;
+  - names nobody serves get the hostname's certificate (Apache) or no
+    handshake at all (nginx), never a customer's;
+  - an expired certificate is not served, so the site falls back to HTTP.
+- **The owner's choices** (User panel → SSL/TLS, feature `ssl`): AutoSSL and
+  HTTPS on or off per site; "get a certificate now"; installing their own
+  certificate (with its key, or without one when it answers a request made
+  here); and a request (CSR, ECDSA or RSA) whose key never leaves the server.
+- **The hostname's certificate** comes from AutoSSL too, or is installed by
+  hand. It serves the panel's ports 7443 and 7444, and is tested with the
+  panel's nginx, probed, and rolled back on failure. Mail and FTP will use it
+  in M6 and M7.
+- **Where it shows:** the API (`/admin/api/v1/accounts/{user}/ssl…`,
+  `/admin/api/v1/ssl…`) and `lpanel ssl:list|issue|install|csr|remove|options|autossl|hostname|settings`.
+- **Tests:** Go (key and chain checks, the store, issuing with fallback and
+  the domain check, the hostname's rollback, HTTPS on each stack); PHP 97;
+  `tests/e2e/install.sh` against two Pebbles, standing in for Let's Encrypt
+  and for ZeroSSL with EAB:
+  - issuing, HTTPS and the move to it, PHP seeing HTTPS, and every site
+    feature over HTTPS;
+  - left-out names, failure and backoff, the hostname on 7443, and renewal;
+  - ZeroSSL taking over when Let's Encrypt is down, the owner's own
+    certificate, and CSRs;
+  - all of it on each stack, and after switching stacks: `WEB=apache` 145
+    checks, `WEB=nginx` 146, `WEB=hybrid` 150.
+- **Not yet:** wildcard certificates (DNS-01, M5); mail and FTP certificates
+  with SNI per mail domain (M6, M7); expiry alerts (M10).
+
 ### M4: Databases
 - MariaDB databases, users and grants with the account prefix.
 - phpMyAdmin SSO and the remote access list.
 - DB size counted in the quota.
+
+**M4: databases. Built 2026-11-12.**
+- **Databases and users** (User panel → Databases, feature `databases`; the
+  package's `databases` limit counts them):
+  - every name carries the account's prefix (`bob_shop`, `bob_app`), within
+    MariaDB's and MySQL's limits (64 characters for a database, 32 for a user);
+  - users get every privilege on a database, or a chosen set from a fixed
+    list; never GRANT OPTION or anything server-wide. Grants name the
+    database with `_` escaped, so `bob_shop` never also means `bobxshop`;
+  - the panel keeps only MariaDB's own password hash, never the password;
+  - renaming moves the tables in one `RENAME TABLE`. A database with views,
+    routines, triggers or events is refused rather than half moved;
+  - dropping and renaming ask the server first, and only once earlier changes
+    have reached it, so a late update can never bring a dropped database back.
+- **Remote access:** hosts the account's users may connect from: addresses,
+  IPv4 networks (`203.0.113.0/24` becomes MariaDB's address/netmask), host
+  names and `%` patterns.
+- **Suspension** locks the account's database users and ends their
+  connections. **Termination** drops every database and user before the
+  system user goes.
+- **Space:** `db:usage` (every 15 minutes) measures each database's folder.
+  The home's quota becomes the package's space less the databases', so files
+  and databases together stay within the package. Both panels show the total.
+- **phpMyAdmin 5.2.3** on the User panel's port at `/phpmyadmin/`, in a
+  PHP-FPM pool of its own as the `lpanel-pma` user. "Open phpMyAdmin" signs
+  in with no second password:
+  - the agent makes the account's own `lpsso-<account>` user with a fresh
+    random password and every privilege on the account's databases only;
+  - the panel hands it over in a one-time ticket that lives a minute;
+  - that user is removed eight hours after its last sign-on.
+- **Admin panel → Databases** (capability `server.databases`): MariaDB's
+  version and state, its connections (an account's can be ended; root's,
+  the panel's and MariaDB's own cannot), and every account's databases with
+  their sizes.
+- **Where it shows:** the API (`/admin/api/v1/accounts/{user}/databases…`,
+  `/admin/api/v1/databases…`) and `lpanel db:list|create|drop|rename|user-create|user-password|user-drop|grant|revoke|host-add|host-remove|usage|settle|sync|info|kill`.
+  Passwords are read from standard input.
+- **Tests:** Go (SQL built only from checked names, hashes, privileges and
+  hosts; escaped grants; renames; suspension; single sign-on; kill rules;
+  sizes); PHP 106; `tests/e2e/install.sh` against the real MariaDB and
+  phpMyAdmin:
+  - users, privileges, passwords, remote hosts, renames and drops;
+  - a site's PHP reaching its database; the `_` escape;
+  - ending a connection; quota with and without data; suspension;
+  - phpMyAdmin's sign-on, used once, showing only the account's databases;
+  - termination; and the audit log;
+  - `WEB=apache` 169 checks, `WEB=nginx` 170, `WEB=hybrid` 174; agent e2e 37.
+- **Not yet:**
+  - the firewall opening port 3306 to an account's remote hosts only (M9);
+  - MariaDB's service settings and root password (M10, with the service
+    manager);
+  - PostgreSQL (v2).
 
 ### M5: DNS
 - PowerDNS, automatic zones, zone editor and templates.

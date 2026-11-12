@@ -32,6 +32,9 @@ var Tools = map[string]string{
 	// made by the agent from its own catalogue, never taken from the panel.
 	"dnf": "/usr/bin/dnf",
 	"rpm": "/usr/bin/rpm",
+	// MariaDB's client, for databases and their users. SQL goes on standard
+	// input (RunInput), never in the arguments.
+	"mariadb": "/usr/bin/mariadb",
 }
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"
@@ -67,7 +70,12 @@ type Runner interface {
 type Exec struct{}
 
 // Run implements Runner.
-func (Exec) Run(ctx context.Context, tool string, args ...string) (int, string, error) {
+func (e Exec) Run(ctx context.Context, tool string, args ...string) (int, string, error) {
+	return e.RunInput(ctx, "", tool, args...)
+}
+
+// RunInput is Run with text on the tool's standard input.
+func (Exec) RunInput(ctx context.Context, input, tool string, args ...string) (int, string, error) {
 	path, ok := Path(tool)
 	if !ok {
 		return -1, "", fmt.Errorf("sysexec: %q is not an allowed tool", tool)
@@ -75,6 +83,9 @@ func (Exec) Run(ctx context.Context, tool string, args ...string) (int, string, 
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Env = env
 	cmd.Dir = "/"
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out

@@ -1,0 +1,273 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro err(errors, key) %}{% if errors[key] is defined %}<div class="error">{{ errors[key]|local }}</div>{% endif %}{% endmacro %}
+
+{% macro privs(privileges, name, checked, all_id) %}
+    <label class="check priv-all"><input type="checkbox" data-all="{{ name }}" id="{{ all_id }}"{% if checked == ['ALL'] %} checked{% endif %}> <strong>{{ 'Databases.all_privileges'|local }}</strong></label>
+    <div class="priv-grid">
+        {% for p in privileges %}
+            <label class="check"><input type="checkbox" name="{{ name }}" value="{{ p }}"{% if checked == ['ALL'] or p in checked %} checked{% endif %}> <span class="mono">{{ p }}</span></label>
+        {% endfor %}
+    </div>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Databases.title'|local }}</h1>
+        <p>{{ 'Databases.lead'|local({prefix: prefix}) }}</p>
+    </div>
+</div>
+
+{% if state and state.state == 'failed' %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Databases.last_failed'|local }}</strong><br><span class="mono">{{ state.error }}</span></p></div>
+{% elseif state and state.state == 'pending' %}
+    <div class="alert alert-info">{{ icon('clock') }}<p>{{ 'Databases.pending_text'|local({since: state.changed_at|when}) }}</p></div>
+{% endif %}
+{% if account.status == 'suspended' %}
+    <div class="alert alert-warning">{{ icon('pause') }}<p>{{ 'Databases.suspended_text'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-3 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('database') }}</span>
+        <div><div class="stat-label">{{ 'Databases.databases'|local }}</div><div class="stat-value">{{ databases|length }} / {{ limit ? limit : '∞' }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('disk') }}</span>
+        <div><div class="stat-label">{{ 'Databases.space'|local }}</div><div class="stat-value">{{ total_bytes|bytes }}</div><div class="stat-sub">{{ 'Databases.space_hint'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('users') }}</span>
+        <div><div class="stat-label">{{ 'Databases.users'|local }}</div><div class="stat-value">{{ users|length }}</div></div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:20px">
+    <div class="card-body pma-card">
+        <div>
+            <strong>phpMyAdmin</strong>
+            <p>{{ 'Databases.pma_lead'|local }}</p>
+        </div>
+        <form method="post" action="{{ pma_url }}" target="_blank">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <button class="btn" type="submit"{% if account.status != 'active' %} disabled{% endif %}>{{ icon('link') }}{{ 'Databases.pma_open'|local }}</button>
+        </form>
+    </div>
+</div>
+
+{# Databases #}
+<div class="grid grid-side" style="margin-bottom:20px">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Databases.databases'|local }}</h2></div></div>
+        {% if databases is empty %}
+            <div class="empty">{{ icon('database') }}<h3>{{ 'Databases.none'|local }}</h3><p>{{ 'Databases.none_hint'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Databases.name'|local }}</th>
+                <th class="hide-sm">{{ 'Databases.size'|local }}</th>
+                <th class="hide-sm">{{ 'Databases.users'|local }}</th>
+                <th style="text-align:end"><span class="sr-only">{{ 'Databases.actions'|local }}</span></th>
+            </tr></thead>
+            <tbody>
+            {% for d in databases %}
+                <tr>
+                    <td>
+                        <strong class="mono">{{ d.name }}</strong>
+                        <div class="domain-sub show-sm">{{ d.size_bytes|bytes }} · {{ d.users ? d.users|join(', ') : 'Databases.no_users'|local }}</div>
+                    </td>
+                    <td class="hide-sm">{{ d.size_bytes|bytes }}</td>
+                    <td class="hide-sm">{% if d.users %}<div class="chips">{% for u in d.users %}<span class="badge plain mono">{{ u }}</span>{% endfor %}</div>{% else %}<span class="muted">{{ 'Databases.no_users'|local }}</span>{% endif %}</td>
+                    <td class="db-actions-cell">
+                        <div class="db-actions">
+                            <details class="db-more">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Databases.rename_name'|local({name: d.name}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Databases.rename'|local }}</span></summary>
+                                <form class="db-panel" method="post" action="{{ d.rename_url }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <div class="field">
+                                        <label for="rn-{{ d.id }}">{{ 'Databases.new_name'|local }}</label>
+                                        <div class="affix"><span class="affix-text">{{ prefix }}</span><input class="input mono" id="rn-{{ d.id }}" name="name" maxlength="{{ max_db }}" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ d.name|slice(prefix|length) }}" required></div>
+                                        <div class="hint">{{ 'Databases.rename_hint'|local }}</div>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" type="submit">{{ 'Databases.rename'|local }}</button>
+                                </form>
+                            </details>
+                            <form class="inline-form" method="post" action="{{ d.delete_url }}" data-confirm="{{ 'Databases.confirm_drop'|local({name: d.name}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Databases.drop_name'|local({name: d.name}) }}">{{ icon('trash') }}</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ store_url }}">
+        <div class="card-head"><div><h2>{{ 'Databases.create'|local }}</h2><p>{{ 'Databases.create_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            {% if at_limit %}<div class="alert alert-warning" style="margin-top:0">{{ icon('alert') }}<p>{{ 'Databases.error_limit'|local }}</p></div>{% endif %}
+            <div class="field">
+                <label for="db-name">{{ 'Databases.name'|local }}</label>
+                <div class="affix"><span class="affix-text">{{ prefix }}</span><input class="input mono{% if errors.db_name is defined %} is-invalid{% endif %}" id="db-name" name="name" maxlength="{{ max_db }}" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.db_name|default('')|slice(old.db_name|default('') starts with prefix ? prefix|length : 0) }}" placeholder="shop" required></div>
+                {{ _self.err(errors, 'db_name') }}
+                <div class="hint">{{ 'Databases.name_hint'|local({max: max_db}) }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit"{% if at_limit %} disabled{% endif %}>{{ icon('plus') }}{{ 'Databases.create_button'|local }}</button></div>
+    </form>
+</div>
+
+{# Users #}
+<div class="grid grid-side" style="margin-bottom:20px">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Databases.users'|local }}</h2><p>{{ 'Databases.users_lead'|local }}</p></div></div>
+        {% if users is empty %}
+            <div class="empty">{{ icon('user') }}<h3>{{ 'Databases.no_users_yet'|local }}</h3><p>{{ 'Databases.no_users_hint'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Databases.user'|local }}</th>
+                <th style="text-align:end"><span class="sr-only">{{ 'Databases.actions'|local }}</span></th>
+            </tr></thead>
+            <tbody>
+            {% for u in users %}
+                <tr>
+                    <td>
+                        <strong class="mono">{{ u.name }}</strong>
+                        <div class="db-grants">
+                            {% for db, p in u.grants %}
+                                <span class="badge {{ p == ['ALL'] ? 'accent' : 'info' }}" title="{{ p|join(', ') }}">{{ db }} · {{ p == ['ALL'] ? 'Databases.all'|local : 'Databases.some'|local({n: p|length}) }}</span>
+                            {% else %}
+                                <span class="muted">{{ 'Databases.no_access'|local }}</span>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    <td class="db-actions-cell">
+                        <div class="db-actions">
+                            <details class="db-more">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Databases.privileges_for'|local({name: u.name}) }}">{{ icon('shield') }}<span class="hide-sm">{{ 'Databases.privileges'|local }}</span></summary>
+                                <form class="db-panel" method="post" action="{{ u.grant_url }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    {% if databases is empty %}
+                                        <p class="muted" style="margin:0">{{ 'Databases.none_hint'|local }}</p>
+                                    {% else %}
+                                    <div class="field">
+                                        <label for="gd-{{ u.id }}">{{ 'Databases.database'|local }}</label>
+                                        <select class="input mono" id="gd-{{ u.id }}" name="database">
+                                            {% for d in databases %}<option value="{{ d.id }}">{{ d.name }}{% if u.grants[d.name] is defined %} ✓{% endif %}</option>{% endfor %}
+                                        </select>
+                                        <div class="hint">{{ 'Databases.privileges_hint'|local }}</div>
+                                    </div>
+                                    {{ _self.privs(privileges, 'privileges[]', ['ALL'], 'pa-' ~ u.id) }}
+                                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px">
+                                        <button class="btn btn-sm btn-primary" type="submit">{{ 'Databases.save_privileges'|local }}</button>
+                                        <button class="btn btn-sm" type="submit" name="revoke" value="1">{{ 'Databases.revoke'|local }}</button>
+                                    </div>
+                                    {% endif %}
+                                </form>
+                            </details>
+                            <details class="db-more">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Databases.password_for'|local({name: u.name}) }}">{{ icon('key') }}<span class="hide-sm">{{ 'Databases.password'|local }}</span></summary>
+                                <form class="db-panel" method="post" action="{{ u.password_url }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <div class="field">
+                                        <label for="pw-{{ u.id }}">{{ 'Databases.new_password'|local }}</label>
+                                        <div class="input-row">
+                                            <input class="input mono" type="password" id="pw-{{ u.id }}" name="password" minlength="{{ password_min }}" maxlength="128" autocomplete="new-password" required>
+                                            <button class="btn btn-sm" type="button" data-generate="pw-{{ u.id }}">{{ icon('refresh') }}{{ 'Databases.generate'|local }}</button>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" type="submit">{{ 'Databases.change_password'|local }}</button>
+                                </form>
+                            </details>
+                            <form class="inline-form" method="post" action="{{ u.delete_url }}" data-confirm="{{ 'Databases.confirm_drop_user'|local({name: u.name}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Databases.drop_user_name'|local({name: u.name}) }}">{{ icon('trash') }}</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ user_url }}">
+        <div class="card-head"><div><h2>{{ 'Databases.create_user'|local }}</h2><p>{{ 'Databases.create_user_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label for="u-name">{{ 'Databases.user'|local }}</label>
+                <div class="affix"><span class="affix-text">{{ prefix }}</span><input class="input mono{% if errors.user_name is defined %} is-invalid{% endif %}" id="u-name" name="name" maxlength="{{ max_user }}" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.user_name|default('')|slice(old.user_name|default('') starts with prefix ? prefix|length : 0) }}" placeholder="app" required></div>
+                {{ _self.err(errors, 'user_name') }}
+                <div class="hint">{{ 'Databases.name_hint'|local({max: max_user}) }}</div>
+            </div>
+            <div class="field">
+                <label for="u-password">{{ 'Databases.password'|local }}</label>
+                <div class="input-row">
+                    <input class="input mono{% if errors.user_password is defined %} is-invalid{% endif %}" type="password" id="u-password" name="password" minlength="{{ password_min }}" maxlength="128" autocomplete="new-password" required>
+                    <button class="btn btn-sm" type="button" data-generate="u-password">{{ icon('refresh') }}{{ 'Databases.generate'|local }}</button>
+                </div>
+                {{ _self.err(errors, 'user_password') }}
+                <div class="hint">{{ 'Databases.password_hint'|local({min: password_min}) }}</div>
+            </div>
+            <div class="field">
+                <label for="u-db">{{ 'Databases.give_access'|local }} <span class="muted">({{ 'Databases.optional'|local }})</span></label>
+                <select class="input mono" id="u-db" name="database">
+                    <option value="">—</option>
+                    {% for d in databases %}<option value="{{ d.id }}"{% if old.user_database|default('') == d.id ~ '' %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
+                </select>
+                {{ _self.err(errors, 'user_grants') }}
+                <div class="hint">{{ 'Databases.give_access_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Databases.create_user_button'|local }}</button></div>
+    </form>
+</div>
+
+{# Remote access #}
+<div class="grid grid-side">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Databases.remote'|local }}</h2><p>{{ 'Databases.remote_lead'|local }}</p></div></div>
+        {% if hosts is empty %}
+            <div class="empty">{{ icon('globe') }}<h3>{{ 'Databases.no_hosts'|local }}</h3><p>{{ 'Databases.no_hosts_hint'|local }}</p></div>
+        {% else %}
+        <ul class="list">
+            {% for h in hosts %}
+                <li>
+                    <div><strong class="mono">{{ h.host }}</strong>{% if h.note %}<div class="muted">{{ h.note }}</div>{% endif %}</div>
+                    <form class="inline-form" method="post" action="{{ h.delete_url }}" data-confirm="{{ 'Databases.confirm_host'|local({host: h.host}) }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Databases.remove_host'|local({host: h.host}) }}">{{ icon('trash') }}</button>
+                    </form>
+                </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ host_url }}">
+        <div class="card-head"><div><h2>{{ 'Databases.add_host'|local }}</h2></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label for="h-host">{{ 'Databases.host'|local }}</label>
+                <input class="input mono{% if errors.host_host is defined %} is-invalid{% endif %}" id="h-host" name="host" maxlength="60" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.host|default('') }}" placeholder="203.0.113.10" required>
+                {{ _self.err(errors, 'host_host') }}
+                <div class="hint">{{ 'Databases.host_hint'|local }}</div>
+            </div>
+            <div class="field">
+                <label for="h-note">{{ 'Databases.note'|local }} <span class="muted">({{ 'Databases.optional'|local }})</span></label>
+                <input class="input" id="h-note" name="note" maxlength="100" value="{{ old.note|default('') }}">
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Databases.add_host_button'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

@@ -1,8 +1,8 @@
 {% if a.disk_used_bytes is null %}
     <span class="usage">—</span>
 {% elseif a.disk_limit_bytes %}
-    <span class="usage">{{ 'Accounts.of'|local({used: a.disk_used_bytes|bytes, total: a.disk_limit_bytes|bytes}) }}</span>
+    <span class="usage">{{ 'Accounts.of'|local({used: a.disk_total_bytes|bytes, total: a.disk_limit_bytes|bytes}) }}</span>
     <div class="meter compact{% if a.disk_percent >= 95 %} is-bad{% elseif a.disk_percent >= 80 %} is-warn{% endif %}"><span style="width:{{ a.disk_percent }}%"></span></div>
 {% else %}
-    <span class="usage">{{ a.disk_used_bytes|bytes }} · {{ 'Accounts.unlimited'|local }}</span>
+    <span class="usage">{{ a.disk_total_bytes|bytes }} · {{ 'Accounts.unlimited'|local }}</span>
 {% endif %}

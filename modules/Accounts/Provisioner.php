@@ -101,7 +101,7 @@ final class Provisioner
             $row['op_id'] !== null => Outcome::busy($id),
             !\in_array($row['status'], [Accounts::ACTIVE, Accounts::SUSPENDED], true) => Outcome::refused($id, 'Accounts.refused_status'),
             $limit !== null => Outcome::refused($id, $limit),
-            default => $this->start($id, 'account.modify', ['username' => $row['username']] + self::limits($package), ['package_id' => $packageId]),
+            default => $this->start($id, 'account.modify', ['username' => $row['username']] + self::limits($package, (int) $row['db_used_bytes']), ['package_id' => $packageId]),
         };
         $this->audit->record('account.package', $actor, $request, (string) $row['username'], self::auditOutcome($outcome), ['package' => $package['name']] + self::details($outcome));
 
@@ -119,7 +119,7 @@ final class Provisioner
     {
         foreach ($this->accounts->onPackage((int) $package['id']) as $row) {
             if ($row['op_id'] === null && \in_array($row['status'], [Accounts::ACTIVE, Accounts::SUSPENDED], true)) {
-                $this->start((int) $row['id'], 'account.modify', ['username' => $row['username']] + self::limits($package), ['package_id' => (int) $package['id']]);
+                $this->start((int) $row['id'], 'account.modify', ['username' => $row['username']] + self::limits($package, (int) $row['db_used_bytes']), ['package_id' => (int) $package['id']]);
             }
         }
     }
@@ -366,17 +366,43 @@ final class Provisioner
     }
 
     /**
+     * Give an account's home its quota again, now that the space its
+     * databases take has changed (db:usage). An account busy with another
+     * change gets it with the next one.
+     */
+    public function refreshQuota(int $id): ?Outcome
+    {
+        $row = $this->accounts->byId($id);
+        $package = $row === null ? null : $this->packages->byId((int) $row['package_id']);
+
+        if ($row === null || $package === null || $row['op_id'] !== null || !\in_array($row['status'], [Accounts::ACTIVE, Accounts::SUSPENDED], true)) {
+            return null;
+        }
+
+        return $this->start($id, 'account.modify', ['username' => $row['username']] + self::limits($package, (int) $row['db_used_bytes']), ['package_id' => (int) $package['id']]);
+    }
+
+    /**
      * The agent arguments a package sets: disk and inode quota, and the shell.
+     * Databases live outside the home, so the space they take comes off the
+     * home's quota: files and databases together stay within the package
+     * (never below 1 MB, so the home stays usable while the owner tidies up).
      *
      * @param array<string, mixed> $package
      *
      * @return array{shell: string, quota: array{blocks_kib: int, inodes: int}}
      */
-    public static function limits(array $package): array
+    public static function limits(array $package, int $databaseBytes = 0): array
     {
+        $kib = (int) $package['disk_mb'] * 1024;
+
+        if ($kib > 0 && $databaseBytes > 0) {
+            $kib = \max(1024, $kib - (int) \ceil($databaseBytes / 1024));
+        }
+
         return [
             'shell' => Packages::has($package, 'ssh') ? 'bash' : 'none',
-            'quota' => ['blocks_kib' => (int) $package['disk_mb'] * 1024, 'inodes' => (int) $package['inodes']],
+            'quota' => ['blocks_kib' => $kib, 'inodes' => (int) $package['inodes']],
         ];
     }
 

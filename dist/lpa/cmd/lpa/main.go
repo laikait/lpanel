@@ -25,8 +25,10 @@ import (
 	"time"
 
 	"lpa/internal/accounts"
+	"lpa/internal/certs"
 	"lpa/internal/config"
 	"lpa/internal/journal"
+	"lpa/internal/mysql"
 	"lpa/internal/ops"
 	"lpa/internal/peer"
 	"lpa/internal/protocol"
@@ -83,14 +85,43 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Regis
 		HomesBase: cfg.HomesBase, Files: accounts.SystemFiles, Run: sysexec.Exec{}, Quota: quotas, Log: log,
 		SELinux: selinuxOn(),
 	}
+	state := filepath.Dir(cfg.JournalDir) // /var/lib/lpa
+	store := &certs.Store{Dir: "/etc/pki/lpanel/sites"}
 	sites := &web.Manager{
 		Server: cfg.Web, Run: sysexec.Exec{}, Log: log, Owner: acc.Owner, SELinux: acc.SELinux,
-		PanelPHP: cfg.PanelPHP, TrafficState: filepath.Join(filepath.Dir(cfg.JournalDir), "traffic.json"),
+		PanelPHP: cfg.PanelPHP, TrafficState: filepath.Join(state, "traffic.json"),
+		CertFiles: store.Files, CertPrune: store.Prune, CertRemove: store.RemoveUser,
 	}
 	sites.Defaults()
-	acc.BeforeRemove = sites.RemoveFor
+	// The hostname certificate serves the panel's ports, and the default
+	// HTTPS site when Apache serves HTTPS itself.
+	hostUnits := []string{"lpanel-nginx"}
+	if cfg.Web == "apache" {
+		hostUnits = append(hostUnits, "httpd")
+	}
+	tls := &certs.Manager{
+		Store: store,
+		ACME: &certs.ACME{
+			Directories: map[string]string{certs.LetsEncrypt: cfg.ACME.LetsEncrypt, certs.ZeroSSL: cfg.ACME.ZeroSSL},
+			State:       filepath.Join(state, "acme"), Roots: cfg.ACME.Roots, UserAgent: "lpa/" + version,
+		},
+		Challenges: sites.Challenges, HostCert: sites.HostCert, HostKey: sites.HostKey,
+		HostUnits: hostUnits, Run: sysexec.Exec{}, Log: log, Owner: acc.Owner,
+	}
+	tls.Defaults()
+	dbs := &mysql.Manager{SQL: mysql.CLI{Exec: sysexec.Exec{}}, Owner: acc.Owner, Log: log}
+	dbs.Defaults()
+	// A terminated account's sites, then its databases, go before its user.
+	acc.BeforeRemove = func(ctx context.Context, username string) error {
+		if err := sites.RemoveFor(ctx, username); err != nil {
+			return err
+		}
+		return dbs.RemoveFor(ctx, username)
+	}
 	ops.Accounts(reg, acc)
 	ops.Web(reg, sites)
+	ops.SSL(reg, tls)
+	ops.DB(reg, dbs)
 	return reg
 }
 

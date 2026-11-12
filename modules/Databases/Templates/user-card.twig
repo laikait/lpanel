@@ -1,0 +1,13 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Databases.title'|local }}</h2><p>{{ 'Databases.your_lead'|local }}</p></div>
+        <a class="btn btn-sm" href="{{ link }}">{{ 'Databases.manage'|local }}</a>
+    </div>
+    <ul class="list">
+        {% for d in databases|slice(0, 6) %}
+            <li><strong class="mono">{{ d.name }}</strong><span class="muted">{{ d.size_bytes|bytes }}</span></li>
+        {% else %}
+            <li class="muted">{{ 'Databases.none'|local }}</li>
+        {% endfor %}
+    </ul>
+</div>

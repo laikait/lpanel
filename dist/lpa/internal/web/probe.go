@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -30,7 +31,23 @@ func (m *Manager) httpProbe(ctx context.Context, host, revision string) error {
 	return probeOne(ctx, "127.0.0.1:80", "X-LPanel-Revision", host, revision)
 }
 
+// httpsProbe is httpProbe over HTTPS on :443, which only the front server
+// answers (nginx in front of Apache), with the site's own name in SNI. The
+// certificate is not verified: it may be self-signed, and the point is that
+// the reloaded server serves this revision there.
+func (m *Manager) httpsProbe(ctx context.Context, host, revision string) error {
+	header := "X-LPanel-Revision"
+	if m.Server == "hybrid" {
+		header = "X-LPanel-Front"
+	}
+	return probeAt(ctx, "https", "127.0.0.1:443", header, host, revision)
+}
+
 func probeOne(ctx context.Context, addr, header, host, revision string) error {
+	return probeAt(ctx, "http", addr, header, host, revision)
+}
+
+func probeAt(ctx context.Context, scheme, addr, header, host, revision string) error {
 	client := &http.Client{
 		Timeout: 3 * time.Second,
 		Transport: &http.Transport{
@@ -38,11 +55,12 @@ func probeOne(ctx context.Context, addr, header, host, revision string) error {
 				var d net.Dialer
 				return d.DialContext(ctx, "tcp", addr)
 			},
+			TLSClientConfig:   &tls.Config{ServerName: host, InsecureSkipVerify: true}, //nolint:gosec // only the revision is compared
 			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, "http://"+host+"/", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, scheme+"://"+host+"/", nil)
 	if err != nil {
 		return err
 	}

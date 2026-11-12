@@ -63,6 +63,7 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `internal/accounts` | hosting accounts: users, homes, suspension; only users it made itself |
 | `internal/quota` | kernel user quotas through `quotactl(2)` (ext4 and XFS) |
 | `internal/web` | accounts' sites: an Apache file and PHP-FPM pools per account, through the staged pipeline below |
+| `internal/certs` | certificates: the store, checks of key and chain, the ACME client (`golang.org/x/crypto/acme`) and the hostname's certificate |
 | `internal/sysexec` | runs `useradd`, `usermod`, `userdel`, `pkill`, `restorecon`, `httpd`, `systemctl` and Remi's `php-fpm` by absolute path, no shell, fixed environment |
 | `packaging/` | the systemd unit and the default configuration |
 
@@ -86,6 +87,21 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `php.install` | change, background | `{version}`: the version with the usual extensions, from Remi |
 | `php.remove` | change, background | `{version}`: refused while any pool uses it (`in_use`) and for the panel's own (`panel_php`) |
 | `php.extensions` | change, background | `{version, install, remove}`: extension names from the catalogue; the panel's own stay in its version |
+| `ssl.issue` | change, background | `{username, names, authorities, zerossl_eab?}`: a certificate for the names that point here, from the first authority that issues it; stored under the account (see below) |
+| `ssl.install` | change | `{username, key, chain}`: a certificate the owner brings; the key may be empty when it answers an `ssl.csr` |
+| `ssl.csr` | change | `{username, names, key_type, country, state, locality, organization}`: a key kept on the server and a certificate request |
+| `ssl.host_issue` | change, background | `{names, authorities, zerossl_eab?}`: the hostname's certificate, installed for the panel's ports |
+| `ssl.host_install` | change | `{key, chain}`: a hostname certificate the administrator brings |
+| `ssl.host_info` | read-only | the hostname certificate installed now |
+| `db.apply` | change | `{username, databases, users: [{name, hash, grants: {db: [privileges] or ["ALL"]}}], hosts, suspended}`: the account's whole database state (see below) |
+| `db.drop` | change | `{username, name}`: drop one database and everything in it |
+| `db.rename` | change | `{username, from, to}`: move its tables to a new name |
+| `db.sizes` | read-only | `{usernames?}`: each account database's size in bytes |
+| `db.sso` | change | `{username, databases}`: a fresh phpMyAdmin login, `lpsso-<username>` |
+| `db.sso_revoke` | change | `{username}`: remove that login |
+| `db.remove` | change | `{username}`: drop every database and user of the account (also run by `account.terminate`) |
+| `db.info`, `db.processes` | read-only | MariaDB's version and state; its connections |
+| `db.kill` | change | `{id}`: end one of an account's connections |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -189,6 +205,83 @@ logrotate renamed is finished, not read again; a line still being written
 waits for the next call. The answer is the running total of each day (62
 days are kept), so asking twice or losing an answer changes nothing.
 `web.remove` deletes the account's logs and totals.
+
+### Certificates (`ssl.*`)
+
+`lpa.json`'s `acme` names the two authorities' directories (`letsencrypt`,
+`zerossl`, by default the real ones) and optionally `roots`, a PEM file of
+extra roots to trust (a test authority such as Pebble). An operation only
+names an authority; it never gives a URL.
+
+`ssl.issue`:
+
+1. **Checks each name:** it must resolve, and the site must answer a token of
+   the agent's own at `http://<name>/.well-known/acme-challenge/`. A name that
+   cannot be reached still counts when it resolves to an address of this
+   server. A name that fails is left out, and the answer says why (`excluded`).
+   The site's own name must pass, or nothing is ordered.
+2. **Orders:** it makes a P-256 key and asks each authority in turn. A failed
+   domain check is not retried at the other authority (it would fail there
+   too). The account key for each directory is kept in `/var/lib/lpa/acme/`.
+3. **Checks the chain:** it must be for the key, in order, and valid now.
+4. **Stores it:** in `/etc/pki/lpanel/sites/<user>/<id>.crt` and `.key`,
+   where `<id>` is the first 16 hex digits of the leaf's SHA-256.
+
+A refusal is still a result (`issued: false`, with `error` and `attempts`),
+so the panel can show the reason.
+
+A site serves the certificate once `web.apply` names it:
+`"tls": {"cert": "<id>", "force": true}`. The agent refuses (`cert_missing`)
+an id that is not in the account's folder. On success it removes the
+account's certificates no site names, once they are a day old. Keys of
+requests (`csr-<id>.key`) are kept for 90 days. `web.remove` removes the
+folder.
+
+Every site answers `/.well-known/acme-challenge/<token>` from
+`/var/www/lpanel-acme` before anything else: before a suspension, a
+redirect, the www. choice or the move to HTTPS. So do the default sites, for
+the hostname.
+
+`ssl.host_issue` and `ssl.host_install` replace `/etc/lpanel/tls/panel.crt`
+and `.key`. They test the panel's nginx with `nginx -t`, reload
+`lpanel-nginx` (and `httpd` when Apache serves HTTPS itself), and check that
+port 7443 presents the new serial. If anything fails, the old files go back
+(`host_tls`).
+
+### Databases (`db.*`)
+
+The agent runs MariaDB's own client (`/usr/bin/mariadb --no-defaults`) as
+root over `/var/lib/mysql/mysql.sock`, with SQL on standard input. Every
+value is checked before it is used:
+
+- **names:** the account's prefix (`bob_`), then `[a-z0-9_]`; at most 64
+  characters for a database and 32 for a user;
+- **passwords:** only as MariaDB's `mysql_native_password` hash (`*` and 40
+  hex digits);
+- **privileges:** from a fixed list (`ALL` is all of them, never GRANT
+  OPTION or anything server-wide);
+- **hosts:** `[A-Za-z0-9.:%_/-]`, and never localhost.
+
+`db.apply`:
+
+- creates missing databases (utf8mb4) and users, for `localhost` and each
+  listed host;
+- sets every hash, revokes everything and grants what the state says (with
+  `_` escaped in the database name), and drops users of the account that are
+  no longer listed;
+- **never drops a database:** prefixed databases the state leaves out are
+  reported as `stray`;
+- when suspended, locks every user (`ACCOUNT LOCK`) and ends its
+  connections.
+
+`db.rename` refuses a database with views, routines, triggers or events
+(`db_rename_objects`); otherwise it creates the new database with the same
+character set, moves every table in one `RENAME TABLE` and drops the old
+one.
+
+`db.sso` makes or renews `lpsso-<username>`@localhost with a random password
+(only its hash goes into SQL) and every privilege on the listed databases,
+and returns the password.
 
 Document roots are `public_html` or folders under it. The agent makes them
 by walking from the home with `O_NOFOLLOW` directory descriptors, so a link

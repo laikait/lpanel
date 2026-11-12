@@ -1,0 +1,192 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro state_badge(state) %}
+    {% set kinds = {ok: 'ok', expiring: 'warn', expired: 'bad', self_signed: 'warn', none: 'plain'} %}
+    <span class="badge {{ kinds[state] }}">{{ ('Web.ssl_state_' ~ state)|local }}</span>
+{% endmacro %}
+
+{% macro switch(url, field, on, label, token) %}
+    <form class="switch-form" method="post" action="{{ url }}">
+        <input type="hidden" name="_token" value="{{ token }}">
+        <input type="hidden" name="field" value="{{ field }}">
+        <input type="hidden" name="value" value="{{ on ? '0' : '1' }}">
+        <button class="switch{% if on %} is-on{% endif %}" type="submit" role="switch" aria-checked="{{ on ? 'true' : 'false' }}">
+            <span class="switch-track" aria-hidden="true"><span class="switch-knob"></span></span>
+            <span class="switch-label">{{ label|local }}</span>
+        </button>
+    </form>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Web.ssl'|local }}</h1>
+        <p>{{ 'Web.ssl_lead'|local }}</p>
+    </div>
+</div>
+
+{% if busy %}
+    <div class="alert alert-info" data-reload="5">
+        <span class="spinner" aria-hidden="true"></span>
+        <p><strong>{{ 'Web.ssl_ordering'|local }}</strong> {{ 'Web.ssl_ordering_wait'|local }}</p>
+    </div>
+{% endif %}
+{% if not autossl_on %}
+    <div class="alert alert-warning">{{ icon('info') }}<p>{{ 'Web.ssl_autossl_off_server'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-side">
+    <div class="stack">
+    {% for s in sites %}
+        <section class="card ssl-site" id="site-{{ s.id }}">
+            <div class="card-head">
+                <div class="ssl-site-title">
+                    <span class="ssl-lock is-{{ s.state }}" aria-hidden="true">{{ icon(s.state in ['ok', 'expiring'] ? 'lock' : 'shield') }}</span>
+                    <div>
+                        <h2 class="domain-name">{{ s.name }} <span class="badge {{ s.kind == 'main' ? 'accent' : 'plain' }}">{{ ('Web.kind_' ~ s.kind)|local }}</span></h2>
+                        <p>{% if s.state == 'none' %}{{ 'Web.ssl_none_text'|local }}{% elseif s.days is not null and s.days >= 0 %}{{ 'Web.ssl_expires_in'|local({days: s.days, date: s.ssl.not_after|slice(0, 10)}) }}{% else %}{{ 'Web.ssl_expired_on'|local({date: s.ssl.not_after|slice(0, 10)}) }}{% endif %}</p>
+                    </div>
+                </div>
+                {% if s.running %}<span class="badge info"><span class="spinner spinner-sm" aria-hidden="true"></span>{{ 'Web.ssl_state_ordering'|local }}</span>{% else %}{{ _self.state_badge(s.state) }}{% endif %}
+            </div>
+            {% if s.ssl and (s.ssl.cert_id or s.ssl.last_error or s.ssl.excluded is not empty) %}
+            <div class="card-body">
+                {% if s.ssl.cert_id %}
+                    <dl class="facts">
+                        <dt>{{ 'Web.ssl_issuer'|local }}</dt>
+                        <dd>{{ s.ssl.issuer }}{% if s.ssl.source == 'auto' %} <span class="muted">· AutoSSL</span>{% else %} <span class="muted">· {{ 'Web.ssl_source_custom'|local }}</span>{% endif %}</dd>
+                        <dt>{{ 'Web.ssl_covers'|local }}</dt>
+                        <dd><div class="chips">{% for n in s.ssl.names %}<span class="badge plain mono">{{ n }}</span>{% endfor %}</div></dd>
+                        <dt>{{ 'Web.ssl_valid'|local }}</dt>
+                        <dd>{{ s.ssl.not_before|slice(0, 10) }} – {{ s.ssl.not_after|slice(0, 10) }} <span class="muted mono">· {{ s.ssl.key_type }}</span></dd>
+                    </dl>
+                    {% if s.uncovered is not empty %}
+                        <p class="ssl-note">{{ icon('info', 'ic-sm') }}<span>{{ 'Web.ssl_uncovered'|local({names: s.uncovered|join(', ')}) }}</span></p>
+                    {% endif %}
+                {% endif %}
+                {% if s.ssl and s.ssl.last_error %}
+                    <div class="ssl-problem">
+                        <strong>{{ 'Web.ssl_last_failed'|local }}</strong>
+                        <span class="mono">{{ s.ssl.last_error }}</span>
+                        {% if s.ssl.retry_at and s.autossl %}<span class="muted">{{ 'Web.ssl_next_try'|local({when: s.ssl.retry_at|when}) }}</span>{% endif %}
+                    </div>
+                {% endif %}
+                {% if s.ssl and s.ssl.excluded is not empty %}
+                    <details class="ssl-excluded">
+                        <summary>{{ 'Web.ssl_excluded'|local({count: s.ssl.excluded|length}) }}</summary>
+                        <ul class="list">
+                            {% for e in s.ssl.excluded %}<li><span class="mono">{{ e.name }}</span><span class="muted">{{ e.reason }}</span></li>{% endfor %}
+                        </ul>
+                    </details>
+                {% endif %}
+            </div>
+            {% endif %}
+            <div class="card-foot ssl-foot">
+                <div class="ssl-switches">
+                    {{ _self.switch(s.options_url, 'autossl', s.autossl, 'Web.ssl_autossl', lp.token) }}
+                    {{ _self.switch(s.options_url, 'force', s.force, 'Web.ssl_force', lp.token) }}
+                </div>
+                <div class="php-actions">
+                    {% if s.ssl and s.ssl.cert_id %}
+                        <form class="inline-form" method="post" action="{{ s.remove_url }}" data-confirm="{{ (s.ssl.source == 'auto' ? 'Web.ssl_remove_auto_confirm' : 'Web.ssl_remove_confirm')|local({name: s.name}) }}">
+                            <input type="hidden" name="_token" value="{{ lp.token }}">
+                            <button class="btn btn-ghost" type="submit">{{ icon('trash') }}<span class="hide-sm">{{ 'Web.ssl_remove'|local }}</span></button>
+                        </form>
+                    {% endif %}
+                    <form class="inline-form" method="post" action="{{ s.issue_url }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button class="btn" type="submit"{% if s.running or not autossl_on %} disabled{% endif %}>{{ icon('refresh') }}{{ (s.state == 'none' ? 'Web.ssl_issue' : 'Web.ssl_reissue')|local }}</button>
+                    </form>
+                </div>
+            </div>
+        </section>
+    {% else %}
+        <div class="card"><div class="empty">{{ icon('lock') }}<h3>{{ 'Web.ssl_no_sites'|local }}</h3></div></div>
+    {% endfor %}
+    </div>
+
+    <div class="stack">
+        {% if csr %}
+            <div class="card">
+                <div class="card-head"><div><h2>{{ 'Web.ssl_csr_ready'|local }}</h2><p>{{ 'Web.ssl_csr_ready_lead'|local({name: csr_for}) }}</p></div></div>
+                <div class="card-body">
+                    <textarea class="input mono ssl-pem" rows="12" readonly aria-label="{{ 'Web.ssl_csr'|local }}">{{ csr }}</textarea>
+                </div>
+                <div class="card-foot"><button class="btn btn-primary" type="button" data-copy="{{ csr }}" data-copied="{{ 'Web.ssl_copied'|local }}">{{ icon('copy') }}{{ 'Web.ssl_copy_csr'|local }}</button></div>
+            </div>
+        {% endif %}
+
+        <form class="card" method="post" action="{{ install_url }}" id="install">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Web.ssl_install'|local }}</h2><p>{{ 'Web.ssl_install_lead'|local }}</p></div></div>
+            <div class="card-body">
+                {% if install_error is defined and install_error %}
+                    <div class="alert alert-error">{{ icon('alert') }}<p>{{ install_error|local({names: install_detail}) }}{% if install_detail and install_error != 'Web.ssl_does_not_cover' %}<br><span class="mono">{{ install_detail }}</span>{% endif %}</p></div>
+                {% endif %}
+                <div class="field">
+                    <label for="i-domain">{{ 'Web.domain'|local }}</label>
+                    <select class="input" id="i-domain" name="domain">
+                        {% for s in sites %}<option value="{{ s.id }}"{% if old.domain|default(0) == s.id %} selected{% endif %}>{{ s.name }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="field">
+                    <label for="i-cert">{{ 'Web.ssl_certificate'|local }}</label>
+                    <textarea class="input mono ssl-pem" id="i-cert" name="certificate" rows="6" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----" required>{{ old.certificate|default('') }}</textarea>
+                    <div class="hint">{{ 'Web.ssl_certificate_hint'|local }}</div>
+                </div>
+                <div class="field">
+                    <label for="i-key">{{ 'Web.ssl_key'|local }} <span class="muted">({{ 'Web.optional'|local }})</span></label>
+                    <textarea class="input mono ssl-pem" id="i-key" name="key" rows="4" spellcheck="false" autocomplete="off" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+                    <div class="hint">{{ 'Web.ssl_key_hint'|local }}</div>
+                </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit"{% if sites is empty %} disabled{% endif %}>{{ icon('lock') }}{{ 'Web.ssl_install_button'|local }}</button></div>
+        </form>
+
+        <form class="card" method="post" action="{{ csr_url }}" id="csr">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head"><div><h2>{{ 'Web.ssl_csr'|local }}</h2><p>{{ 'Web.ssl_csr_lead'|local }}</p></div></div>
+            <div class="card-body">
+                {% if csr_error is defined and csr_error %}
+                    <div class="alert alert-error">{{ icon('alert') }}<p>{{ csr_error|local }}{% if csr_detail %}<br><span class="mono">{{ csr_detail }}</span>{% endif %}</p></div>
+                {% endif %}
+                <div class="field">
+                    <label for="c-domain">{{ 'Web.domain'|local }}</label>
+                    <select class="input" id="c-domain" name="domain">
+                        {% for s in sites %}<option value="{{ s.id }}"{% if old.csr_domain|default(0) == s.id %} selected{% endif %}>{{ s.name }}</option>{% endfor %}
+                    </select>
+                    <div class="hint">{{ 'Web.ssl_csr_names'|local }}</div>
+                </div>
+                <div class="grid grid-2" style="gap:0 12px">
+                    <div class="field">
+                        <label for="c-country">{{ 'Web.ssl_country'|local }}</label>
+                        <input class="input mono" id="c-country" name="country" maxlength="2" placeholder="US" value="{{ old.country|default('') }}" autocapitalize="characters">
+                    </div>
+                    <div class="field">
+                        <label for="c-key">{{ 'Web.ssl_key_type'|local }}</label>
+                        <select class="input" id="c-key" name="key_type">
+                            <option value="ecdsa"{% if old.key_type|default('ecdsa') == 'ecdsa' %} selected{% endif %}>ECDSA P-256</option>
+                            <option value="rsa"{% if old.key_type|default('') == 'rsa' %} selected{% endif %}>RSA 2048</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="field">
+                    <label for="c-org">{{ 'Web.ssl_organization'|local }} <span class="muted">({{ 'Web.optional'|local }})</span></label>
+                    <input class="input" id="c-org" name="organization" maxlength="64" value="{{ old.organization|default('') }}">
+                </div>
+                <div class="grid grid-2" style="gap:0 12px">
+                    <div class="field">
+                        <label for="c-state">{{ 'Web.ssl_province'|local }}</label>
+                        <input class="input" id="c-state" name="state" maxlength="64" value="{{ old.state|default('') }}">
+                    </div>
+                    <div class="field">
+                        <label for="c-city">{{ 'Web.ssl_city'|local }}</label>
+                        <input class="input" id="c-city" name="locality" maxlength="64" value="{{ old.locality|default('') }}">
+                    </div>
+                </div>
+            </div>
+            <div class="card-foot"><button class="btn" type="submit"{% if sites is empty %} disabled{% endif %}>{{ icon('key') }}{{ 'Web.ssl_csr_button'|local }}</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}

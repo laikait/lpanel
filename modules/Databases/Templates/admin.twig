@@ -1,0 +1,93 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro duration(s) %}{% if s >= 86400 %}{{ s // 86400 }}d {{ (s % 86400) // 3600 }}h{% elseif s >= 3600 %}{{ s // 3600 }}h {{ (s % 3600) // 60 }}m{% elseif s >= 60 %}{{ s // 60 }}m {{ s % 60 }}s{% else %}{{ s }}s{% endif %}{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Databases.title'|local }}</h1>
+        <p>{{ 'Databases.admin_lead'|local }}</p>
+    </div>
+</div>
+
+{% if info is null %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Databases.error_unreachable'|local }}</p></div>
+{% elseif not info.installed %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Databases.not_installed'|local }}</p></div>
+{% elseif not info.running %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Databases.not_running'|local }}</strong>{% if info.error is defined %}<br><span class="mono">{{ info.error }}</span>{% endif %}</p></div>
+{% endif %}
+
+{% set up = info is not null and info.running %}
+<div class="grid grid-4 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('server') }}</span>
+        <div><div class="stat-label">MariaDB</div><div class="stat-value">{{ up ? info.version|split('-')|first : '—' }}</div><div class="stat-sub">{% if up %}<span class="badge ok">{{ 'Databases.running'|local }}</span>{% elseif info is null %}<span class="badge plain">{{ 'Databases.unknown'|local }}</span>{% else %}<span class="badge bad">{{ 'Databases.stopped'|local }}</span>{% endif %}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('clock') }}</span>
+        <div><div class="stat-label">{{ 'Databases.uptime'|local }}</div><div class="stat-value">{{ up ? _self.duration(info.uptime) : '—' }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('activity') }}</span>
+        <div><div class="stat-label">{{ 'Databases.connections'|local }}</div><div class="stat-value">{{ up ? info.threads : '—' }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('database') }}</span>
+        <div><div class="stat-label">{{ 'Databases.databases'|local }}</div><div class="stat-value">{{ databases|length }}</div><div class="stat-sub">{{ total_bytes|bytes }}</div></div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:20px">
+    <div class="card-head"><div><h2>{{ 'Databases.processes'|local }}</h2><p>{{ 'Databases.processes_lead'|local }}</p></div></div>
+    {% if not processes_known %}
+        <div class="card-body"><p class="muted">{{ 'Databases.processes_unknown'|local }}</p></div>
+    {% elseif processes is empty %}
+        <div class="empty">{{ icon('activity') }}<h3>{{ 'Databases.no_processes'|local }}</h3></div>
+    {% else %}
+    <div class="table-wrap"><table class="table">
+        <thead><tr>
+            <th>{{ 'Databases.user'|local }}</th>
+            <th class="hide-sm">{{ 'Databases.database'|local }}</th>
+            <th>{{ 'Databases.time'|local }}</th>
+            <th class="hide-sm">{{ 'Databases.query'|local }}</th>
+            <th style="text-align:end"><span class="sr-only">{{ 'Databases.actions'|local }}</span></th>
+        </tr></thead>
+        <tbody>
+        {% for p in processes %}
+            <tr>
+                <td><strong class="mono">{{ p.user }}</strong><div class="domain-sub">#{{ p.id }} · {{ p.command }}{% if p.state %} · {{ p.state }}{% endif %}</div></td>
+                <td class="hide-sm mono">{{ p.db ?: '—' }}</td>
+                <td>{{ _self.duration(p.time) }}</td>
+                <td class="hide-sm"><div class="proc-info mono" title="{{ p.info }}">{{ p.info ?: '—' }}</div></td>
+                <td style="text-align:end">
+                    {% if p.killable %}
+                    <form class="inline-form" method="post" action="{{ p.kill_url }}" data-confirm="{{ 'Databases.confirm_kill'|local({id: p.id, user: p.user}) }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Databases.kill_name'|local({id: p.id}) }}">{{ icon('x') }}<span class="hide-sm">{{ 'Databases.kill'|local }}</span></button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% endif %}
+</div>
+
+<div class="card">
+    <div class="card-head"><div><h2>{{ 'Databases.all_databases'|local }}</h2><p>{{ 'Databases.all_databases_lead'|local }}</p></div></div>
+    {% if databases is empty %}
+        <div class="empty">{{ icon('database') }}<h3>{{ 'Databases.none'|local }}</h3></div>
+    {% else %}
+    <div class="table-wrap"><table class="table">
+        <thead><tr><th>{{ 'Databases.database'|local }}</th><th>{{ 'Databases.account'|local }}</th><th style="text-align:end">{{ 'Databases.size'|local }}</th></tr></thead>
+        <tbody>
+        {% for d in databases %}
+            <tr><td class="mono"><strong>{{ d.name }}</strong></td><td class="mono">{{ d.username }}</td><td style="text-align:end">{{ d.size_bytes|bytes }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% endif %}
+</div>
+{% endblock %}

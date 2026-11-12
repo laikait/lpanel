@@ -43,6 +43,7 @@ final class WebSync
         private readonly Domains $domains,
         private readonly AgentClient $agent,
         private readonly WebSettings $settings,
+        private readonly SslSites $ssl,
     ) {}
 
     /**
@@ -59,7 +60,7 @@ final class WebSync
 
         $this->domains->ensureMain($account, $this->defaultPhp());
         $row = $this->row($accountId);
-        $args = \json_encode($this->domains->state($account) + ['limited' => (bool) $row['limited']], \JSON_THROW_ON_ERROR);
+        $args = \json_encode($this->applyState($account) + ['limited' => (bool) $row['limited']], \JSON_THROW_ON_ERROR);
 
         // Forced: the same state again under a new id, for a server whose
         // files must be written anew (another web stack).
@@ -109,6 +110,39 @@ final class WebSync
         }
 
         return $counts;
+    }
+
+    /**
+     * The account's sites as web.apply takes them, each HTTPS site with its
+     * certificate.
+     *
+     * @param array<string, mixed> $account
+     *
+     * @return array<string, mixed>
+     */
+    private function applyState(array $account): array
+    {
+        $state = $this->domains->state($account);
+        $tls = $this->ssl->tlsFor((int) $account['id']);
+
+        if ($tls !== []) {
+            $ids = [];
+
+            foreach ($this->domains->forAccount((int) $account['id']) as $row) {
+                $ids[(string) $row['name']] = (int) $row['id'];
+            }
+
+            foreach ($state['sites'] as &$site) {
+                $id = $ids[(string) $site['name']] ?? null;
+
+                if ($id !== null && isset($tls[$id])) {
+                    $site['tls'] = $tls[$id];
+                }
+            }
+            unset($site);
+        }
+
+        return $state;
     }
 
     /** @return array<string, mixed>|null the account's web state row */

@@ -38,6 +38,20 @@ echo "== binaries"
 install -m 0755 dist/lpa/bin/lpa_linux_amd64 "$out/bin/lpa"
 install -m 0755 dist/authd/bin/lpanel-authd_linux_amd64 "$out/bin/lpanel-authd"
 
+echo "== phpMyAdmin"
+# A fixed release, checked against the checksum phpMyAdmin publishes, kept
+# in dist/build so later bundles need no download.
+PMA_VERSION=5.2.3
+PMA_SHA256=12ba1c425fa4071abbd4e7668c9ebdeac0b0755a467a6d6d5026122bb47c102b
+pma="dist/build/cache/phpMyAdmin-${PMA_VERSION}-all-languages.tar.gz"
+if [ ! -s "$pma" ] || ! echo "$PMA_SHA256  $pma" | sha256sum -c --quiet - 2>/dev/null; then
+    mkdir -p dist/build/cache
+    curl -fsSL --retry 3 -o "$pma" "https://files.phpmyadmin.net/phpMyAdmin/${PMA_VERSION}/phpMyAdmin-${PMA_VERSION}-all-languages.tar.gz"
+fi
+echo "$PMA_SHA256  $pma" | sha256sum -c --quiet - || { echo "phpMyAdmin's checksum does not match"; rm -f "$pma"; exit 1; }
+install -m 0644 "$pma" "$out/phpmyadmin.tar.gz"
+echo "$PMA_VERSION" > "$out/PHPMYADMIN_VERSION"
+
 echo "== packaging"
 cp dist/installer/packaging/* "$out/packaging/"
 cp dist/lpa/packaging/lpa.service dist/lpa/packaging/lpa.json "$out/packaging/"

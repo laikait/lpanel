@@ -15,5 +15,10 @@
 /var/log/lpanel(/.*)?				gen_context(system_u:object_r:httpd_log_t,s0)
 /var/lib/lpanel(/.*)?				gen_context(system_u:object_r:httpd_var_lib_t,s0)
 
+# phpMyAdmin (its own PHP-FPM pool): read-only code; sessions, temporary
+# files, its log and the panel's sign-on tickets are written.
+/usr/local/lpanel-pma(/.*)?			gen_context(system_u:object_r:httpd_sys_content_t,s0)
+/var/lib/lpanel-pma(/.*)?				gen_context(system_u:object_r:httpd_sys_rw_content_t,s0)
+
 # Accounts' Apache sites, written by the agent (internal/web).
 /etc/httpd/lpanel(/.*)?				gen_context(system_u:object_r:httpd_config_t,s0)

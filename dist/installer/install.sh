@@ -89,7 +89,7 @@ rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.n
 dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
     php83-php-pdo php83-php-mysqlnd php83-php-process php83-php-opcache php83-php-xml \
-    mariadb-server nginx httpd openssl policycoreutils-python-utils procps-ng iproute logrotate
+    mariadb-server nginx httpd mod_ssl openssl policycoreutils-python-utils procps-ng iproute logrotate
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -113,6 +113,15 @@ for v in $CUSTOMER_PHP; do
 done
 note "PHP for sites: $(for v in $CUSTOMER_PHP; do printf '%s.%s ' "${v:0:1}" "${v:1}"; done)"
 
+# mod_ssl's own file listens on 443 with a default HTTPS site of its own.
+# LPanel's include (lpanel.conf, written by the agent) does both when Apache
+# serves HTTPS itself; behind nginx, nginx does. Emptied rather than removed,
+# so a package update keeps it empty.
+ssl_conf=/etc/httpd/conf.d/ssl.conf
+if [ -f "$ssl_conf" ] && grep -q '^Listen' "$ssl_conf"; then
+    printf '# Emptied by LPanel: Listen 443 and the default HTTPS site are in lpanel.conf.\n' > "$ssl_conf"
+fi
+
 # What serves customers' sites: --web, else what this server runs already.
 WEB_BEFORE=$($PHP -r '$c = json_decode((string) @file_get_contents("/etc/lpa/lpa.json"), true); echo is_array($c) ? ($c["web"] ?? "") : "";' 2>/dev/null || true)
 WEB="${WEB_ARG:-${WEB_BEFORE:-apache}}"
@@ -122,7 +131,11 @@ case "$WEB" in apache|nginx|hybrid) ;; *) die "--web must be apache, nginx or hy
 # it, so it is left alone here: stopping it would take customers' sites down.
 # The panel runs its own nginx (lpanel-nginx) whatever the stack.
 httpd_listen() { sed -i -E "s/^Listen .*/Listen $1/" /etc/httpd/conf/httpd.conf; }
+# Apache stops listening on 443 before nginx takes it: the agent rewrites
+# Apache's include for the new stack only when the sites move (web:sync).
+apache_off_443() { if [ -f /etc/httpd/conf.d/lpanel.conf ]; then sed -i '/^Listen 443/d' /etc/httpd/conf.d/lpanel.conf; fi; }
 sites_nginx() {
+    apache_off_443
     [ -f /etc/nginx/nginx.conf.lpanel-orig ] || cp -p /etc/nginx/nginx.conf /etc/nginx/nginx.conf.lpanel-orig
     install -m 0644 "$BUNDLE/packaging/nginx-sites.conf" /etc/nginx/nginx.conf
     install -d -m 0755 /etc/nginx/lpanel /etc/nginx/lpanel/sites /var/log/nginx/lpanel
@@ -166,6 +179,18 @@ install -d -m 0750 -o root -g lpanel /etc/lpanel
 install -d -m 0750 -o lpanel -g lpanel /var/log/lpanel /var/lib/lpanel
 install -d -m 0700 -o nginx -g nginx /var/lib/lpanel/nginx
 install -d -m 0700 -o root -g root /etc/lpanel/tls
+# Sites' certificates and keys (the agent's store), and the folder every site
+# answers certificate checks from (HTTP-01).
+install -d -m 0700 -o root -g root /etc/pki/lpanel /etc/pki/lpanel/sites
+install -d -m 0755 -o root -g root /var/www/lpanel-acme
+# phpMyAdmin runs in a PHP-FPM pool of its own, as its own user: a flaw in
+# it reaches neither the panel's code nor its secrets. Tickets (sign-on from
+# the User panel) are written by the panel and read by phpMyAdmin only.
+getent group lpanel-pma >/dev/null || groupadd --system lpanel-pma
+getent passwd lpanel-pma >/dev/null || useradd --system --gid lpanel-pma --home-dir /var/lib/lpanel-pma --no-create-home --shell /sbin/nologin lpanel-pma
+install -d -m 0755 -o root -g root /usr/local/lpanel-pma /var/lib/lpanel-pma
+install -d -m 0700 -o lpanel-pma -g lpanel-pma /var/lib/lpanel-pma/sessions /var/lib/lpanel-pma/tmp /var/lib/lpanel-pma/log
+install -d -m 2770 -o lpanel -g lpanel-pma /var/lib/lpanel-pma/tickets
 # Accounts' Apache logs daily, the panel's own weekly (see the file).
 install -m 0644 "$BUNDLE/packaging/logrotate-lpanel" /etc/logrotate.d/lpanel
 note "lpanel user: uid $(id -u lpanel)"
@@ -280,15 +305,39 @@ touch /var/log/lpanel/php-fpm.log /var/log/lpanel/php-error.log
 chown lpanel:lpanel /var/log/lpanel/php-error.log
 
 if [ ! -f /etc/lpanel/tls/panel.crt ]; then
-    # Self-signed until the panel can issue its own certificate (M3).
+    # Self-signed until AutoSSL gets the hostname one (Admin panel → SSL/TLS).
     openssl req -x509 -newkey rsa:3072 -nodes -days 825 -subj "/CN=${HOST}" \
         -addext "subjectAltName=DNS:${HOST}" \
         -keyout /etc/lpanel/tls/panel.key -out /etc/lpanel/tls/panel.crt 2>/dev/null
     chmod 0600 /etc/lpanel/tls/panel.key
-    note "self-signed certificate for ${HOST} (replace it once DNS points here)"
+    note "self-signed certificate for ${HOST} (AutoSSL replaces it once DNS points here)"
 else
     note "existing certificate kept"
 fi
+
+# ---------------------------------------------------------------------------
+step "phpMyAdmin $(cat "$BUNDLE/PHPMYADMIN_VERSION")"
+
+# Unpacked beside the old copy, then swapped in. The config's secret is kept
+# across upgrades (it encrypts phpMyAdmin's own cookies).
+pma=/usr/local/lpanel-pma/phpmyadmin
+rm -rf "$pma.new" && mkdir -p "$pma.new"
+tar -C "$pma.new" --strip-components=1 --no-same-owner -xzf "$BUNDLE/phpmyadmin.tar.gz"
+rm -rf "$pma.new/setup" "$pma.new/examples" "$pma.new/test" "$pma.new/doc/html/_sources"
+secret=""
+if [ -f "$pma/config.inc.php" ]; then
+    secret=$(grep -o "sodium_hex2bin('[0-9a-f]\{64\}')" "$pma/config.inc.php" | grep -o '[0-9a-f]\{64\}' || true)
+fi
+[ -n "$secret" ] || secret=$(openssl rand -hex 32)
+sed "s/@BLOWFISH@/$secret/" "$BUNDLE/packaging/pma-config.inc.php" > "$pma.new/config.inc.php"
+install -m 0644 "$BUNDLE/packaging/pma-signon.php" "$pma.new/lpanel-signon.php"
+chown -R root:root "$pma.new"
+find "$pma.new" -type d -exec chmod 0755 {} + -o -type f -exec chmod 0644 {} +
+chown root:lpanel-pma "$pma.new/config.inc.php" && chmod 0640 "$pma.new/config.inc.php"
+rm -rf "$pma.old"
+[ -d "$pma" ] && mv "$pma" "$pma.old"
+mv "$pma.new" "$pma" && rm -rf "$pma.old"
+note "served on the User panel's port at /phpmyadmin/, signed in to from the panel only"
 
 # ---------------------------------------------------------------------------
 step "Services"
@@ -305,7 +354,7 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     # booleans customers' sites need. Installed in permissive mode too, so
     # switching to enforcing later needs nothing more.
     bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
-    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa
+    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma
     install -d -m 0755 /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
     for d in /etc/nginx/lpanel /var/log/nginx/lpanel /etc/nginx/nginx.conf; do
         if [ -e "$d" ]; then restorecon -R "$d"; fi
@@ -333,6 +382,12 @@ systemctl enable -q --now lpa.service lpanel-authd.socket lpanel-php-fpm.service
 # and SELinux domains into effect (authd's socket is made again with its label).
 systemctl restart lpa.service lpanel-authd.socket lpanel-php-fpm.service lpanel-nginx.service
 for _ in $(seq 50); do [ -S /run/lpa/lpa.sock ] && [ -S /run/lpanel/php-fpm.sock ] && break; sleep 0.2; done
+
+# The hostname AutoSSL gets the panel's own certificate for: --hostname, or
+# this server's name the first time.
+if [ -n "$HOSTNAME_ARG" ] || runuser -u lpanel -- $PHP "$PANEL/laika" ssl:settings 2>/dev/null | grep -q '^hostname  *-'; then
+    case "$HOST" in *.*) runuser -u lpanel -- $PHP "$PANEL/laika" ssl:settings --hostname "$HOST" >/dev/null && note "AutoSSL looks after the certificate of $HOST" ;; esac
+fi
 
 # After a switch of stack, every account's sites are written for the new one
 # (the agent also removes the old stack's files).

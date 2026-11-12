@@ -79,11 +79,47 @@ limited by these:
 | T40 | A visitor claiming another address through Apache behind nginx (hybrid), to dodge a site's IP rules or poison its logs | nginx sets `X-Forwarded-For` to the address it sees, never appending the visitor's own; Apache takes it only from 127.0.0.1 (`mod_remoteip`); Apache listens on 127.0.0.1:8080 only | e2e install (hybrid) "and a visitor cannot claim another one", "Apache is not reachable from outside" |
 | T41 | nginx alone serving what Apache would not: hidden files (`.env`, `.git`, `.htaccess`), PHP source, or a file through a customer's link to another account's | Hidden files are refused except `.well-known`; `.php` goes only to the account's pool (a file kind in hotlink protection is checked in the rewrite phase, never as a location that could serve it); links are followed only to files of the link's owner (`disable_symlinks if_not_owner`). A protected folder repeats these rules inside its own location | Go `TestNginxAloneServesEverySiteWithItsFeatures` |
 | T42 | A broken file elsewhere in nginx's or Apache's configuration making a reload take every site down | Each change is tested over the server's whole configuration (`httpd -t`; `nginx -t` over nginx's own `nginx.conf` with a staged `conf.d`) before anything live changes | Go `TestNginxTestsTheCandidateAmongEveryOtherAccount`, e2e install (each stack) "a broken … config stops the change, and every site keeps running" |
+| T43 | The panel (or anyone who took it over) sending the agent to another certificate authority, or having it fetch arbitrary addresses | The authorities' directories come only from lpa.json; an operation names one of two authorities, never a URL. Names must be plain host names (no wildcard, no IP, no port). The agent's own check before ordering fetches only `http://<name>/.well-known/acme-challenge/<random token>` and compares the body; nothing fetched is returned | Go `TestIssueRefusals` |
+| T44 | Private keys read by someone else | Keys are made on the server and never leave it: sites' keys in `/etc/pki/lpanel/sites/<user>/` (0700 root, files 0600), the hostname's in `/etc/lpanel/tls/` (0700 root), authority account keys in `/var/lib/lpa/acme/` (0600). A key an owner pastes passes through the panel once: it is neither stored there, shown again nor audited. A request (CSR) keeps its key on the server, so the certificate comes back without one | Go `TestCSRAndInstall`, `SslTest::test_the_owner_brings_a_certificate_and_chooses_https` ("the key is never sent back"), e2e install "keys stay root's alone" |
+| T45 | An owner getting, or serving, a certificate for a name that is not theirs | AutoSSL orders only for the names of the account's own sites (names are unique on the server), and the authority's HTTP-01 check must still pass. A certificate the owner brings must cover the site's name. A site serves only a certificate stored under its own account: `web.apply` looks the id up in that account's folder alone | Go `TestHTTPSNeedsItsCertificate`, `SslTest::test_the_owner_brings_a_certificate_and_chooses_https` |
+| T46 | The certificate-check path used to serve or plant content | The folder is root's and written only by the agent, with names that match base64url. Sites map only `[A-Za-z0-9_-]+` names under `/.well-known/acme-challenge/` to it, before their own rules (so a suspension, a redirect or a password does not stop a check), and nothing else | Go `TestApacheServesHTTPS`, `TestNginxServesHTTPS`, `TestHybridServesHTTPSInFront` |
+| T47 | Failing orders driving the server into the authorities' rate limits or blocklists | Names that do not point here are left out before anything is ordered. Each failure waits 1, 2, 4… up to 24 hours. A failed check is not retried at the other authority. At most four orders run at once | Go `TestIssueFallsBack`, `SslTest::test_failures_wait_longer_each_time`, e2e install "fails, and waits before trying again" |
+| T48 | A bad certificate taking a site's HTTPS, or the panel itself, down | The agent checks every certificate before storing it: the key matches, the chain is in order, and it is valid now. HTTPS goes through the usual test, reload and probe (over HTTPS), and is undone on failure. The hostname's certificate is tested with the panel's own nginx and probed on 7443, and the previous one goes back on failure. An expired certificate is not served, so the site stays reachable over HTTP | Go `TestCheck`, `TestHostInstall`, `SslTest::test_an_expired_certificate_is_not_served` |
+| T50 | SQL injection into the agent's statements through a name, password, privilege or host | The agent builds SQL only from values it has checked: names must be the account's prefix then `[a-z0-9_]` (within 64/32 characters), passwords arrive only as `*` and 40 hex digits, privileges come from a fixed list, hosts from `[A-Za-z0-9.:%_/-]`. Nothing is ever quoted or escaped to make it fit | Go `TestApplyRefusesAnythingThatCouldReachSQLUnchecked` |
+| T51 | An account reaching another account's databases, or the panel's | Users exist only with grants on the account's own databases, named with `_` escaped (a database-level grant's `_` is a wildcard: `bob_shop` would also match `bobxshop`). Never GRANT OPTION, FILE, SUPER or a global privilege. phpMyAdmin's sign-on user has the same and cannot make databases | Go `TestApplyCreatesDatabasesUsersAndExactGrants`, e2e install "sees its own database only", "does not reach shop1xstore", "phpMyAdmin shows the account's databases only" |
+| T52 | Database passwords read from the panel's database, logs or the agent's journal | The panel stores only MariaDB's own hash (what MariaDB itself stores); the password goes to the server as that hash, never in SQL text or a log. The CLI reads passwords from standard input | `DatabasesTest::test_the_owner_makes_a_database_and_a_user_and_the_server_gets_them`, e2e install "only MariaDB's hash is kept" |
+| T53 | A phpMyAdmin flaw reaching the panel, or a sign-on reused | phpMyAdmin runs as `lpanel-pma` in its own pool (open_basedir on its own folders), cannot read the panel's code, `.env` or sessions, and the panel cannot read its config. Tickets are random 256-bit names in a folder only the two can open, deleted on first read, good for a minute. The sign-on user's password is random, changed at each sign-on, and the user is removed eight hours after the last. Its config, setup and libraries are not served | `DatabasesTest::test_phpmyadmin_signs_the_owner_in_with_a_one_time_ticket`, e2e install "a sign-on ticket works once", "phpMyAdmin runs as its own user" |
+| T54 | A customer ending the panel's, root's or MariaDB's own connections, or one database's growth filling the disk | `db.kill` ends only connections of account users. Database space comes off the home's kernel quota, so files and databases together stay within the package | Go `TestKillOnlyAnAccountsConnection`, e2e install "database space comes off the home's quota" |
+| T49 | A visitor claiming HTTPS to Apache behind nginx | nginx always sets `X-Forwarded-Proto` to its own `$scheme`; Apache turns it into `HTTPS=on` and listens only on 127.0.0.1 | Go `TestHybridServesHTTPSInFront`, e2e install "PHP knows the visit came over HTTPS" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
 
 ## Known gaps
 
 These are tracked, not forgotten. Each names the milestone that closes it.
+
+- **Remote database access is not limited by the firewall yet.** MariaDB
+  listens on 3306 and only accepts users from the hosts each account lists,
+  but the port itself is not closed to other addresses. The firewall manager
+  opens it per listed host (M9).
+- **A database over quota keeps growing.** Its space comes off the home's
+  quota, so files stop first, but MariaDB itself is not stopped from writing
+  once the package's space is used up. Revoking INSERT/UPDATE then is planned
+  with the alerts (M10).
+
+- **ZeroSSL's EAB HMAC key is stored in the panel's database in clear.**
+  Anyone who can read the panel's database (the panel itself, or root) can
+  read it, and could register ZeroSSL accounts in the host's name with it.
+  It is never shown again in the panel or the API. Encrypting panel secrets
+  at rest with `APP_KEY` closes this (M11).
+
+- **Wildcard names get no certificate yet.** HTTP-01 cannot prove `*.name`,
+  so AutoSSL leaves wildcard aliases out. DNS-01 through the local PowerDNS
+  adds them (M5).
+
+- **Mail and FTP do not use the hostname certificate yet.** It is kept where
+  they will read it (`/etc/lpanel/tls/`) and serves the panel's ports now.
+  Exim, Dovecot and Pure-FTPd take it, with a certificate per mail domain by
+  SNI, when they arrive (M6, M7).
 
 - **The panel's nginx and the sites' nginx share the `nginx` user.** With
   nginx serving sites (alone, or in front of Apache as a member of its

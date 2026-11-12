@@ -1,0 +1,37 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Databases.title'|local }}</h2><p>{{ 'Databases.admin_card_lead'|local({n: databases|length, users: users|length, hosts: hosts|length}) }}</p></div>
+        {% if db_state %}
+            {% if db_state.state == 'applied' %}<span class="badge ok">{{ 'Databases.state_applied'|local }}</span>
+            {% elseif db_state.state == 'pending' %}<span class="badge warn">{{ 'Databases.state_pending'|local }}</span>
+            {% else %}<span class="badge bad">{{ 'Databases.state_failed'|local }}</span>{% endif %}
+        {% endif %}
+    </div>
+    {% if db_state and db_state.state == 'failed' %}
+        <div class="card-body"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p><span class="mono">{{ db_state.error }}</span></p></div></div>
+    {% endif %}
+    {% if databases is empty %}
+        <div class="card-body"><p class="muted">{{ 'Databases.none'|local }}</p></div>
+    {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>{{ 'Databases.database'|local }}</th><th>{{ 'Databases.size'|local }}</th><th class="hide-sm">{{ 'Databases.users'|local }}</th></tr></thead>
+            <tbody>
+            {% for d in databases %}
+                {% set names = [] %}
+                {% for u in users %}{% if u.grants[d.name] is defined %}{% set names = names|merge([u.name]) %}{% endif %}{% endfor %}
+                <tr>
+                    <td class="mono"><strong>{{ d.name }}</strong></td>
+                    <td>{{ d.size_bytes|bytes }}</td>
+                    <td class="hide-sm mono">{{ names ? names|join(', ') : '—' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+    {% if hosts %}
+        <div class="card-body" style="border-top:1px solid var(--border)">
+            <span class="muted">{{ 'Databases.remote'|local }}</span>
+            <div class="chips" style="margin-top:6px">{% for h in hosts %}<span class="badge plain mono">{{ h.host }}</span>{% endfor %}</div>
+        </div>
+    {% endif %}
+</div>

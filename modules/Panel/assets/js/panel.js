@@ -128,3 +128,25 @@ if (reload) {
         window.location.reload();
     }, seconds * 1000);
 }
+
+// "Generate" fills a password field with a strong random password and shows it.
+document.querySelectorAll('[data-generate]').forEach((button) => {
+    const input = document.getElementById(button.getAttribute('data-generate'));
+    if (!input) return;
+    button.addEventListener('click', () => {
+        const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_.!';
+        const bytes = new Uint8Array(20);
+        crypto.getRandomValues(bytes);
+        input.value = Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
+        input.type = 'text';
+        input.dispatchEvent(new Event('input'));
+    });
+});
+
+// "All privileges" ticks or clears every privilege beside it.
+document.querySelectorAll('input[data-all]').forEach((all) => {
+    const boxes = document.querySelectorAll('input[name="' + all.getAttribute('data-all') + '"]');
+    const sync = () => { all.checked = Array.from(boxes).every((b) => b.checked); };
+    all.addEventListener('change', () => boxes.forEach((b) => { b.checked = all.checked; }));
+    boxes.forEach((b) => b.addEventListener('change', sync));
+});

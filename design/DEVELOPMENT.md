@@ -144,11 +144,25 @@ dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
 dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (53 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
-tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 123 checks
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 169–174 checks per stack
 KEEP=1 tests/e2e/install.sh  # the same, and leaves the container running to look inside
 WEB=nginx tests/e2e/install.sh   # the same on another web stack (nginx or hybrid); each run also
                                  # switches to another stack at the end and checks every site moved
 ```
+
+The bundle includes phpMyAdmin: `bundle.sh` downloads its release once into
+`dist/build/cache/` and checks it against a pinned SHA-256. The database
+checks run against the container's real MariaDB and phpMyAdmin.
+
+The certificate checks run against Pebble, Let's Encrypt's test authority.
+`tests/e2e/install.sh` builds it once into `dist/build/pebble/` (it needs Go
+and the network the first time). Inside the container, one Pebble stands in
+for Let's Encrypt and one for ZeroSSL (requiring EAB). `/etc/hosts` makes the
+test names point at the container, and `lpa.json`'s `acme` is pointed at
+the two Pebbles (with `roots` set to Pebble's test CA). AutoSSL is turned off
+right after the install and back on in the SSL section. Otherwise the
+scheduler would ask the real Let's Encrypt for names that point nowhere,
+and back off for an hour.
 
 To poke at an installed panel by hand, start the same container and keep it:
 

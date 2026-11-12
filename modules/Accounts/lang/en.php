@@ -55,6 +55,7 @@ return [
     'make_package' => 'Make a package',
 
     'disk' => 'Disk',
+    'incl_databases' => ':size of it in databases',
     'files' => 'Files and folders',
     'of' => ':used of :total',
     'limit_of' => 'of :limit',

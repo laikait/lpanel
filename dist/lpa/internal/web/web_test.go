@@ -79,6 +79,7 @@ func setup(t *testing.T) (*Manager, *fakeRun, *probeLog, string) {
 		NginxSites:    filepath.Join(root, "nginx", "lpanel", "sites"),
 		NginxHtpasswd: filepath.Join(root, "nginx", "lpanel", "htpasswd"),
 		NginxLogDir:   filepath.Join(root, "log-nginx"),
+		Challenges:    filepath.Join(root, "acme"),
 		Chown:         func(string, int, int) error { return nil },
 		LogDir:        filepath.Join(root, "log"),
 		PHPRoot:       filepath.Join(root, "opt"),

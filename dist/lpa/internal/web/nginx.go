@@ -33,7 +33,7 @@ const staticKinds = "css|js|mjs|map|jpg|jpeg|png|gif|webp|avif|svg|ico|bmp|woff|
 // renderNginxInclude is /etc/nginx/conf.d/lpanel.conf, inside nginx's http
 // block: the log format, a default site for names nobody serves, and every
 // account's file.
-func renderNginxInclude(sites string) []byte {
+func (m *Manager) renderNginxInclude(sites string) []byte {
 	var b strings.Builder
 	b.WriteString("# " + banner + "\n\n")
 	// $bytes_sent and $request_length are bytes sent and received, for
@@ -51,7 +51,14 @@ func renderNginxInclude(sites string) []byte {
 	// X-Forwarded-For must never reach it.
 	b.WriteString("proxy_set_header X-Forwarded-For $remote_addr;\nproxy_set_header X-Forwarded-Proto $scheme;\n\n")
 	b.WriteString("# The first site answers names that no account serves: a 404,\n# never some customer's site.\n")
-	b.WriteString("server {\n    listen 80 default_server;\n    listen [::]:80 default_server;\n    server_name _;\n    access_log off;\n    return 404;\n}\n\n")
+	b.WriteString("server {\n    listen 80 default_server;\n    listen [::]:80 default_server;\n    server_name _;\n    access_log off;\n")
+	// The server's own hostname is checked here.
+	m.nginxChallenge(&b)
+	b.WriteString("    location / {\n        return 404;\n    }\n}\n\n")
+	// On 443 a name nobody serves gets no certificate at all, rather than
+	// some customer's.
+	b.WriteString("ssl_protocols TLSv1.2 TLSv1.3;\nssl_prefer_server_ciphers off;\nssl_session_cache shared:lpanel_sites:10m;\nssl_session_timeout 1h;\n")
+	b.WriteString("server {\n    listen 443 ssl http2 default_server;\n    listen [::]:443 ssl http2 default_server;\n    server_name _;\n    access_log off;\n    ssl_reject_handshake on;\n}\n\n")
 	b.WriteString("include " + sites + "/*.conf;\n")
 	return []byte(b.String())
 }
@@ -74,10 +81,22 @@ func (m *Manager) renderNginxSites(a ApplyArgs, home string) string {
 			b.WriteString("\n")
 		}
 		b.WriteString("server {\n    listen 80;\n    listen [::]:80;\n")
+		t, secure := a.tls[s.Name]
+		if secure {
+			b.WriteString("    listen 443 ssl http2;\n    listen [::]:443 ssl http2;\n")
+			fmt.Fprintf(&b, "    ssl_certificate \"%s\";\n    ssl_certificate_key \"%s\";\n", t.crt, t.key)
+		}
 		fmt.Fprintf(&b, "    server_name %s;\n", strings.Join(append([]string{s.Name}, s.Aliases...), " "))
 		fmt.Fprintf(&b, "    add_header %s \"@REVISION@\" always;\n", header)
 		fmt.Fprintf(&b, "    access_log %s/%s.access.log lpanel;\n", m.NginxLogDir, a.Username)
 		fmt.Fprintf(&b, "    error_log %s/%s.error.log;\n", m.NginxLogDir, a.Username)
+		// Certificate checks come first: the rewrite-phase rules below
+		// (a suspension, HTTPS, the www. choice, redirects) skip them.
+		b.WriteString("    if ($uri ~ \"^/\\.well-known/acme-challenge/\") {\n        break;\n    }\n")
+		m.nginxChallenge(&b)
+		if secure && s.TLS.Force {
+			b.WriteString("    if ($scheme = \"http\") {\n        return 301 https://$host$request_uri;\n    }\n")
+		}
 		if a.Suspended || a.Limited {
 			why := "This site is suspended."
 			if !a.Suspended {
@@ -154,6 +173,12 @@ func nginxInner(b *strings.Builder, in, socket, etc string) {
 	fmt.Fprintf(b, "%s    fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;\n", in)
 	fmt.Fprintf(b, "%s    fastcgi_pass unix:%s;\n", in, socket)
 	fmt.Fprintf(b, "%s}\n", in)
+}
+
+// nginxChallenge serves certificate checks (HTTP-01) from the challenge
+// folder: a prefix location that wins over every regex one.
+func (m *Manager) nginxChallenge(b *strings.Builder) {
+	fmt.Fprintf(b, "    location ^~ /.well-known/acme-challenge/ {\n        alias %s/;\n        default_type text/plain;\n    }\n", m.Challenges)
 }
 
 // renderNginxRules writes the www. choice, the redirects and hotlink
@@ -284,7 +309,7 @@ func (m *Manager) testNginx(ctx context.Context, todo []file) error {
 		}
 	}
 	include := filepath.Join(stageConfd, filepath.Base(m.NginxInclude))
-	if err := os.WriteFile(include, renderNginxInclude(sites), 0o644); err != nil {
+	if err := os.WriteFile(include, m.renderNginxInclude(sites), 0o644); err != nil {
 		return err
 	}
 	conf := fmt.Sprintf("error_log stderr;\nevents {}\nhttp {\n    include %s/mime.types;\n    include %s/*.conf;\n}\n", filepath.ToSlash(etc), filepath.ToSlash(stageConfd))
