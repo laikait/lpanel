@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path"
@@ -44,6 +45,20 @@ type Config struct {
 	// ACME names the certificate authorities' directories. Only these are
 	// ever used; the panel chooses between them by name.
 	ACME ACME `json:"acme"`
+	// DNS is the server's PowerDNS; without an API address the DNS
+	// operations are off.
+	DNS DNS `json:"dns"`
+}
+
+// DNS is lpa.json's "dns".
+type DNS struct {
+	// API is PowerDNS's HTTP API, on this machine only
+	// (http://127.0.0.1:8081). KeyFile holds its API key, root's alone.
+	API     string `json:"api"`
+	KeyFile string `json:"key_file"`
+	// Resolver, when set, is the DNS server (host:port) the agent's own
+	// lookups go to instead of the system's resolver.
+	Resolver string `json:"resolver"`
 }
 
 // ACME is lpa.json's "acme".
@@ -125,6 +140,20 @@ func (c Config) validate() error {
 	}
 	if c.ACME.Roots != "" && !path.IsAbs(c.ACME.Roots) {
 		return fmt.Errorf("acme.roots must be an absolute path, not %q", c.ACME.Roots)
+	}
+	if c.DNS.API != "" {
+		p, err := url.Parse(c.DNS.API)
+		if err != nil || p.Scheme != "http" || p.User != nil || p.Path != "" || (p.Hostname() != "127.0.0.1" && p.Hostname() != "localhost" && p.Hostname() != "::1") {
+			return fmt.Errorf("dns.api must be an http address on this machine, such as http://127.0.0.1:8081, not %q", c.DNS.API)
+		}
+		if !path.IsAbs(c.DNS.KeyFile) {
+			return fmt.Errorf("dns.key_file must be an absolute path, not %q", c.DNS.KeyFile)
+		}
+	}
+	if c.DNS.Resolver != "" {
+		if _, _, err := net.SplitHostPort(c.DNS.Resolver); err != nil {
+			return fmt.Errorf("dns.resolver must be host:port, not %q", c.DNS.Resolver)
+		}
 	}
 	if c.MaxRunning < 1 || c.JournalDays < 1 {
 		return errors.New("max_running and journal_days must be at least 1")

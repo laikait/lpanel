@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Web;
 
 use App\Engine\Auth\Identity;
+use App\Engine\Hook\HookEngine;
 use App\Engine\Http\Request;
 use App\Modules\Audit\AuditLog;
 use App\Modules\Packages\Packages;
@@ -19,6 +20,10 @@ use App\Modules\Packages\Packages;
  * and the server is told the state it still has. If the agent cannot be
  * reached, the change stays recorded and web:settle finishes it.
  *
+ * After every change the web.changed hook (array $account) tells other
+ * modules the account's domains may have changed (DNS keeps its zones in
+ * step with them).
+ *
  * Every method returns [?WebOutcome, errors]: no outcome and some errors
  * when the input was refused before anything changed.
  */
@@ -32,6 +37,7 @@ final class DomainActions
         private readonly Packages $packages,
         private readonly AuditLog $audit,
         private readonly SslSites $ssl,
+        private readonly HookEngine $hooks,
     ) {}
 
     /**
@@ -378,6 +384,7 @@ final class DomainActions
         }
 
         $this->audit->record($action, $actor, $request, $subject, $outcome->status === WebOutcome::FAILED ? AuditLog::FAILED : AuditLog::OK, $details);
+        $this->hooks->do('web.changed', $account);
 
         return $outcome;
     }

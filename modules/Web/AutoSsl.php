@@ -7,6 +7,7 @@ namespace App\Modules\Web;
 use App\Engine\Auth\Identity;
 use App\Engine\Database\ConnectionManager;
 use App\Engine\Database\Query\QueryBuilder;
+use App\Engine\Filter\FilterEngine;
 use App\Engine\Http\Request;
 use App\Modules\Accounts\Accounts;
 use App\Modules\Agent\AgentClient;
@@ -73,6 +74,7 @@ final class AutoSsl
         private readonly WebSync $sync,
         private readonly WebSettings $settings,
         private readonly AuditLog $audit,
+        private readonly FilterEngine $filters,
     ) {}
 
     /** Tests set the time. */
@@ -277,7 +279,10 @@ final class AutoSsl
             $names = [(string) $site['name']];
 
             foreach ((array) $site['aliases'] as $alias) {
-                if (!\str_starts_with((string) $alias, '*.')) {
+                // A wildcard name needs a DNS check, so it is asked for only
+                // when the domain's zone is on this server (ssl.wildcard,
+                // answered by the DNS module).
+                if (!\str_starts_with((string) $alias, '*.') || $this->filters->apply('ssl.wildcard', false, $account, \substr((string) $alias, 2)) === true) {
                     $names[] = (string) $alias;
                 }
             }

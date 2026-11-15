@@ -144,7 +144,7 @@ dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
 dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (53 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
-tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 169–174 checks per stack
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 191–196 checks per stack
 KEEP=1 tests/e2e/install.sh  # the same, and leaves the container running to look inside
 WEB=nginx tests/e2e/install.sh   # the same on another web stack (nginx or hybrid); each run also
                                  # switches to another stack at the end and checks every site moved
@@ -153,6 +153,10 @@ WEB=nginx tests/e2e/install.sh   # the same on another web stack (nginx or hybri
 The bundle includes phpMyAdmin: `bundle.sh` downloads its release once into
 `dist/build/cache/` and checks it against a pinned SHA-256. The database
 checks run against the container's real MariaDB and phpMyAdmin.
+
+The DNS checks run against the container's real PowerDNS (EPEL's 5.0) and
+ask it with `dig`; the wildcard certificate comes from a third Pebble that
+resolves through it.
 
 The certificate checks run against Pebble, Let's Encrypt's test authority.
 `tests/e2e/install.sh` builds it once into `dist/build/pebble/` (it needs Go

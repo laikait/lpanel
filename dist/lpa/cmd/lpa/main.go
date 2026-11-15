@@ -27,6 +27,7 @@ import (
 	"lpa/internal/accounts"
 	"lpa/internal/certs"
 	"lpa/internal/config"
+	"lpa/internal/dns"
 	"lpa/internal/journal"
 	"lpa/internal/mysql"
 	"lpa/internal/ops"
@@ -108,20 +109,36 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Regis
 		Challenges: sites.Challenges, HostCert: sites.HostCert, HostKey: sites.HostKey,
 		HostUnits: hostUnits, Run: sysexec.Exec{}, Log: log, Owner: acc.Owner,
 	}
+	zones := &dns.Manager{API: cfg.DNS.API, Resolver: cfg.DNS.Resolver, Owner: acc.Owner, Log: log}
+	if cfg.DNS.API != "" {
+		// Read at start: a missing key shows as PowerDNS refusing the agent.
+		if key, err := os.ReadFile(cfg.DNS.KeyFile); err == nil {
+			zones.Key = strings.TrimSpace(string(key))
+		} else {
+			log.Warn("the PowerDNS API key could not be read", "file", cfg.DNS.KeyFile, "err", err)
+		}
+		tls.DNS = zones
+	}
+	zones.Defaults()
 	tls.Defaults()
 	dbs := &mysql.Manager{SQL: mysql.CLI{Exec: sysexec.Exec{}}, Owner: acc.Owner, Log: log}
 	dbs.Defaults()
-	// A terminated account's sites, then its databases, go before its user.
+	// A terminated account's sites, then its databases and its zones, go
+	// before its user.
 	acc.BeforeRemove = func(ctx context.Context, username string) error {
 		if err := sites.RemoveFor(ctx, username); err != nil {
 			return err
 		}
-		return dbs.RemoveFor(ctx, username)
+		if err := dbs.RemoveFor(ctx, username); err != nil {
+			return err
+		}
+		return zones.RemoveFor(ctx, username)
 	}
 	ops.Accounts(reg, acc)
 	ops.Web(reg, sites)
 	ops.SSL(reg, tls)
 	ops.DB(reg, dbs)
+	ops.DNS(reg, zones)
 	return reg
 }
 

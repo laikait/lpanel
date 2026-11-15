@@ -479,6 +479,54 @@ backoff are tested against Pebble.
 - Reseller nameservers.
 - DNS-01 wildcard certificates.
 
+**M5: DNS. Built 2026-11-15.**
+- **PowerDNS** with its own `pdns` database. Its HTTP API listens on
+  127.0.0.1 with a key only the agent holds; the panel never reaches it.
+- **Zones:** every main, addon and alias domain gets one, made from a
+  template. A subdomain's address, and `*.` for a domain that answers every
+  subdomain, go into the zone above it. A removed domain takes its zone or
+  its records with it; a terminated account takes all its zones. Records
+  the owner changed or removed are not made again by later changes.
+- **The zone editor** (User panel → DNS, feature `dns`): A, AAAA, CNAME, MX,
+  TXT, SRV, CAA and NS for subdomains, with each mistake explained beside
+  its field; reset to the template. Administrators also edit any zone and
+  add PTR records.
+  - The agent checks every record again, quotes TXT itself, and writes only
+    what changed. The serial follows the date (`2026111501`).
+  - Changes the server refuses are undone. Changes it cannot take yet wait
+    for `dns:settle` (every minute), as removals do.
+- **Nameservers:**
+  - the server's (Admin panel → DNS, capability `server.dns`) and each
+    reseller's own (capability `dns.own`) become the zones' NS records and
+    SOA. Changing them changes every zone that uses them at once;
+  - each nameserver shows whether its name leads to this server, with the
+    glue to register. A server zone for the nameservers' own domain gets
+    their address records by itself;
+  - each zone shows whether its domain's registry names these nameservers.
+- **Templates:** the server's and each reseller's, one record a line, with
+  `{domain}`, `{ip}` and `{ip6}`.
+- **Server zones:** for domains no account holds, such as the nameservers'
+  own or reverse zones (`in-addr.arpa`).
+- **Wildcard certificates:** AutoSSL asks for `*.example.com` when the
+  domain's zone is here. The agent first checks that the world's DNS reaches
+  this server, then answers the DNS-01 check in the zone, beside the owner's
+  own records, and removes it afterwards.
+- **Where it shows:** the API (`/admin/api/v1/accounts/{user}/dns…`,
+  `/admin/api/v1/dns…`, `/admin/api/v1/dns/nameservers`) and
+  `lpanel dns:zones|records|add|set|remove|reset|zone-create|zone-remove|settings|nameservers|template|info|settle|sync`.
+- **Tests:** Go (records and their checks, TXT quoting, idempotent changes,
+  serials, ownership, the check's records, delegation, wildcard issuing);
+  PHP 116; `tests/e2e/install.sh` against the real PowerDNS, with `dig`,
+  and a Pebble that resolves through it for the wildcard certificate:
+  `WEB=apache` 191 checks, `WEB=nginx` 192, `WEB=hybrid` 196; agent e2e 37.
+- **Fixed on the way:** the agent sent ZeroSSL's EAB credentials to every
+  authority when registering, so a new Let's Encrypt account failed once
+  ZeroSSL's were set. They now go to ZeroSSL only.
+- **Not yet:**
+  - DNSSEC (v1.x);
+  - response rate limiting on port 53 (M9, with the firewall);
+  - Cloudflare and other DNS APIs (v1.x and v2).
+
 ### M6: Email
 - Exim + Dovecot: mailboxes, forwarders, autoresponders, catch-all, Sieve
   filters.

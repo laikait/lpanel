@@ -102,6 +102,10 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `db.remove` | change | `{username}`: drop every database and user of the account (also run by `account.terminate`) |
 | `db.info`, `db.processes` | read-only | MariaDB's version and state; its connections |
 | `db.kill` | change | `{id}`: end one of an account's connections |
+| `dns.apply` | change | `{username, zone, soa, records}`: a zone's whole state (`username` empty for a zone of the server's own; see below) |
+| `dns.remove` | change | `{username, zone}`: delete a zone of that account (also run by `account.terminate` for every zone of it) |
+| `dns.info` | read-only | PowerDNS's version and state |
+| `dns.lookup` | read-only | `{hosts, zones}`: what the world's DNS says: each host's addresses and whether one is this server's (glue), each zone's nameservers at its registry |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -282,6 +286,41 @@ one.
 `db.sso` makes or renews `lpsso-<username>`@localhost with a random password
 (only its hash goes into SQL) and every privilege on the listed databases,
 and returns the password.
+
+### DNS (`dns.*`)
+
+`lpa.json`'s `dns` names PowerDNS's API (`http://127.0.0.1:8081`, only on
+this machine) and the file holding its key (`/etc/lpa/pdns.key`, root's
+alone). Without `api` the DNS operations answer `dns_off`, and terminating
+an account still works. `resolver` (host:port) sends the agent's own
+lookups to another server than the system's.
+
+`dns.apply` checks every record itself before anything reaches PowerDNS:
+
+- **names:** the zone or a name under it (`*` only first, `_` allowed);
+- **types:** A, AAAA, CNAME, MX, TXT, SRV, CAA, NS, PTR; never SOA (the
+  agent writes it from `soa`), nor anything PowerDNS would run (LUA);
+- **contents:** addresses, host names, priorities, ports and CAA tags. TXT
+  text is quoted by the agent, with `"` and `\` escaped and every byte
+  outside printable ASCII as `\DDD`, in strings of 255 bytes;
+- **the zone's rules:** a CNAME stands alone and never at the top, the zone
+  names its own nameservers, TTLs are 60 seconds to a week.
+
+It then changes only the record sets that differ, so the same state again
+changes nothing. When something changes, the SOA serial becomes today's
+date and a count (`2026111501`). Record types the agent does not manage are
+left alone.
+
+Each zone carries its account in PowerDNS (`account`). A zone is changed or
+removed only for that account; a zone of the server's own has none.
+
+Wildcard certificates (`*.example.com`) are checked by DNS-01. Before
+ordering, the agent puts a random record in the account's zone and looks it
+up the way anyone would: if that does not come back, the domain's
+nameservers at its registry are not this server's, and the wildcard is left
+out with that reason. During the order it adds the authority's TXT value
+beside the owner's own records at `_acme-challenge.<name>` (a `dns.apply`
+meanwhile keeps it), and takes it away afterwards.
 
 Document roots are `public_html` or folders under it. The agent makes them
 by walking from the home with `O_NOFOLLOW` directory descriptors, so a link

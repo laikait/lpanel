@@ -1,0 +1,23 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Dns.title'|local }}</h2><p>{{ nameservers ? 'Dns.card_lead'|local({names: nameservers|join(', ')}) : 'Dns.no_zones'|local }}</p></div>
+    </div>
+    {% if zones %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>{{ 'Dns.zone'|local }}</th><th>{{ 'Dns.records'|local }}</th><th>{{ 'Dns.state'|local }}</th></tr></thead>
+            <tbody>
+            {% for z in zones %}
+                <tr>
+                    <td class="mono"><strong>{{ z.name }}</strong></td>
+                    <td>{{ z.records }}</td>
+                    <td>
+                        {% if z.state == 'applied' %}<span class="badge ok">{{ 'Dns.state_applied'|local }}</span>
+                        {% elseif z.state == 'pending' %}<span class="badge warn">{{ 'Dns.state_pending'|local }}</span>
+                        {% else %}<span class="badge bad" title="{{ z.error }}">{{ 'Dns.state_failed'|local }}</span>{% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+</div>

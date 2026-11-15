@@ -61,6 +61,18 @@ final class FakeServer
     /** When issued certificates start (now when null). */
     public ?int $issuedAt = null;
 
+    /** @var array<string, array<string, mixed>> zone => its last dns.apply state */
+    public array $zones = [];
+
+    /** @var array<string, list<string>> what the world's DNS says: zone => its nameservers at the registry */
+    public array $delegated = [];
+
+    /** @var array<string, list<string>> host => its addresses in the world's DNS */
+    public array $resolves = [];
+
+    /** @var list<string> this server's addresses */
+    public array $localIps = ['192.0.2.10'];
+
     /** @var array<string, array<string, mixed>> account => its last db.apply state */
     public array $dbs = [];
 
@@ -88,7 +100,7 @@ final class FakeServer
     {
         $answers = [];
 
-        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill'] as $op) {
+        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -100,6 +112,15 @@ final class FakeServer
         $answers['php.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->phpInfo()];
         $answers['web.traffic'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['accounts' => (object) $this->traffic, 'more' => false]];
         $answers['system.facts'] = FakeAgent::unavailable();
+        $answers['dns.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['enabled' => true, 'running' => true, 'version' => '4.9.4', 'zones' => \count($this->zones)]];
+        $answers['dns.lookup'] = fn(array $args): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'hosts' => (object) \array_combine((array) $args['hosts'], \array_map(fn(string $h): array => [
+                'addresses' => $this->resolves[$h] ?? [],
+                'here' => \array_intersect($this->resolves[$h] ?? [], $this->localIps) !== [],
+            ], (array) $args['hosts'])),
+            'zones' => (object) \array_combine((array) $args['zones'], \array_map(fn(string $z): array => $this->delegated[$z] ?? [], (array) $args['zones'])),
+            'local' => $this->localIps,
+        ]];
         $answers['db.sizes'] = fn(array $args): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['databases' => (object) \array_filter(
             $this->dbSizes,
             static fn(string $db): bool => !\is_array($args['usernames'] ?? null) || \in_array(\explode('_', $db)[0], $args['usernames'], true),
@@ -180,6 +201,10 @@ final class FakeServer
             return $this->runDb($op, $args);
         }
 
+        if (\str_starts_with($op, 'dns.')) {
+            return $this->runDns($op, $args);
+        }
+
         if ($op === 'account.create') {
             if (isset($this->users[$name])) {
                 return ['status' => 'failed', 'error' => ['code' => 'exists', 'message' => 'a user named ' . $name . ' already exists']];
@@ -194,6 +219,8 @@ final class FakeServer
             $existed = isset($this->users[$name]);
             // The agent removes the sites first (BeforeRemove).
             unset($this->users[$name], $this->sites[$name], $this->dbs[$name], $this->sso[$name]);
+            // And the account's zones.
+            $this->zones = \array_filter($this->zones, static fn(array $z): bool => $z['username'] !== $name);
 
             return ['status' => 'done', 'result' => ['username' => $name, 'existed' => $existed]];
         }
@@ -234,6 +261,64 @@ final class FakeServer
         };
 
         return ['status' => 'done', 'result' => $this->describe($name)];
+    }
+
+    /**
+     * The DNS operations, checked the way the agent checks them.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    private function runDns(string $op, array $args): array
+    {
+        $fail = static fn(string $code, string $message): array => ['status' => 'failed', 'error' => ['code' => $code, 'message' => $message]];
+        $zone = (string) $args['zone'];
+        $name = (string) $args['username'];
+        $have = $this->zones[$zone] ?? null;
+
+        if ($name !== '' && !isset($this->users[$name])) {
+            return $fail('no_such_account', 'there is no user named ' . $name);
+        }
+
+        if ($have !== null && $have['username'] !== $name) {
+            return $fail('dns_not_owner', 'the zone ' . $zone . ' belongs to another account');
+        }
+
+        if ($op === 'dns.remove') {
+            unset($this->zones[$zone]);
+
+            return ['status' => 'done', 'result' => ['removed' => $have !== null]];
+        }
+
+        $ns = false;
+        $cname = [];
+        $others = [];
+
+        foreach ($args['records'] as $r) {
+            if ($r['name'] !== $zone && !\str_ends_with($r['name'], '.' . $zone)) {
+                return $fail('bad_args', $r['name'] . ' is not in the zone ' . $zone);
+            }
+
+            if ($r['ttl'] < 60 || !\in_array($r['type'], ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV', 'CAA', 'NS', 'PTR'], true)) {
+                return $fail('bad_args', 'not a record a zone may hold');
+            }
+
+            if ($r['type'] === 'A' && \filter_var($r['content'], \FILTER_VALIDATE_IP, \FILTER_FLAG_IPV4) === false) {
+                return $fail('bad_args', $r['content'] . ' is not an IPv4 address');
+            }
+
+            $ns = $ns || ($r['type'] === 'NS' && $r['name'] === $zone);
+            $r['type'] === 'CNAME' ? $cname[$r['name']] = true : $others[$r['name']] = true;
+        }
+
+        if (!$ns || \array_intersect_key($cname, $others) !== [] || ($args['soa']['primary'] ?? '') === '') {
+            return $fail('bad_args', 'the zone needs a nameserver, and a CNAME stands alone');
+        }
+
+        $this->zones[$zone] = $args;
+
+        return ['status' => 'done', 'result' => ['zone' => $zone, 'created' => $have === null, 'changed' => $have !== $args, 'serial' => 2026111501]];
     }
 
     /**

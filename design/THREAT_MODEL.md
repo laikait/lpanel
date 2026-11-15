@@ -90,6 +90,10 @@ limited by these:
 | T52 | Database passwords read from the panel's database, logs or the agent's journal | The panel stores only MariaDB's own hash (what MariaDB itself stores); the password goes to the server as that hash, never in SQL text or a log. The CLI reads passwords from standard input | `DatabasesTest::test_the_owner_makes_a_database_and_a_user_and_the_server_gets_them`, e2e install "only MariaDB's hash is kept" |
 | T53 | A phpMyAdmin flaw reaching the panel, or a sign-on reused | phpMyAdmin runs as `lpanel-pma` in its own pool (open_basedir on its own folders), cannot read the panel's code, `.env` or sessions, and the panel cannot read its config. Tickets are random 256-bit names in a folder only the two can open, deleted on first read, good for a minute. The sign-on user's password is random, changed at each sign-on, and the user is removed eight hours after the last. Its config, setup and libraries are not served | `DatabasesTest::test_phpmyadmin_signs_the_owner_in_with_a_one_time_ticket`, e2e install "a sign-on ticket works once", "phpMyAdmin runs as its own user" |
 | T54 | A customer ending the panel's, root's or MariaDB's own connections, or one database's growth filling the disk | `db.kill` ends only connections of account users. Database space comes off the home's kernel quota, so files and databases together stay within the package | Go `TestKillOnlyAnAccountsConnection`, e2e install "database space comes off the home's quota" |
+| T55 | A record reaching PowerDNS that it would run or misread: LUA records, a second SOA, TXT text closing its quotes and adding a record of its own | The agent checks every record itself and builds PowerDNS's content from the parts: a fixed list of types (no LUA, no SOA from the panel), parsed addresses, host names and numbers, CAA values without quotes, and TXT text quoted by the agent with `"` and `\` escaped and other bytes as `\DDD` | Go `TestApplyRefusesWhatAZoneMayNotHold`, `TestTextCannotBreakOutOfItsRecord`, e2e install "a quote in TXT text stays inside its record" |
+| T56 | An account changing or removing another account's zone, or the server's | Every zone carries its account in PowerDNS; `dns.apply` and `dns.remove` refuse a zone of anyone else (`dns_not_owner`), and `account.terminate` removes only zones marked with that account. A domain name can belong to one account only, and a server zone cannot take a name an account holds | Go `TestAZoneIsOnlyItsOwnAccounts`, `TestRemoveForTakesOnlyTheAccountsZones`, `DnsTest::test_the_owner_edits_records_and_mistakes_are_explained` |
+| T57 | Someone other than the agent writing zones through PowerDNS's API | The API listens on 127.0.0.1 only and needs a key that is root's alone (`/etc/lpa/pdns.key` 0600, `pdns.conf` 0640 root:pdns). The panel never holds it | e2e install "its API only on 127.0.0.1, its key root's alone", "PowerDNS's API is not reachable from outside" |
+| T58 | A wildcard certificate for a domain this server does not answer for, or a certificate check's record left in a zone | The agent asks for a wildcard only after its own random record, looked up as anyone would, comes back. The check's TXT value is put beside the owner's records and taken away when the order ends, whatever the outcome | Go `TestIssueWildcardThroughDNS`, `TestACheckValueSitsBesideTheOwnersRecordsAndGoesAgain`, `TestDelegatedLooksItsOwnRecordUpTheWayAnyoneWould`, e2e install "the check's records are gone afterwards" |
 | T49 | A visitor claiming HTTPS to Apache behind nginx | nginx always sets `X-Forwarded-Proto` to its own `$scheme`; Apache turns it into `HTTPS=on` and listens only on 127.0.0.1 | Go `TestHybridServesHTTPSInFront`, e2e install "PHP knows the visit came over HTTPS" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
 
@@ -97,6 +101,13 @@ limited by these:
 
 These are tracked, not forgotten. Each names the milestone that closes it.
 
+- **PowerDNS answers every query from anywhere, and is not rate limited.**
+  It is authoritative only (no recursion), so it cannot be used to look up
+  other domains, but answers can still be used in reflection attacks.
+  Response rate limiting comes with the firewall manager (M9).
+- **PowerDNS has no SELinux domain of its own** on EL9: it runs as
+  `unconfined_service_t`. Its own user (`pdns`) and its API key still keep
+  it apart from the panel.
 - **Remote database access is not limited by the firewall yet.** MariaDB
   listens on 3306 and only accepts users from the hosts each account lists,
   but the port itself is not closed to other addresses. The firewall manager

@@ -89,7 +89,8 @@ rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.n
 dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
     php83-php-pdo php83-php-mysqlnd php83-php-process php83-php-opcache php83-php-xml \
-    mariadb-server nginx httpd mod_ssl openssl policycoreutils-python-utils procps-ng iproute logrotate
+    mariadb-server nginx httpd mod_ssl openssl policycoreutils-python-utils procps-ng iproute logrotate \
+    pdns pdns-backend-mysql bind-utils
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -340,6 +341,62 @@ mv "$pma.new" "$pma" && rm -rf "$pma.old"
 note "served on the User panel's port at /phpmyadmin/, signed in to from the panel only"
 
 # ---------------------------------------------------------------------------
+step "DNS (PowerDNS)"
+
+# Zones live in their own database. The HTTP API listens on this machine
+# only, and its key is root's alone: the agent writes every zone, the panel
+# never reaches PowerDNS itself (ADR-0007).
+PDNS_DB_PASSWORD=$(sed -n 's/^gmysql-password=//p' /etc/pdns/pdns.conf 2>/dev/null || true)
+[ -n "$PDNS_DB_PASSWORD" ] || PDNS_DB_PASSWORD=$(openssl rand -hex 24)
+if ! mariadb -uroot -N -e "select 1 from information_schema.tables where table_schema = 'pdns' and table_name = 'domains'" | grep -q 1; then
+    mariadb -uroot <<SQL
+CREATE DATABASE IF NOT EXISTS pdns CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'pdns'@'localhost' IDENTIFIED BY '${PDNS_DB_PASSWORD}';
+ALTER USER 'pdns'@'localhost' IDENTIFIED BY '${PDNS_DB_PASSWORD}';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, INDEX, ALTER, LOCK TABLES ON pdns.* TO 'pdns'@'localhost';
+SQL
+    # The base schema, not one of the upgrade scripts beside it.
+    schema=$(rpm -ql pdns-backend-mysql | grep -m1 '/schema\.mysql\.sql$')
+    mariadb -uroot pdns < "$schema"
+    note "database pdns made from $(basename "$schema")"
+else
+    mariadb -uroot -e "ALTER USER 'pdns'@'localhost' IDENTIFIED BY '${PDNS_DB_PASSWORD}'"
+fi
+PDNS_KEY=$(cat /etc/lpa/pdns.key 2>/dev/null || true)
+[ -n "$PDNS_KEY" ] || PDNS_KEY=$(openssl rand -hex 32)
+umask 077
+printf '%s\n' "$PDNS_KEY" > /etc/lpa/pdns.key
+umask 022
+cat > /etc/pdns/pdns.conf <<CONF
+# Written by the LPanel installer; changed only by rerunning it.
+setuid=pdns
+setgid=pdns
+launch=gmysql
+gmysql-socket=/var/lib/mysql/mysql.sock
+gmysql-dbname=pdns
+gmysql-user=pdns
+gmysql-password=${PDNS_DB_PASSWORD}
+gmysql-dnssec=yes
+local-address=0.0.0.0, ::
+local-address-nonexist-fail=no
+default-ttl=3600
+# The API, for the agent only.
+api=yes
+api-key=${PDNS_KEY}
+webserver=yes
+webserver-address=127.0.0.1
+webserver-port=8081
+webserver-allow-from=127.0.0.1,::1
+CONF
+chown root:pdns /etc/pdns/pdns.conf
+chmod 0640 /etc/pdns/pdns.conf
+systemctl enable -q pdns && systemctl restart pdns
+$PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
+    $c["dns"] = ["api" => "http://127.0.0.1:8081", "key_file" => "/etc/lpa/pdns.key"] + ($c["dns"] ?? []);
+    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+note "$(pdns_server --version 2>&1 | grep -o 'PowerDNS Authoritative Server [0-9.]*' | head -1), answering on port 53"
+
+# ---------------------------------------------------------------------------
 step "Services"
 
 for unit in lpa.service lpanel-authd.service lpanel-authd.socket lpanel-php-fpm.service \
@@ -369,9 +426,9 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
 fi
 
 if systemctl is-active --quiet firewalld; then
-    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-service=http --add-service=https
+    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-service=http --add-service=https --add-service=dns
     firewall-cmd -q --reload
-    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites) open"
+    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS) open"
 fi
 
 step "Database tables"
@@ -388,6 +445,15 @@ for _ in $(seq 50); do [ -S /run/lpa/lpa.sock ] && [ -S /run/lpanel/php-fpm.sock
 if [ -n "$HOSTNAME_ARG" ] || runuser -u lpanel -- $PHP "$PANEL/laika" ssl:settings 2>/dev/null | grep -q '^hostname  *-'; then
     case "$HOST" in *.*) runuser -u lpanel -- $PHP "$PANEL/laika" ssl:settings --hostname "$HOST" >/dev/null && note "AutoSSL looks after the certificate of $HOST" ;; esac
 fi
+
+# DNS: the address new zones point at (this server's first one, until the
+# Admin panel says otherwise), then a zone for every account that has none
+# (accounts made before DNS came).
+if runuser -u lpanel -- $PHP "$PANEL/laika" dns:settings 2>/dev/null | grep -q 'IPv4 address *(not set)'; then
+    IP4=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+(\.[0-9]+){3}$' || true)
+    [ -n "$IP4" ] && runuser -u lpanel -- $PHP "$PANEL/laika" dns:settings --ip "$IP4" >/dev/null && note "new zones point at $IP4"
+fi
+runuser -u lpanel -- $PHP "$PANEL/laika" dns:sync >/dev/null || note "some zones are not on the DNS server yet; dns:settle retries them every minute"
 
 # After a switch of stack, every account's sites are written for the new one
 # (the agent also removes the old stack's files).

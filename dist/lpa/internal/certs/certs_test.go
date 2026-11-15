@@ -212,17 +212,28 @@ type fakeAuthority struct {
 	fail  map[string]error // authority → its refusal
 	asked []string
 	names [][]string
+	zones *fakeZones
 }
 
-func (f *fakeAuthority) Issue(_ context.Context, ca string, _ *EAB, names []string, csrDER []byte, present func(token, keyAuth string) error) ([][]byte, error) {
+func (f *fakeAuthority) Issue(_ context.Context, ca string, _ *EAB, names []string, csrDER []byte, solve Solver) ([][]byte, error) {
 	f.asked = append(f.asked, ca)
 	f.names = append(f.names, names)
 	if err := f.fail[ca]; err != nil {
 		return nil, err
 	}
 	token := "tok_" + strings.Repeat("A", 20)
-	if err := present(token, token+".thumb"); err != nil {
+	if err := solve.HTTP(token, token+".thumb"); err != nil {
 		return nil, err
+	}
+	for _, n := range names {
+		if base, wild := strings.CutPrefix(n, "*."); wild {
+			if err := solve.DNS(base, "digest-of-"+base); err != nil {
+				return nil, err
+			}
+			if f.zones == nil || f.zones.txt["_acme-challenge."+base] != "digest-of-"+base {
+				f.t.Errorf("the DNS check's answer for %s is not in the zone", base)
+			}
+		}
 	}
 	if got, _ := os.ReadFile(filepath.Join(f.dir, token)); string(got) != token+".thumb" {
 		f.t.Errorf("the check's answer is %q", got)
@@ -232,6 +243,62 @@ func (f *fakeAuthority) Issue(_ context.Context, ca string, _ *EAB, names []stri
 		return nil, err
 	}
 	return f.ca.leaf(f.t, csr.PublicKey, csr.DNSNames, now.Add(-time.Minute), now.Add(90*24*time.Hour)), nil
+}
+
+// fakeZones is the server's DNS: delegated holds the names the world's DNS
+// reaches this server for.
+type fakeZones struct {
+	delegated map[string]bool
+	txt       map[string]string
+	removed   int
+}
+
+func (z *fakeZones) Delegated(_ context.Context, username, name string) (string, error) {
+	if username != "shop1" || !z.delegated[name] {
+		return "its nameservers at the registry are not this server's", nil
+	}
+	return "", nil
+}
+
+func (z *fakeZones) Present(_ context.Context, username, name, value string) (func(), error) {
+	z.txt[name] = value
+	return func() { delete(z.txt, name); z.removed++ }, nil
+}
+
+func TestIssueWildcardThroughDNS(t *testing.T) {
+	m, auth, _ := newManager(t)
+	zones := &fakeZones{delegated: map[string]bool{"shop.test": true}, txt: map[string]string{}}
+	auth.zones = zones
+	m.DNS = zones
+	res, err := m.Issue(context.Background(), IssueArgs{
+		Username: "shop1", Names: []string{"shop.test", "*.shop.test", "*.elsewhere.test"}, Authorities: []string{LetsEncrypt},
+	})
+	if err != nil || !res.Issued {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if got := strings.Join(res.Cert.Names, " "); got != "*.shop.test shop.test" {
+		t.Errorf("names = %s", got)
+	}
+	if len(res.Excluded) != 1 || res.Excluded[0].Name != "*.elsewhere.test" {
+		t.Errorf("excluded = %+v", res.Excluded)
+	}
+	if len(zones.txt) != 0 || zones.removed != 1 {
+		t.Errorf("the check's record was not taken away: %v", zones.txt)
+	}
+
+	// Without the server's DNS a wildcard is left out, never refused whole.
+	m.DNS = nil
+	res, err = m.Issue(context.Background(), IssueArgs{Username: "shop1", Names: []string{"shop.test", "*.shop.test"}, Authorities: []string{LetsEncrypt}})
+	if err != nil || !res.Issued || len(res.Excluded) != 1 {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	// A wildcard is never the first name, and never the hostname's.
+	if _, err := m.Issue(context.Background(), IssueArgs{Username: "shop1", Names: []string{"*.shop.test"}, Authorities: []string{LetsEncrypt}}); codeOf(err) != protocol.CodeBadArgs {
+		t.Errorf("a wildcard first: %v", err)
+	}
+	if _, err := m.HostIssue(context.Background(), HostIssueArgs{Names: []string{"shop.test", "*.shop.test"}, Authorities: []string{LetsEncrypt}}); codeOf(err) != protocol.CodeBadArgs {
+		t.Errorf("a wildcard for the hostname: %v", err)
+	}
 }
 
 type fakeRun struct {

@@ -74,10 +74,19 @@ type account struct {
 	URI       string `json:"uri"`
 }
 
-// Issue proves control of names with HTTP-01, through the answers present
-// puts where the web server serves them, and returns the chain issued for
+// Solver puts the answers to an authority's checks where it will look.
+type Solver struct {
+	// HTTP serves keyAuth at /.well-known/acme-challenge/<token> (HTTP-01).
+	HTTP func(token, keyAuth string) error
+	// DNS puts value in a TXT record at _acme-challenge.<domain> (DNS-01,
+	// the only check there is for a wildcard name).
+	DNS func(domain, value string) error
+}
+
+// Issue proves control of names (HTTP-01; DNS-01 for wildcard names)
+// through the answers solve puts in place, and returns the chain issued for
 // csr, leaf first.
-func (a *ACME) Issue(ctx context.Context, ca string, eab *EAB, names []string, csr []byte, present func(token, keyAuth string) error) ([][]byte, error) {
+func (a *ACME) Issue(ctx context.Context, ca string, eab *EAB, names []string, csr []byte, solve Solver) ([][]byte, error) {
 	c, err := a.client(ctx, ca, eab)
 	if err != nil {
 		return nil, err
@@ -94,21 +103,35 @@ func (a *ACME) Issue(ctx context.Context, ca string, eab *EAB, names []string, c
 		if z.Status == acme.StatusValid {
 			continue
 		}
+		kind := "http-01"
+		if z.Wildcard {
+			kind = "dns-01"
+		}
 		var chal *acme.Challenge
 		for _, ch := range z.Challenges {
-			if ch.Type == "http-01" {
+			if ch.Type == kind {
 				chal = ch
 			}
 		}
 		if chal == nil {
-			return nil, &AuthorityError{Msg: "it offered no HTTP-01 check for " + z.Identifier.Value}
+			return nil, &AuthorityError{Msg: "it offered no " + kind + " check for " + z.Identifier.Value}
 		}
-		keyAuth, err := c.HTTP01ChallengeResponse(chal.Token)
-		if err != nil {
-			return nil, err
-		}
-		if err := present(chal.Token, keyAuth); err != nil {
-			return nil, err
+		if z.Wildcard {
+			value, err := c.DNS01ChallengeRecord(chal.Token)
+			if err != nil {
+				return nil, err
+			}
+			if err := solve.DNS(z.Identifier.Value, value); err != nil {
+				return nil, err
+			}
+		} else {
+			keyAuth, err := c.HTTP01ChallengeResponse(chal.Token)
+			if err != nil {
+				return nil, err
+			}
+			if err := solve.HTTP(chal.Token, keyAuth); err != nil {
+				return nil, err
+			}
 		}
 		if _, err := c.Accept(ctx, chal); err != nil {
 			return nil, explain(err)
@@ -186,7 +209,9 @@ func (a *ACME) client(ctx context.Context, ca string, eab *EAB) (*acme.Client, e
 		return c, nil
 	}
 	reg := &acme.Account{}
-	if eab != nil && eab.KID != "" {
+	// EAB credentials are ZeroSSL's; another authority would refuse a key
+	// id it never issued.
+	if eab != nil && eab.KID != "" && ca == ZeroSSL {
 		hmac, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(eab.HMAC, "="))
 		if err != nil || len(hmac) == 0 {
 			return nil, &AuthorityError{Msg: "the external account HMAC key is not base64url"}

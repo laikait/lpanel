@@ -95,7 +95,7 @@ Its README covers the wire format, the checks in order, the journal and the
 operation list.
 
 Each subsystem is a package under `internal/` (so far `sysinfo`, `accounts`,
-`quota`, `web`, `certs` and `mysql`; later `dns`, `mail`, `ftp`, `backup`,
+`quota`, `web`, `certs`, `mysql` and `dns`; later `mail`, `ftp`, `backup`,
 `firewall`), registered as operations in `internal/ops`. Each reads the system
 through paths it is given, so tests run against fixture files without root.
 Operations that need the system's own tools (`useradd`, `usermod`, `userdel`,
@@ -131,6 +131,16 @@ state, like `web.apply`, but never drops a database: only an explicit
 `db.drop` does. phpMyAdmin runs in a PHP-FPM pool of its own as
 `lpanel-pma`, and is signed in to with a one-time ticket the panel writes
 for a login the agent makes (`db.sso`).
+
+DNS (M5) follows them too. PowerDNS keeps zones in its own `pdns`
+database, and the agent writes them through its HTTP API, which listens on
+127.0.0.1 with a key only root holds. `dns.apply` takes a zone's whole
+state, checks every record itself, and changes only what differs. The
+panel keeps the records the owner sees; a zone's own NS records and its SOA
+come from the nameservers of whoever the zone belongs to (the account's
+reseller, or the server), so changing nameservers changes every zone at
+once. For a wildcard certificate, the agent answers the DNS-01 check in the
+account's own zone.
 
 Certificates (M3) follow the same lines. The agent makes every key itself
 and keeps it. `ssl.issue`:
@@ -223,6 +233,8 @@ user, not from SELinux.
 | `/usr/local/lpanel-pma/phpmyadmin/` | phpMyAdmin, root-owned and read-only; `config.inc.php` 0640 root:lpanel-pma; `lpanel-signon.php` takes the panel's tickets |
 | `/var/lib/lpanel-pma/tickets/` | one-time sign-on tickets: written by the panel, read and deleted by phpMyAdmin (2770 lpanel:lpanel-pma) |
 | `/var/lib/lpanel-pma/{sessions,tmp,log}/` | phpMyAdmin's sessions, temporary files and PHP error log (0700 lpanel-pma) |
+| `/etc/pdns/pdns.conf` | PowerDNS: the MySQL backend (database `pdns`), port 53 on every address, the API on 127.0.0.1:8081 (0640 root:pdns) |
+| `/etc/lpa/pdns.key` | PowerDNS's API key, the agent's alone (0600 root) |
 | `/var/lib/mysql/<user>_<name>/` | each account database's files, owned by MariaDB; their size comes off the home's quota |
 | `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444) |
 | `/etc/lpanel/authd.json`, `/etc/pam.d/lpanel` | root sign-in: who may be checked, and the PAM stack used |
@@ -247,7 +259,7 @@ user, not from SELinux.
 | `/home/<user>/tmp/`, `/home/<user>/logs/` | the account's PHP sessions and uploads, and its PHP error log |
 
 Services: `lpa`, `lpanel-authd.socket` (socket-activated), `lpanel-php-fpm`,
-`lpanel-nginx`, `lpanel-scheduler.timer` (every minute), and `mariadb`. For
+`lpanel-nginx`, `lpanel-scheduler.timer` (every minute), `mariadb` and `pdns`. For
 customers' sites: `httpd`, and `php<XY>-php-fpm` for each PHP version in use.
 The agent enables each of those when an account first uses it, and stops a
 version left with no pools. The stock `nginx` service stays off; the panel

@@ -1,0 +1,109 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Dns.title'|local }}</h1>
+        <p>{{ 'Dns.admin_lead'|local }}</p>
+    </div>
+</div>
+
+{% if look.running is null %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Dns.error_unreachable'|local }}</p></div>
+{% elseif not look.running %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Dns.not_running'|local }}</p></div>
+{% endif %}
+{% if not addresses.ip4 %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Dns.no_address'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-3 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('server') }}</span>
+        <div><div class="stat-label">PowerDNS</div><div class="stat-value">{{ look.running ? look.version : '—' }}</div>
+            <div class="stat-sub">{% if look.running %}<span class="badge ok">{{ 'Dns.running'|local }}</span>{% elseif look.running is null %}<span class="badge plain">{{ 'Dns.unknown'|local }}</span>{% else %}<span class="badge bad">{{ 'Dns.stopped'|local }}</span>{% endif %}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('globe') }}</span>
+        <div><div class="stat-label">{{ 'Dns.zones'|local }}</div><div class="stat-value">{{ zones|length }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('link') }}</span>
+        <div><div class="stat-label">{{ 'Dns.address'|local }}</div><div class="stat-value mono" style="font-size:18px">{{ addresses.ip4 ?: '—' }}</div>{% if addresses.ip6 %}<div class="stat-sub mono">{{ addresses.ip6 }}</div>{% endif %}</div>
+    </div>
+</div>
+
+<div class="grid grid-side">
+    <div class="stack">
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Dns.zones'|local }}</h2><p>{{ 'Dns.zones_lead'|local }}</p></div></div>
+            {% if zones is empty %}
+                <div class="empty">{{ icon('globe') }}<h3>{{ 'Dns.no_zones'|local }}</h3><p>{{ 'Dns.no_zones_hint'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr><th>{{ 'Dns.zone'|local }}</th><th class="hide-sm">{{ 'Dns.account'|local }}</th><th class="hide-sm">{{ 'Dns.records'|local }}</th><th style="text-align:end"><span class="sr-only">{{ 'Dns.actions'|local }}</span></th></tr></thead>
+                <tbody>
+                {% for z in zones %}
+                    <tr>
+                        <td>
+                            <a class="domain-link" href="{{ z.url }}"><strong class="mono">{{ z.name }}</strong></a>
+                            {% if z.state == 'failed' %}<span class="badge bad">{{ 'Dns.state_failed'|local }}</span>{% elseif z.state == 'pending' %}<span class="badge warn">{{ 'Dns.state_pending'|local }}</span>{% elseif z.state == 'removing' %}<span class="badge warn">{{ 'Dns.state_removing'|local }}</span>{% endif %}
+                            <div class="domain-sub show-sm">{{ z.username ?: 'Dns.server_zone'|local }} · {{ z.records }}</div>
+                        </td>
+                        <td class="hide-sm">{% if z.username %}<span class="mono">{{ z.username }}</span>{% else %}<span class="badge plain">{{ 'Dns.server_zone'|local }}</span>{% endif %}</td>
+                        <td class="hide-sm">{{ z.records }}</td>
+                        <td class="db-actions-cell">
+                            <div class="db-actions">
+                                <a class="btn btn-sm btn-ghost" href="{{ z.url }}" aria-label="{{ 'Dns.records_of'|local({name: z.name}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Dns.edit'|local }}</span></a>
+                                {% if z.remove_url %}
+                                <form class="inline-form" method="post" action="{{ z.remove_url }}" data-confirm="{{ 'Dns.confirm_zone_remove'|local({name: z.name}) }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Dns.remove_zone'|local({name: z.name}) }}">{{ icon('trash') }}</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+
+        {% include '@Dns/profile.twig' with {reseller: false, server_nameservers: []} %}
+    </div>
+
+    <div class="stack">
+        <form class="card" method="post" action="{{ addresses_url }}">
+            <div class="card-head"><div><h2>{{ 'Dns.addresses'|local }}</h2><p>{{ 'Dns.addresses_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <div class="field">
+                    <label for="s-ip4">IPv4</label>
+                    <input class="input mono{% if errors.ip4 is defined %} is-invalid{% endif %}" id="s-ip4" name="ip4" maxlength="15" autocomplete="off" value="{{ old.ip4 is defined ? old.ip4 : addresses.ip4 }}" placeholder="203.0.113.10" required>
+                    {% if errors.ip4 is defined %}<div class="error">{{ errors.ip4|local }}</div>{% endif %}
+                </div>
+                <div class="field" style="margin-bottom:0">
+                    <label for="s-ip6">IPv6 <span class="muted">({{ 'Dns.optional'|local }})</span></label>
+                    <input class="input mono{% if errors.ip6 is defined %} is-invalid{% endif %}" id="s-ip6" name="ip6" maxlength="45" autocomplete="off" value="{{ old.ip6 is defined ? old.ip6 : addresses.ip6 }}" placeholder="2001:db8::10">
+                    {% if errors.ip6 is defined %}<div class="error">{{ errors.ip6|local }}</div>{% else %}<div class="hint">{{ 'Dns.addresses_hint'|local }}</div>{% endif %}
+                </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Dns.save'|local }}</button></div>
+        </form>
+
+        <form class="card" method="post" action="{{ zone_url }}">
+            <div class="card-head"><div><h2>{{ 'Dns.zone_create'|local }}</h2><p>{{ 'Dns.zone_create_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <div class="field" style="margin-bottom:0">
+                    <label for="z-name">{{ 'Dns.zone'|local }}</label>
+                    <input class="input mono{% if errors.zone is defined %} is-invalid{% endif %}" id="z-name" name="name" maxlength="253" autocapitalize="none" autocomplete="off" spellcheck="false" value="{{ old.zone|default('') }}" placeholder="example.net" required>
+                    {% if errors.zone is defined %}<div class="error">{{ errors.zone|local }}</div>{% else %}<div class="hint">{{ 'Dns.zone_create_hint'|local }}</div>{% endif %}
+                </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Dns.zone_create_button'|local }}</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}

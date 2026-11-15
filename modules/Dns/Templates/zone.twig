@@ -1,0 +1,157 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro value_hints() %}
+    <div class="hint" data-show-for="A">{{ 'Dns.hint_a'|local }}</div>
+    <div class="hint" data-show-for="AAAA">{{ 'Dns.hint_aaaa'|local }}</div>
+    <div class="hint" data-show-for="CNAME">{{ 'Dns.hint_cname'|local }}</div>
+    <div class="hint" data-show-for="MX">{{ 'Dns.hint_mx'|local }}</div>
+    <div class="hint" data-show-for="TXT">{{ 'Dns.hint_txt'|local }}</div>
+    <div class="hint" data-show-for="SRV">{{ 'Dns.hint_srv'|local }}</div>
+    <div class="hint" data-show-for="CAA">{{ 'Dns.hint_caa'|local }}</div>
+    <div class="hint" data-show-for="NS">{{ 'Dns.hint_ns'|local }}</div>
+    <div class="hint" data-show-for="PTR">{{ 'Dns.hint_ptr'|local }}</div>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        {% if several %}<a class="back-link" href="{{ back_url }}">{{ icon('chevron') }}{{ 'Dns.all_zones'|local }}</a>{% endif %}
+        <h1 class="mono">{{ zone.name }}</h1>
+        <p>{{ account ? 'Dns.zone_lead'|local : 'Dns.zone_lead_server'|local }}{% if account and lp.area == 'admin' %} <span class="badge plain mono">{{ account.username }}</span>{% endif %}</p>
+    </div>
+    <div class="page-actions">
+        <form class="inline-form" method="post" action="{{ reset_url }}" data-confirm="{{ 'Dns.confirm_reset'|local({name: zone.name}) }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <button class="btn" type="submit">{{ icon('refresh') }}{{ 'Dns.reset'|local }}</button>
+        </form>
+    </div>
+</div>
+
+{% if zone.state == 'failed' %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Dns.last_failed'|local }}</strong><br><span class="mono">{{ zone.error }}</span></p></div>
+{% elseif zone.state == 'pending' %}
+    <div class="alert alert-info">{{ icon('clock') }}<p>{{ 'Dns.pending_text'|local }}</p></div>
+{% endif %}
+{% if delegation == 'elsewhere' %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p><strong>{{ 'Dns.delegated_elsewhere'|local }}</strong> {{ 'Dns.delegated_elsewhere_text'|local({found: found|join(', '), want: nameservers|join(', ')}) }}</p></div>
+{% elseif delegation == 'none' %}
+    <div class="alert alert-info">{{ icon('info') }}<p><strong>{{ 'Dns.delegated_none'|local }}</strong> {{ 'Dns.delegated_none_text'|local({want: nameservers|join(', ')}) }}</p></div>
+{% endif %}
+
+<div class="grid grid-side">
+    <div class="stack">
+        <section class="card">
+            <div class="card-head">
+                <div><h2>{{ 'Dns.nameservers'|local }}</h2><p>{{ 'Dns.nameservers_zone_lead'|local }}</p></div>
+                {% if delegation == 'ok' %}<span class="badge ok">{{ 'Dns.delegation_ok'|local }}</span>
+                {% elseif delegation == 'elsewhere' %}<span class="badge warn">{{ 'Dns.delegation_elsewhere'|local }}</span>
+                {% elseif delegation == 'none' %}<span class="badge plain">{{ 'Dns.delegation_none'|local }}</span>{% endif %}
+            </div>
+            <ul class="list">
+                {% for ns in nameservers %}
+                    <li><strong class="mono">{{ ns }}</strong><button class="btn btn-sm btn-ghost" type="button" data-copy="{{ ns }}" data-copied="{{ 'Dns.copied'|local }}">{{ 'Dns.copy'|local }}</button></li>
+                {% endfor %}
+            </ul>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Dns.records'|local }}</h2><p>{{ 'Dns.records_lead'|local({n: records|length}) }}</p></div></div>
+            {% if records is empty %}
+                <div class="empty">{{ icon('list') }}<h3>{{ 'Dns.no_records'|local }}</h3><p>{{ 'Dns.no_records_hint'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table dns-table">
+                <thead><tr>
+                    <th>{{ 'Dns.name'|local }}</th>
+                    <th>{{ 'Dns.type'|local }}</th>
+                    <th class="hide-sm">{{ 'Dns.value'|local }}</th>
+                    <th class="hide-sm">TTL</th>
+                    <th style="text-align:end"><span class="sr-only">{{ 'Dns.actions'|local }}</span></th>
+                </tr></thead>
+                <tbody>
+                {% for r in records %}
+                    {% set editing = edit_id == r.id %}
+                    {% set e = editing ? edit_old : {} %}
+                    <tr>
+                        <td>
+                            <strong class="mono dns-name" title="{{ r.full }}">{{ r.name }}</strong>
+                            <div class="domain-sub show-sm mono dns-value">{{ r.content }}</div>
+                        </td>
+                        <td><span class="badge dns-type dns-{{ r.type|lower }}">{{ r.type }}</span></td>
+                        <td class="hide-sm"><div class="mono dns-value" title="{{ r.content }}">{{ r.content }}</div></td>
+                        <td class="hide-sm muted">{{ r.ttl }}</td>
+                        <td class="db-actions-cell">
+                            <div class="db-actions">
+                                <details class="db-more"{% if editing %} open{% endif %}>
+                                    <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Dns.edit_name'|local({name: r.full, type: r.type}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Dns.edit'|local }}</span></summary>
+                                    <form class="db-panel" method="post" action="{{ r.update_url }}">
+                                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                                        <div class="form-row">
+                                            <div class="field">
+                                                <label for="rn-{{ r.id }}">{{ 'Dns.name'|local }}</label>
+                                                <input class="input mono{% if editing and edit_errors.name is defined %} is-invalid{% endif %}" id="rn-{{ r.id }}" name="name" maxlength="253" autocapitalize="none" spellcheck="false" value="{{ e.name|default(r.name) }}" required>
+                                                {% if editing and edit_errors.name is defined %}<div class="error">{{ edit_errors.name|local }}</div>{% endif %}
+                                            </div>
+                                            <div class="field">
+                                                <label for="rt-{{ r.id }}">TTL</label>
+                                                <input class="input{% if editing and edit_errors.ttl is defined %} is-invalid{% endif %}" id="rt-{{ r.id }}" name="ttl" type="number" min="60" max="604800" value="{{ e.ttl|default(r.ttl) }}" required>
+                                                {% if editing and edit_errors.ttl is defined %}<div class="error">{{ edit_errors.ttl|local }}</div>{% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="field">
+                                            <label for="rc-{{ r.id }}">{{ 'Dns.value'|local }} <span class="muted">({{ r.type }})</span></label>
+                                            <textarea class="input mono dns-content{% if editing and edit_errors.content is defined %} is-invalid{% endif %}" id="rc-{{ r.id }}" name="content" rows="2" maxlength="4096" autocapitalize="none" spellcheck="false" required>{{ e.content|default(r.content) }}</textarea>
+                                            {% if editing and edit_errors.content is defined %}<div class="error">{{ edit_errors.content|local }}</div>{% endif %}
+                                        </div>
+                                        <button class="btn btn-sm btn-primary" type="submit">{{ 'Dns.save'|local }}</button>
+                                    </form>
+                                </details>
+                                <form class="inline-form" method="post" action="{{ r.delete_url }}" data-confirm="{{ 'Dns.confirm_remove'|local({name: r.full, type: r.type}) }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Dns.remove_name'|local({name: r.full, type: r.type}) }}">{{ icon('trash') }}</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+    </div>
+
+    <form class="card" method="post" action="{{ add_url }}" data-show-from="type">
+        <div class="card-head"><div><h2>{{ 'Dns.add'|local }}</h2><p>{{ 'Dns.add_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label for="a-type">{{ 'Dns.type'|local }}</label>
+                <select class="input{% if errors.type is defined %} is-invalid{% endif %}" id="a-type" name="type">
+                    {% for t in types %}<option value="{{ t }}"{% if old.type|default('A')|upper == t %} selected{% endif %}>{{ t }} — {{ ('Dns.type_' ~ t|lower)|local }}</option>{% endfor %}
+                </select>
+                {% if errors.type is defined %}<div class="error">{{ errors.type|local }}</div>{% endif %}
+            </div>
+            <div class="field">
+                <label for="a-name">{{ 'Dns.name'|local }}</label>
+                <div class="affix affix-end"><input class="input mono{% if errors.name is defined %} is-invalid{% endif %}" id="a-name" name="name" maxlength="253" autocapitalize="none" autocomplete="off" spellcheck="false" value="{{ old.name|default('') }}" placeholder="@"><span class="affix-text">.{{ zone.name }}</span></div>
+                {% if errors.name is defined %}<div class="error">{{ errors.name|local }}</div>{% else %}<div class="hint">{{ 'Dns.name_hint'|local }}</div>{% endif %}
+            </div>
+            <div class="field">
+                <label for="a-content">{{ 'Dns.value'|local }}</label>
+                <textarea class="input mono dns-content{% if errors.content is defined %} is-invalid{% endif %}" id="a-content" name="content" rows="2" maxlength="4096" autocapitalize="none" spellcheck="false" required>{{ old.content|default('') }}</textarea>
+                {% if errors.content is defined %}<div class="error">{{ errors.content|local }}</div>{% endif %}
+                {{ _self.value_hints() }}
+            </div>
+            <div class="field">
+                <label for="a-ttl">TTL <span class="muted">({{ 'Dns.seconds'|local }})</span></label>
+                <select class="input{% if errors.ttl is defined %} is-invalid{% endif %}" id="a-ttl" name="ttl">
+                    {% for t, label in {300: 'Dns.ttl_5m', 3600: 'Dns.ttl_1h', 14400: 'Dns.ttl_4h', 86400: 'Dns.ttl_1d'} %}
+                        <option value="{{ t }}"{% if old.ttl|default(default_ttl) == t %} selected{% endif %}>{{ label|local }}</option>
+                    {% endfor %}
+                </select>
+                {% if errors.ttl is defined %}<div class="error">{{ errors.ttl|local }}</div>{% endif %}
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Dns.add_button'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

@@ -473,3 +473,33 @@ textarea.input { height: auto; padding: 10px 12px; }
     .input-row .input { flex: none; }
     .priv-grid { grid-template-columns: 1fr 1fr; }
 }
+
+/* DNS: the zone editor. */
+.back-link { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 6px; color: var(--text-2); font-size: 13px; font-weight: 600; text-decoration: none; }
+.back-link:hover { color: var(--accent-text); }
+.back-link .ic { width: 14px; height: 14px; transform: rotate(90deg); }
+[dir="rtl"] .back-link .ic { transform: rotate(-90deg); }
+.affix-end .input { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.affix-end .affix-text { border-inline-end: 1px solid var(--border-strong); border-inline-start: 0; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; }
+[dir="rtl"] .affix-end .input { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+[dir="rtl"] .affix-end .affix-text { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.dns-table td { vertical-align: top; }
+.dns-name { white-space: nowrap; }
+.dns-table th:first-child, .dns-table td:first-child { width: 1%; }
+.dns-value { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.dns-type { font-family: var(--mono); font-size: 11.5px; min-width: 46px; justify-content: center; }
+.dns-type::before { display: none; }
+.dns-a, .dns-aaaa { background: var(--accent-soft); color: var(--accent-text); border-color: transparent; }
+.dns-cname, .dns-ns, .dns-ptr { background: var(--info-soft); color: var(--info); border-color: transparent; }
+.dns-mx, .dns-srv { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.dns-txt, .dns-caa { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.dns-content { resize: vertical; min-height: 40px; font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
+.dns-template { font-size: 12.5px; line-height: 1.6; white-space: pre; overflow-x: auto; resize: vertical; }
+.steps { margin: 0; padding-inline-start: 20px; color: var(--text-2); }
+.steps li { margin-bottom: 10px; padding-inline-start: 4px; }
+.steps li:last-child { margin-bottom: 0; }
+@media (max-width: 560px) {
+    .dns-value { max-width: 52vw; white-space: normal; overflow-wrap: anywhere; }
+    .dns-name { white-space: normal; overflow-wrap: anywhere; }
+    .dns-table th:first-child, .dns-table td:first-child { width: auto; }
+}

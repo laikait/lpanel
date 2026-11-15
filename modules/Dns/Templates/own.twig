@@ -1,0 +1,14 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Dns.title'|local }}</h1>
+        <p>{{ 'Dns.own_lead'|local }}</p>
+    </div>
+</div>
+
+<div class="stack" style="max-width:860px">
+    {% include '@Dns/profile.twig' with {reseller: true} %}
+</div>
+{% endblock %}

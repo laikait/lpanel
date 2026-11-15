@@ -592,6 +592,90 @@ check "dropping removes the database and the user" t_db_drop
 check "terminating an account drops its databases and users" t_db_terminate
 check "database changes are in the audit log" t_db_audit
 
+echo "== DNS (PowerDNS)"
+IP4=$(lpanel dns:settings | awk '$1 == "IPv4" { print $3 }')
+q() { dig @127.0.0.1 +short +norecurse "$@" 2>&1; }     # name [type]
+zid() { mariadb -uroot -N lpanel -e "select r.id from dns_records r join dns_zones z on z.id = r.zone_id where z.name = '$1' and r.name = '$2' and r.type = '$3' limit 1"; }
+t_pdns_up()     { systemctl is-active --quiet pdns && ss -ltnp | grep -q '127.0.0.1:8081' && ! ss -ltn | grep -qE '(0\.0\.0\.0|\*|\[::\]):8081 ' \
+                  && [ "$(stat -c '%a %U' /etc/lpa/pdns.key)" = "600 root" ] && [ "$(stat -c '%a %U %G' /etc/pdns/pdns.conf)" = "640 root pdns" ]; }
+t_api_key()     { [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/api/v1/servers/localhost/zones)" = 401 ] && lpanel dns:info | grep -q 'Running *yes'; }
+t_zone_made()   { [ -n "$IP4" ] && [ "$(q shop.example.test A)" = "$IP4" ] && [ "$(q www.shop.example.test A)" = "$IP4" ] \
+                  && q shop.example.test MX | grep -qx '10 mail.shop.example.test.' && q shop.example.test TXT | grep -q 'v=spf1 a mx ~all' \
+                  && q shop.example.test NS | grep -qx 'ns1.shop.example.test.'; }
+t_sub_addon()   { [ "$(q blog.shop.example.test A)" = "$IP4" ] && q other.example.test SOA | grep -q '^ns1.other.example.test. hostmaster.other.example.test. 20'; }
+t_dns_add()     { lpanel dns:add shop.example.test api A 192.0.2.44 --ttl=300 && [ "$(q api.shop.example.test A)" = 192.0.2.44 ] \
+                  && dig @127.0.0.1 +norecurse api.shop.example.test A | grep -qE '^api\.shop\.example\.test\.\s+300\s'; }
+t_dns_txt()     { lpanel dns:add shop.example.test evil TXT 'a" "v=spf1 +all' && [ "$(q evil.shop.example.test TXT)" = '"a\" \"v=spf1 +all"' ]; }
+t_dns_refused() { ! lpanel dns:add shop.example.test x A 999.1.1.1 2>/dev/null && ! lpanel dns:add shop.example.test api CNAME other.test 2>/dev/null \
+                  && ! lpanel dns:add shop.example.test @ NS ns.evil.test 2>/dev/null && [ -z "$(q x.shop.example.test A)" ]; }
+t_dns_set()     { lpanel dns:set shop.example.test "$(zid shop.example.test api A)" --content=192.0.2.45 && [ "$(q api.shop.example.test A)" = 192.0.2.45 ] \
+                  && lpanel dns:remove shop.example.test "$(zid shop.example.test api A)" && [ -z "$(q api.shop.example.test A)" ]; }
+t_serial()      { local a b; a=$(q shop.example.test SOA | awk '{print $3}'); lpanel dns:add shop.example.test tick TXT tock >/dev/null; b=$(q shop.example.test SOA | awk '{print $3}'); [ "$b" -gt "$a" ]; }
+t_owner_page()  { [ "$(signin_as 7444 /panel shop1 Owner-Pass-Word-1)" = "303 https://127.0.0.1:7444/panel" ] \
+                  && curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/dns -o /tmp/dnslist.html && grep -q 'other.example.test' /tmp/dnslist.html \
+                  && curl -ks -b /tmp/jar2 "https://127.0.0.1:7444/panel/dns/$(mariadb -uroot -N lpanel -e "select id from dns_zones where name='shop.example.test'")" | grep -q 'v=spf1 a mx ~all'; }
+t_owner_add()   { local id page tok; id=$(mariadb -uroot -N lpanel -e "select id from dns_zones where name='shop.example.test'")
+                  curl -ks -b /tmp/jar2 -c /tmp/jar2 "https://127.0.0.1:7444/panel/dns/$id" -o /tmp/zone.html
+                  curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null --data-urlencode "_token=$(token /tmp/zone.html)" -d name=owner -d type=A -d content=192.0.2.66 -d ttl=300 "https://127.0.0.1:7444/panel/dns/$id/records"
+                  [ "$(q owner.shop.example.test A)" = 192.0.2.66 ]; }
+t_server_ns()   { lpanel dns:settings --ns ns1.e2e-panel.test,ns2.e2e-panel.test >/dev/null && q shop.example.test NS | sort | tr '\n' ' ' | grep -qx 'ns1.e2e-panel.test. ns2.e2e-panel.test. ' \
+                  && q shop.example.test SOA | grep -q '^ns1.e2e-panel.test. ' && q other.example.test NS | grep -qx 'ns1.e2e-panel.test.'; }
+t_glue()        { lpanel dns:zone-create e2e-panel.test && [ "$(q ns1.e2e-panel.test A)" = "$IP4" ] && [ "$(q ns2.e2e-panel.test A)" = "$IP4" ]; }
+t_reseller_ns() { lpanel dns:nameservers rex --ns ns1.rex.test,ns2.rex.test >/dev/null && q three.example.test NS | sort | tr '\n' ' ' | grep -qx 'ns1.rex.test. ns2.rex.test. ' \
+                  && q shop.example.test NS | grep -qx 'ns1.e2e-panel.test.'; }
+t_reverse()     { lpanel dns:zone-create 113.0.203.in-addr.arpa && lpanel dns:add 113.0.203.in-addr.arpa 10 PTR server.e2e-panel.test >/dev/null \
+                  && [ "$(dig @127.0.0.1 +short +norecurse -x 203.0.113.10)" = server.e2e-panel.test. ]; }
+t_reset()       { lpanel dns:reset shop.example.test --yes && [ -z "$(q evil.shop.example.test TXT)" ] && [ -z "$(q owner.shop.example.test A)" ] && [ "$(q www.shop.example.test A)" = "$IP4" ]; }
+t_zone_gone()   { lpanel domains:add shop1 dnsonly.example.test >/dev/null && q dnsonly.example.test SOA | grep -q hostmaster \
+                  && lpanel domains:remove shop1 dnsonly.example.test >/dev/null && dig @127.0.0.1 +norecurse dnsonly.example.test SOA | grep -q 'status: REFUSED'; }
+t_isolated()    { ! curl -s -H "X-API-Key: $(cat /etc/lpa/pdns.key)" -o /dev/null --max-time 3 "http://$IP4:8081/api/v1/servers" 2>/dev/null; }
+t_terminated()  { echo "Owner-Pass-Word-7" | lpanel accounts:create shop7 seven.example.test Starter >/dev/null && q seven.example.test SOA | grep -q hostmaster \
+                  && lpanel accounts:terminate shop7 --yes >/dev/null \
+                  && for _ in $(seq 60); do getent passwd shop7 >/dev/null || break; lpanel accounts:settle >/dev/null; sleep 2; done \
+                  && lpanel accounts:settle >/dev/null && dig @127.0.0.1 +norecurse seven.example.test SOA | grep -q 'status: REFUSED' \
+                  && [ "$(mariadb -uroot -N lpanel -e "select count(*) from dns_zones where name = 'seven.example.test'")" = 0 ]; }
+# A wildcard certificate is only checked through DNS (DNS-01). A third
+# Pebble asks this server's PowerDNS, as a real authority would ask the
+# domain's nameservers; the agent's own lookups go there too.
+pebble_conf /tmp/pebble-dns.json 14002 15002 5005 none
+nohup /e2e/pebble/pebble -config /tmp/pebble-dns.json -dnsserver 127.0.0.1:53 > /tmp/pebble-dns.log 2>&1 &
+for _ in $(seq 30); do curl -s --cacert /e2e/pebble/pebble.minica.pem -o /dev/null https://127.0.0.1:14002/dir && break; sleep 0.5; done
+php83 -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true); $c["dns"]["resolver"] = "127.0.0.1:53";
+    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+acme https://127.0.0.1:14002/dir
+t_wildcard()    { lpanel domains:set shop1 shop.example.test --wildcard=yes >/dev/null && lpanel ssl:issue shop1 shop.example.test \
+                  && ssl_row shop.example.test names | grep -q '\*.shop.example.test' && echo | openssl s_client -connect 127.0.0.1:443 -servername anything.shop.example.test 2>/dev/null \
+                  | openssl x509 -noout -ext subjectAltName | grep -q 'DNS:\*.shop.example.test'; }
+t_challenge_gone() { [ -z "$(q _acme-challenge.shop.example.test TXT)" ] && ! mariadb -uroot -N pdns -e "select name from records where name like '_lpanel-%' or name like '_acme-challenge.%'" | grep -q .; }
+t_dns_audit()   { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'dns.%'" | tr '\n' ' '); echo "$got" >&2
+                  for want in dns.settings:ok dns.nameservers:ok dns.record_add:ok dns.record_change:ok dns.record_remove:ok dns.zone_reset:ok dns.zone_create:ok; do
+                      grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
+                  done; }
+check "PowerDNS runs, its API only on 127.0.0.1, its key root's alone" t_pdns_up
+check "the API refuses anyone without the key" t_api_key
+check "an account's zone is made from the template, and answers" t_zone_made
+check "a subdomain's address is in its zone; an addon domain has its own" t_sub_addon
+check "lpanel dns:add: a record answers at once, with its TTL" t_dns_add
+check "a quote in TXT text stays inside its record" t_dns_txt
+check "a bad address, a CNAME beside others and the zone's own NS are refused" t_dns_refused
+check "lpanel dns:set and dns:remove" t_dns_set
+check "every change raises the serial" t_serial
+check "the owner sees the zones and records" t_owner_page
+check "the owner adds a record from the User panel" t_owner_add
+check "the server's nameservers go into every zone, and its SOA" t_server_ns
+check "the nameservers' own zone gets their addresses (glue)" t_glue
+check "a reseller's nameservers go into their accounts' zones only" t_reseller_ns
+check "a reverse zone answers PTR lookups" t_reverse
+check "lpanel dns:reset puts a zone back to its template" t_reset
+check "a removed domain takes its zone with it" t_zone_gone
+check "PowerDNS's API is not reachable from outside" t_isolated
+check "terminating an account removes its zones" t_terminated
+check "a wildcard certificate comes through a DNS check, and serves any subdomain" t_wildcard
+check "the check's records are gone afterwards" t_challenge_gone
+check "DNS changes are in the audit log" t_dns_audit
+acme https://127.0.0.1:14000/dir
+lpanel domains:set shop1 shop.example.test --wildcard=no >/dev/null
+
 # Each stack switches to another, and every site moves with it.
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"

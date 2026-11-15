@@ -1,0 +1,75 @@
+{# Nameservers with their glue, and the zone template: shared by the server's page and a reseller's. #}
+<section class="card">
+    <div class="card-head"><div><h2>{{ 'Dns.nameservers'|local }}</h2><p>{{ (reseller ? 'Dns.nameservers_own_lead' : 'Dns.nameservers_lead')|local }}</p></div></div>
+    {% if glue %}
+        <ul class="list">
+            {% for g in glue %}
+                <li>
+                    <div><strong class="mono">{{ g.name }}</strong><div class="muted">{{ g.addresses ? g.addresses|join(', ') : 'Dns.glue_no_address'|local }}</div></div>
+                    {% if g.here is null %}<span class="badge plain">{{ 'Dns.glue_unknown'|local }}</span>
+                    {% elseif g.here %}<span class="badge ok">{{ 'Dns.glue_ok'|local }}</span>
+                    {% elseif g.addresses %}<span class="badge warn">{{ 'Dns.glue_elsewhere'|local }}</span>
+                    {% else %}<span class="badge bad">{{ 'Dns.glue_missing'|local }}</span>{% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% elseif reseller %}
+        <div class="card-body"><p class="muted" style="margin:0">{{ 'Dns.nameservers_using_server'|local({names: server_nameservers|join(', ')}) }}</p></div>
+    {% endif %}
+    <form method="post" action="{{ profile_url }}">
+        <div class="card-body"{% if glue %} style="border-top:1px solid var(--border)"{% endif %}>
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <input type="hidden" name="what" value="nameservers">
+            <div class="field" style="margin-bottom:0">
+                <label for="p-ns">{{ 'Dns.nameservers_field'|local }}</label>
+                <textarea class="input mono{% if errors.nameservers is defined %} is-invalid{% endif %}" id="p-ns" name="nameservers" rows="3" autocapitalize="none" spellcheck="false" placeholder="ns1.example.com&#10;ns2.example.com">{{ old.nameservers is defined and old.nameservers is not null ? old.nameservers : nameservers|join("\n") }}</textarea>
+                {% if errors.nameservers is defined %}<div class="error">{{ errors.nameservers|local }}</div>{% else %}<div class="hint">{{ (reseller ? 'Dns.nameservers_own_hint' : 'Dns.nameservers_hint')|local }}</div>{% endif %}
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Dns.save'|local }}</button></div>
+    </form>
+</section>
+
+{% if glue %}
+<section class="card">
+    <div class="card-head"><div><h2>{{ 'Dns.glue'|local }}</h2><p>{{ 'Dns.glue_lead'|local }}</p></div></div>
+    <div class="card-body">
+        <ol class="steps">
+            <li>{{ 'Dns.glue_step1'|local }}
+                <div class="table-wrap" style="margin-top:8px"><table class="table">
+                    <tbody>
+                    {% for g in glue %}
+                        <tr><td class="mono"><strong>{{ g.name }}</strong></td><td class="mono">{{ addresses.ip4 ?: '—' }}{% if addresses.ip6 %}<br>{{ addresses.ip6 }}{% endif %}</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table></div>
+            </li>
+            <li>{{ 'Dns.glue_step2'|local }}</li>
+            <li>{{ 'Dns.glue_step3'|local }}</li>
+        </ol>
+    </div>
+</section>
+{% endif %}
+
+<section class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Dns.template'|local }}</h2><p>{{ 'Dns.template_lead'|local }}</p></div>
+        <span class="badge {{ template_custom ? 'accent' : 'plain' }}">{{ (template_custom ? 'Dns.template_custom' : 'Dns.template_default')|local }}</span>
+    </div>
+    <form method="post" action="{{ profile_url }}">
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <input type="hidden" name="what" value="template">
+            <div class="field" style="margin-bottom:0">
+                <label for="p-template" class="sr-only">{{ 'Dns.template'|local }}</label>
+                <textarea class="input mono dns-template{% if errors.template is defined %} is-invalid{% endif %}" id="p-template" name="template" rows="10" autocapitalize="none" spellcheck="false" wrap="off">{{ old.template is defined and old.template is not null ? old.template : template }}</textarea>
+                {% if errors.template is defined %}{% set te = errors.template|split('|') %}<div class="error">{{ te[0]|local({line: te[1]|default('')}) }}</div>{% endif %}
+                <div class="hint">{{ 'Dns.template_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot" style="gap:8px">
+            {% if template_custom %}<button class="btn" type="submit" name="default" value="1">{{ 'Dns.template_reset'|local }}</button>{% endif %}
+            <button class="btn btn-primary" type="submit">{{ 'Dns.save'|local }}</button>
+        </div>
+    </form>
+</section>

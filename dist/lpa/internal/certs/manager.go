@@ -36,13 +36,25 @@ var tokenRule = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
 
 // Authority issues certificates (ACME; tests use a fake).
 type Authority interface {
-	Issue(ctx context.Context, ca string, eab *EAB, names []string, csr []byte, present func(token, keyAuth string) error) ([][]byte, error)
+	Issue(ctx context.Context, ca string, eab *EAB, names []string, csr []byte, solve Solver) ([][]byte, error)
+}
+
+// Zones is the server's DNS, for wildcard names (internal/dns).
+type Zones interface {
+	// Delegated says why the world's DNS does not reach this server for the
+	// account's name, or "" when it does.
+	Delegated(ctx context.Context, username, name string) (string, error)
+	// Present puts a TXT value at name and returns how to remove it.
+	Present(ctx context.Context, username, name, value string) (func(), error)
 }
 
 // Manager carries out the certificate operations.
 type Manager struct {
 	Store *Store
 	ACME  Authority
+	// DNS answers the checks for wildcard names; without it they are left
+	// out of every certificate.
+	DNS Zones
 	// Challenges is the folder every site serves at
 	// /.well-known/acme-challenge/ on port 80 (/var/www/lpanel-acme).
 	Challenges string
@@ -189,14 +201,20 @@ type HostInfo struct {
 	Cert      *Info `json:"cert"`
 }
 
-func (m *Manager) checkNames(names []string) ([]string, error) {
+// checkNames checks a certificate's names. With wildcards, names after the
+// first may be "*.example.com".
+func (m *Manager) checkNames(names []string, wildcards bool) ([]string, error) {
 	if len(names) == 0 || len(names) > 100 {
 		return nil, protocol.Fail(protocol.CodeBadArgs, "a certificate has 1 to 100 names")
 	}
 	seen := map[string]bool{}
 	var out []string
-	for _, n := range names {
-		if err := CheckHost(n); err != nil {
+	for i, n := range names {
+		host := n
+		if wildcards && i > 0 {
+			host = strings.TrimPrefix(n, "*.")
+		}
+		if err := CheckHost(host); err != nil {
 			return nil, err
 		}
 		if !seen[n] {
@@ -232,7 +250,7 @@ func (e *EAB) check() error {
 // Issue gets a site a certificate from an authority and stores it. The site
 // starts serving it when web.apply names its id.
 func (m *Manager) Issue(ctx context.Context, a IssueArgs) (IssueResult, error) {
-	names, err := m.checkNames(a.Names)
+	names, err := m.checkNames(a.Names, true)
 	if err != nil {
 		return IssueResult{}, err
 	}
@@ -245,7 +263,7 @@ func (m *Manager) Issue(ctx context.Context, a IssueArgs) (IssueResult, error) {
 	if _, _, _, err := m.Owner(a.Username); err != nil {
 		return IssueResult{}, err
 	}
-	res, pair, err := m.obtain(ctx, names, a.Authorities, a.EAB)
+	res, pair, err := m.obtain(ctx, a.Username, names, a.Authorities, a.EAB)
 	if err != nil || pair == nil {
 		return res, err
 	}
@@ -259,7 +277,7 @@ func (m *Manager) Issue(ctx context.Context, a IssueArgs) (IssueResult, error) {
 // HostIssue gets the server's hostname a certificate and installs it for
 // the panel's ports and the default HTTPS site.
 func (m *Manager) HostIssue(ctx context.Context, a HostIssueArgs) (IssueResult, error) {
-	names, err := m.checkNames(a.Names)
+	names, err := m.checkNames(a.Names, false)
 	if err != nil {
 		return IssueResult{}, err
 	}
@@ -269,7 +287,7 @@ func (m *Manager) HostIssue(ctx context.Context, a HostIssueArgs) (IssueResult, 
 	if err := a.EAB.check(); err != nil {
 		return IssueResult{}, err
 	}
-	res, pair, err := m.obtain(ctx, names, a.Authorities, a.EAB)
+	res, pair, err := m.obtain(ctx, "", names, a.Authorities, a.EAB)
 	if err != nil || pair == nil {
 		return res, err
 	}
@@ -281,9 +299,9 @@ func (m *Manager) HostIssue(ctx context.Context, a HostIssueArgs) (IssueResult, 
 
 // obtain checks which names point here, then asks each authority in turn.
 // A nil pair with no error is a refusal, described in the result.
-func (m *Manager) obtain(ctx context.Context, names, authorities []string, eab *EAB) (IssueResult, *Pair, error) {
+func (m *Manager) obtain(ctx context.Context, username string, names, authorities []string, eab *EAB) (IssueResult, *Pair, error) {
 	res := IssueResult{Excluded: []Excluded{}, Attempts: []Attempt{}}
-	ok, excluded := m.preflight(ctx, names)
+	ok, excluded := m.preflight(ctx, username, names)
 	res.Excluded = excluded
 	if len(ok) == 0 || ok[0] != names[0] {
 		reason := names[0] + " does not point at this server"
@@ -311,15 +329,39 @@ func (m *Manager) obtain(ctx context.Context, names, authorities []string, eab *
 			os.Remove(filepath.Join(m.Challenges, t))
 		}
 	}()
-	present := func(token, keyAuth string) error {
-		if !tokenRule.MatchString(token) || !strings.HasPrefix(keyAuth, token+".") {
-			return errors.New("the authority sent a token LPanel does not accept")
+	var cleanups []func()
+	defer func() {
+		for _, c := range cleanups {
+			c()
 		}
-		tokens = append(tokens, token)
-		return m.putChallenge(token, keyAuth)
+	}()
+	solve := Solver{
+		HTTP: func(token, keyAuth string) error {
+			if !tokenRule.MatchString(token) || !strings.HasPrefix(keyAuth, token+".") {
+				return errors.New("the authority sent a token LPanel does not accept")
+			}
+			tokens = append(tokens, token)
+			return m.putChallenge(token, keyAuth)
+		},
+		DNS: func(domain, value string) error {
+			// Only for a wildcard name that passed the check above.
+			wanted := false
+			for _, n := range ok {
+				wanted = wanted || n == "*."+domain
+			}
+			if !wanted || m.DNS == nil || username == "" {
+				return errors.New("the authority asked for a DNS check LPanel did not expect")
+			}
+			cleanup, err := m.DNS.Present(ctx, username, "_acme-challenge."+domain, value)
+			if err != nil {
+				return err
+			}
+			cleanups = append(cleanups, cleanup)
+			return nil
+		},
 	}
 	for _, ca := range authorities {
-		chain, err := m.ACME.Issue(ctx, ca, eab, ok, csr, present)
+		chain, err := m.ACME.Issue(ctx, ca, eab, ok, csr, solve)
 		if err != nil {
 			res.Attempts = append(res.Attempts, Attempt{Authority: ca, Error: clip(err.Error())})
 			m.Log.Warn("the authority did not issue", "authority", ca, "names", strings.Join(ok, ","), "err", err)
@@ -366,7 +408,10 @@ func (m *Manager) putChallenge(token, content string) error {
 // that cannot be reached at all still counts when it resolves to an address
 // of this server (some networks cannot reach their own public address).
 // Failures count against the authorities' limits, so they are found here.
-func (m *Manager) preflight(ctx context.Context, names []string) ([]string, []Excluded) {
+//
+// A wildcard name has no address to ask; it stays when the world's DNS
+// reaches this server for its zone (Zones.Delegated).
+func (m *Manager) preflight(ctx context.Context, username string, names []string) ([]string, []Excluded) {
 	token := randomToken()
 	content := randomToken()
 	if err := m.putChallenge(token, content); err != nil {
@@ -390,6 +435,20 @@ func (m *Manager) preflight(ctx context.Context, names []string) ([]string, []Ex
 			defer func() { <-sem }()
 			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
+			if base, wild := strings.CutPrefix(n, "*."); wild {
+				if m.DNS == nil || username == "" {
+					reasons[i] = "a wildcard certificate needs the domain's DNS on this server"
+					return
+				}
+				cctx, cancel := context.WithTimeout(ctx, 40*time.Second)
+				defer cancel()
+				why, err := m.DNS.Delegated(cctx, username, base)
+				if err != nil {
+					why = "its DNS zone could not be checked: " + err.Error()
+				}
+				reasons[i] = why
+				return
+			}
 			addrs, err := m.Resolve(cctx, n)
 			if err != nil || len(addrs) == 0 {
 				reasons[i] = "it has no DNS address (A or AAAA record)"
@@ -479,7 +538,7 @@ var subjectRule = regexp.MustCompile(`^[A-Za-z0-9 .,'&()/-]{0,64}$`)
 // CSR makes a key and a certificate request for a commercial certificate.
 // The key stays here; the certificate is installed with ssl.install.
 func (m *Manager) CSR(_ context.Context, a CSRArgs) (CSRResult, error) {
-	names, err := m.checkNames(a.Names)
+	names, err := m.checkNames(a.Names, false)
 	if err != nil {
 		return CSRResult{}, err
 	}
