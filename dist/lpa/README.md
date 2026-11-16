@@ -106,6 +106,11 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `dns.remove` | change | `{username, zone}`: delete a zone of that account (also run by `account.terminate` for every zone of it) |
 | `dns.info` | read-only | PowerDNS's version and state |
 | `dns.lookup` | read-only | `{hosts, zones}`: what the world's DNS says: each host's addresses and whether one is this server's (glue), each zone's nameservers at its registry |
+| `mail.apply` | change | `{username, suspended, domains}`: an account's whole mail state (see below); answers each domain's DKIM public key |
+| `mail.purge` | change | `{username, domain, local}`: delete a mailbox's mail (or, with `local` empty, a domain's) once it is no longer set up |
+| `mail.settings` | change | `{smarthost}`: the relay host for outgoing mail (`host:port`, empty for none) |
+| `mail.usage` | read-only | `{username}`: the bytes each mailbox holds |
+| `mail.info` | read-only | Exim's and Dovecot's state and versions, the queue, the number of mail domains |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -321,6 +326,30 @@ nameservers at its registry are not this server's, and the wildcard is left
 out with that reason. During the order it adds the authority's TXT value
 beside the owner's own records at `_acme-challenge.<name>` (a `dns.apply`
 meanwhile keeps it), and takes it away afterwards.
+
+### Mail (`mail.*`)
+
+With `lpa.json` `"mail": "on"` (the installer sets it), the agent writes the
+data Exim and Dovecot read; their configurations are the installer's. Each
+domain of the state has:
+
+- `name`, `local` (false: its MX is elsewhere; mail to it is sent there,
+  while its mailboxes still log in and send), `catchall` (empty or
+  `:fail:` refuses, `:blackhole:` discards, or an address);
+- `mailboxes`: `local`, `hash` (bcrypt only), `quota_mb` (0: none of its
+  own), and an optional `autoresponder` (`subject`, `body`, `from_name`,
+  `days` 1–30, `start` and `end` as YYYY-MM-DD);
+- `forwarders`: `local` and `to` (1–50 addresses).
+
+Local parts are lowercase letters, digits and `. _ -` (never `+`, which
+separates a tag). Forwarding addresses come from a narrow alphabet that
+can never read as a file, a pipe or a second address. A domain written for
+another account is refused (`mail_not_owner`). Domains the account no longer
+has lose their files; their mail stays in the home until `mail.purge`.
+Autoresponders are compiled with `sievec`. A suspended account's mailboxes
+get `nologin`, and Exim refuses their mail from the owner file. The
+hostname certificate is copied to `/etc/pki/lpanel-mail` at start and
+after each change, reloading Exim and Dovecot.
 
 Document roots are `public_html` or folders under it. The agent makes them
 by walking from the home with `O_NOFOLLOW` directory descriptors, so a link

@@ -1,0 +1,13 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Mail.title'|local }}</h2><p>{{ 'Mail.your_lead'|local }}</p></div>
+        <a class="btn btn-sm" href="{{ link }}">{{ 'Mail.manage'|local }}</a>
+    </div>
+    <ul class="list">
+        {% for b in mailboxes|slice(0, 6) %}
+            <li><strong class="mono">{{ b.address }}</strong><span class="muted">{{ b.used_bytes|bytes }}</span></li>
+        {% else %}
+            <li class="muted">{{ 'Mail.none'|local }}</li>
+        {% endfor %}
+    </ul>
+</div>

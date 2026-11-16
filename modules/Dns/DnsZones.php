@@ -214,6 +214,7 @@ final class DnsZones
     {
         $this->table('dns_records')->where('zone_id', $id)->delete();
         $this->table('dns_domains')->where('zone_id', $id)->delete();
+        $this->table('dns_provided')->where('zone_id', $id)->delete();
         $this->table('dns_zones')->where('id', $id)->delete();
     }
 
@@ -253,12 +254,86 @@ final class DnsZones
     }
 
     /** @param array{name: string, type: string, ttl: int, content: string} $record */
-    public function addRecord(int $zoneId, array $record, ?int $domainId = null): int
+    public function addRecord(int $zoneId, array $record, ?int $domainId = null, ?string $source = null): int
     {
         return (int) $this->table('dns_records')->insert([
             'zone_id' => $zoneId, 'name' => $record['name'], 'type' => $record['type'], 'ttl' => $record['ttl'],
-            'content' => $record['content'], 'domain_id' => $domainId, 'created_at' => Accounts::now(),
+            'content' => $record['content'], 'domain_id' => $domainId, 'source' => $source, 'created_at' => Accounts::now(),
         ], 'id');
+    }
+
+    /**
+     * Records another module keeps for one of an account's domains, in the
+     * zone that holds it (mail: the DKIM key, the DMARC policy). A set is
+     * placed once and placed again only when it changes, so the owner may
+     * edit or remove its records; a record is left out where the zone has
+     * one of its kind already (a second SPF or DMARC record would break
+     * both). The records go when the domain goes.
+     *
+     * @param array<string, mixed>                                                $domain  a row of domains
+     * @param list<array{name: string, type: string, ttl: int, content: string}> $records names in full
+     *
+     * @return int|null the zone changed, or null for none (no zone here, or nothing new)
+     */
+    public function provide(array $domain, string $source, array $records): ?int
+    {
+        $zone = $this->zoneHolding((int) $domain['account_id'], (string) $domain['name']);
+
+        if ($zone === null) {
+            return null;
+        }
+
+        $zoneId = (int) $zone['id'];
+        $domainId = (int) $domain['id'];
+        $digest = \sha1(\json_encode($records, \JSON_THROW_ON_ERROR));
+        $placed = $this->table('dns_provided')->where('zone_id', $zoneId)->where('domain_id', $domainId)->where('source', $source)->first();
+
+        if ($placed !== null && $placed['digest'] === $digest) {
+            return null;
+        }
+
+        $this->table('dns_records')->where('zone_id', $zoneId)->where('domain_id', $domainId)->where('source', $source)->delete();
+        $existing = $this->records($zoneId);
+
+        foreach ($records as $record) {
+            $name = DnsRecords::relative($record['name'], (string) $zone['name']);
+
+            if ($name === null || \array_filter($existing, static fn(array $r): bool => $r['name'] === $name && self::sameKind($r, $record)) !== []) {
+                continue;
+            }
+
+            $this->addRecord($zoneId, ['name' => $name] + $record, $domainId, $source);
+        }
+
+        if ($placed === null) {
+            $this->table('dns_provided')->insert(['zone_id' => $zoneId, 'domain_id' => $domainId, 'source' => $source, 'digest' => $digest]);
+        } else {
+            $this->table('dns_provided')->where('id', (int) $placed['id'])->update(['digest' => $digest]);
+        }
+
+        return $zoneId;
+    }
+
+    /**
+     * Two records of the same kind at one name: the same type, and for TXT
+     * the same leading tag ("v=spf1", "v=DMARC1", "v=DKIM1").
+     *
+     * @param array<string, mixed> $a
+     * @param array<string, mixed> $b
+     */
+    private static function sameKind(array $a, array $b): bool
+    {
+        if ($a['type'] !== $b['type']) {
+            return false;
+        }
+
+        if ($a['type'] !== 'TXT') {
+            return true;
+        }
+
+        $tag = static fn(mixed $content): string => \strtolower((string) \preg_replace('/[\s;].*$/s', '', \trim((string) $content)));
+
+        return $tag($a['content']) === $tag($b['content']);
     }
 
     /** @param array{name: string, type: string, ttl: int, content: string} $record */
@@ -296,6 +371,8 @@ final class DnsZones
     {
         $id = (int) $zone['id'];
         $this->table('dns_records')->where('zone_id', $id)->delete();
+        // Other modules' records go too; they place them again (dns.zone_reset).
+        $this->table('dns_provided')->where('zone_id', $id)->delete();
         $ips = $this->addresses();
 
         foreach (DnsRecords::expand($this->templateFor($ownerId), (string) $zone['name'], $ips['ip4'], $ips['ip6']) as $record) {
@@ -376,6 +453,7 @@ final class DnsZones
         foreach ($made as $domainId => $row) {
             if (!isset($domains[$domainId])) {
                 $this->table('dns_records')->where('domain_id', $domainId)->delete();
+                $this->table('dns_provided')->where('domain_id', $domainId)->delete();
                 $this->table('dns_domains')->where('id', (int) $row['id'])->delete();
                 $touched[(int) $row['zone_id']] = true;
             }

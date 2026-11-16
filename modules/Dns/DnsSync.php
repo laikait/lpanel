@@ -96,6 +96,20 @@ final class DnsSync
     }
 
     /**
+     * Keep another module's records for one of an account's domains in its
+     * zone (DnsZones::provide), and send the zone when they changed.
+     *
+     * @param array<string, mixed>                                                $domain  a row of domains
+     * @param list<array{name: string, type: string, ttl: int, content: string}> $records names in full
+     */
+    public function provide(array $domain, string $source, array $records): DnsOutcome
+    {
+        $zoneId = $this->zones->provide($domain, $source, $records);
+
+        return $zoneId === null ? DnsOutcome::skipped() : $this->touch($zoneId);
+    }
+
+    /**
      * Send every zone again whose state changed: after nameservers, the
      * server's addresses or a template's glue changed.
      *

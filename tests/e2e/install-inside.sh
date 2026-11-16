@@ -611,9 +611,10 @@ t_dns_refused() { ! lpanel dns:add shop.example.test x A 999.1.1.1 2>/dev/null &
 t_dns_set()     { lpanel dns:set shop.example.test "$(zid shop.example.test api A)" --content=192.0.2.45 && [ "$(q api.shop.example.test A)" = 192.0.2.45 ] \
                   && lpanel dns:remove shop.example.test "$(zid shop.example.test api A)" && [ -z "$(q api.shop.example.test A)" ]; }
 t_serial()      { local a b; a=$(q shop.example.test SOA | awk '{print $3}'); lpanel dns:add shop.example.test tick TXT tock >/dev/null; b=$(q shop.example.test SOA | awk '{print $3}'); [ "$b" -gt "$a" ]; }
-t_owner_page()  { [ "$(signin_as 7444 /panel shop1 Owner-Pass-Word-1)" = "303 https://127.0.0.1:7444/panel" ] \
-                  && curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/dns -o /tmp/dnslist.html && grep -q 'other.example.test' /tmp/dnslist.html \
-                  && curl -ks -b /tmp/jar2 "https://127.0.0.1:7444/panel/dns/$(mariadb -uroot -N lpanel -e "select id from dns_zones where name='shop.example.test'")" | grep -q 'v=spf1 a mx ~all'; }
+t_owner_page()  { local got; got=$(signin_as 7444 /panel shop1 Owner-Pass-Word-1); echo "sign-in: $got"; [ "$got" = "303 https://127.0.0.1:7444/panel" ] \
+                  && curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/dns -o /tmp/dnslist.html -w 'list: %{http_code}\n' && grep -q 'other.example.test' /tmp/dnslist.html \
+                  && curl -ks -b /tmp/jar2 "https://127.0.0.1:7444/panel/dns/$(mariadb -uroot -N lpanel -e "select id from dns_zones where name='shop.example.test'")" -o /tmp/dnszone.html -w 'zone: %{http_code}\n' \
+                  && { grep -q 'v=spf1 a mx ~all' /tmp/dnszone.html || { grep -o 'v=spf1[^<]*' /tmp/dnszone.html; grep -o '<title>[^<]*' /tmp/dnszone.html; false; }; }; }
 t_owner_add()   { local id page tok; id=$(mariadb -uroot -N lpanel -e "select id from dns_zones where name='shop.example.test'")
                   curl -ks -b /tmp/jar2 -c /tmp/jar2 "https://127.0.0.1:7444/panel/dns/$id" -o /tmp/zone.html
                   curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null --data-urlencode "_token=$(token /tmp/zone.html)" -d name=owner -d type=A -d content=192.0.2.66 -d ttl=300 "https://127.0.0.1:7444/panel/dns/$id/records"
@@ -677,6 +678,188 @@ acme https://127.0.0.1:14000/dir
 lpanel domains:set shop1 shop.example.test --wildcard=no >/dev/null
 
 # Each stack switches to another, and every site moves with it.
+echo "== mail (Exim, Dovecot)"
+dnf -y -q install swaks python3-dkimpy >/dev/null 2>&1 || dnf -y -q install swaks python3-dkimpy >/dev/null 2>&1
+MIP=$(hostname -I | tr ' ' '\n' | grep -m1 -E '^[0-9]+(\.[0-9]+){3}$')   # this machine's own address: not a relay host
+MPW='Mail-Pass-Word-1'
+# Outgoing mail goes to a catcher on this machine (the relay host), which
+# keeps each message whole in /tmp/caught.
+mkdir -p /tmp/caught
+cat > /tmp/catcher.py <<'PY'
+import socket, os
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", 2526)); s.listen(5)
+n = 0
+while True:
+    c, _ = s.accept(); f = c.makefile("rwb")
+    def out(x): f.write(x.encode() + b"\r\n"); f.flush()
+    out("220 catcher")
+    while True:
+        line = f.readline()
+        if not line: break
+        u = line.decode(errors="replace").strip().upper()
+        if u.startswith("EHLO") or u.startswith("HELO"): out("250 catcher")
+        elif u == "DATA":
+            out("354 go"); buf = b""
+            while True:
+                l = f.readline()
+                if l in (b".\r\n", b".\n", b""): break
+                buf += l[1:] if l.startswith(b"..") else l
+            n += 1; open("/tmp/caught/%03d.eml" % n, "wb").write(buf); out("250 OK")
+        elif u == "QUIT": out("221 bye"); break
+        else: out("250 OK")
+    c.close()
+PY
+nohup python3 /tmp/catcher.py >/tmp/catcher.log 2>&1 &
+cat > /tmp/imap.py <<'PY'
+import imaplib, poplib, ssl, sys
+ctx = ssl.create_default_context(); ctx.check_hostname = False; ctx.verify_mode = ssl.CERT_NONE
+proto, host, user, pw = sys.argv[1:5]
+try:
+    if proto == "imaps":
+        c = imaplib.IMAP4_SSL(host, 993, ssl_context=ctx); c.login(user, pw); print(c.status("INBOX", "(MESSAGES)")[1][0].decode()); c.logout()
+    elif proto == "imap":
+        c = imaplib.IMAP4(host, 143); c.login(user, pw); print("logged in without TLS"); c.logout()
+    elif proto == "imap-starttls":
+        c = imaplib.IMAP4(host, 143); c.starttls(ssl_context=ctx); c.login(user, pw); print("logged in after STARTTLS"); c.logout()
+    elif proto == "pop3s":
+        p = poplib.POP3_SSL(host, 995, context=ctx); p.user(user); p.pass_(pw); print("messages", p.stat()[0]); p.quit()
+except Exception as e:
+    print("refused:", e); sys.exit(1)
+PY
+cat > /tmp/dkim-check.py <<'PY'
+import dkim, subprocess, sys
+def dns(name, timeout=5):
+    out = subprocess.run(["dig", "@127.0.0.1", "+short", "+norecurse", "TXT", name.decode().rstrip(".")], capture_output=True, text=True).stdout
+    return "".join(part for line in out.splitlines() for part in line.split('"')[1::2]).encode()
+msg = open(sys.argv[1], "rb").read()
+sys.exit(0 if dkim.verify(msg, dnsfunc=dns) else 1)
+PY
+sw() { swaks --helo e2e-client.test --timeout 20 "$@" > /tmp/swaks.out 2>&1; local c=$?; grep -E '^ *<[~*-]* *[0-9]{3}[ -]' /tmp/swaks.out | tail -4 >&2; return $c; }
+refused() { ! sw "$@" && grep -qE "^ *<[~*]* *$WANT" /tmp/swaks.out; }   # WANT: the refusal's code and words
+caught() { grep -l "$1" /tmp/caught/*.eml 2>/dev/null | tail -1; }
+waitfor() { for _ in $(seq 120); do eval "$1" && return 0; sleep 0.5; done; eval "$1"; }
+maildir() { echo "/home/$1/mail/$2/$3/Maildir"; }
+count_new() { find "$(maildir "$1" "$2" "$3")"/new "$(maildir "$1" "$2" "$3")"/cur -type f 2>/dev/null | wc -l; }
+lpanel packages:create Mailer --disk=50 >/dev/null
+echo "Owner-Pass-Word-9" | lpanel accounts:create shop9 nine.example.test Mailer >/dev/null
+lpanel mail:settings --smarthost 127.0.0.1:2526 >/dev/null
+export MIP MPW WANT
+export -f sw refused caught waitfor maildir count_new
+
+t_mail_up()     { systemctl is-active --quiet exim dovecot && for p in 25 465 587 143 993 110 995; do ss -ltn | grep -qE "[:.]$p " || { echo "nothing on $p"; return 1; }; done \
+                  && lpanel mail:info > /tmp/mi.out && grep -qE 'Exim +running 4\.' /tmp/mi.out && grep -qE 'Dovecot +running 2\.' /tmp/mi.out; }
+t_mail_files()  { stat -c '%a %U %G %n' /etc/pki/lpanel-mail/host.key /etc/exim/lpanel/dkim /etc/dovecot/lpanel/passwd.d; grep mail /etc/lpa/lpa.json
+                  openssl x509 -in /etc/pki/lpanel-mail/host.crt -noout -serial; openssl x509 -in /etc/lpanel/tls/panel.crt -noout -serial; echo | openssl s_client -connect 127.0.0.1:993 2>/dev/null | openssl x509 -noout -serial
+                  [ "$(stat -c '%a %U %G' /etc/pki/lpanel-mail/host.key)" = "640 root exim" ] && [ "$(stat -c '%a %U %G' /etc/exim/lpanel/dkim)" = "750 root exim" ] \
+                  && [ "$(stat -c '%a %U %G' /etc/dovecot/lpanel/passwd.d)" = "750 root dovecot" ] && grep -q '"mail": "on"' /etc/lpa/lpa.json \
+                  && [ "$(openssl x509 -in /etc/pki/lpanel-mail/host.crt -noout -serial)" = "$(openssl x509 -in /etc/lpanel/tls/panel.crt -noout -serial)" ] \
+                  && echo | openssl s_client -connect 127.0.0.1:993 2>/dev/null | openssl x509 -noout -serial | grep -qx "$(openssl x509 -in /etc/lpanel/tls/panel.crt -noout -serial)"; }
+t_mail_domains() { grep -qx 'owner: shop9' /etc/exim/lpanel/owners/nine.example.test && grep -qx 'owner: shop1' /etc/exim/lpanel/owners/other.example.test \
+                  && grep -qx 'owner: shop1' /etc/exim/lpanel/owners/blog.shop.example.test && [ "$(stat -c '%a %U %G' /etc/exim/lpanel/dkim/nine.example.test)" = "640 root exim" ]; }
+t_mail_dns()    { local want; want=$(openssl pkey -in /etc/exim/lpanel/dkim/nine.example.test -pubout -outform DER | base64 -w0)
+                  dig @127.0.0.1 +short +norecurse TXT default._domainkey.nine.example.test | tr -d '" \n' | grep -q "p=$want" \
+                  && [ "$(dig @127.0.0.1 +short +norecurse TXT _dmarc.nine.example.test)" = '"v=DMARC1; p=none"' ] \
+                  && dig @127.0.0.1 +short +norecurse TXT blog.shop.example.test | grep -q 'v=spf1 a mx ~all'; }
+t_mail_create() { echo "$MPW" | lpanel mail:create shop9 info@nine.example.test --quota=1 && echo "$MPW" | lpanel mail:create shop9 bob@nine.example.test --quota=0 \
+                  && echo "$MPW" | lpanel mail:create shop3 sender@three.example.test \
+                  && grep -q '^info:{BLF-CRYPT}\$2y\$' /etc/dovecot/lpanel/passwd.d/nine.example.test && ! grep -rq "$MPW" /etc/dovecot/lpanel /etc/exim/lpanel \
+                  && [ "$(stat -c '%a %U %G' /etc/dovecot/lpanel/passwd.d/nine.example.test)" = "640 root dovecot" ] && grep -qx 'info: shop9' /etc/exim/lpanel/mailboxes/nine.example.test; }
+t_mail_in()     { sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "hello info" \
+                  && waitfor '[ "$(count_new shop9 nine.example.test info)" = 1 ]' && grep -rq "hello info" "$(maildir shop9 nine.example.test info)" \
+                  && [ "$(stat -c %U "$(maildir shop9 nine.example.test info)")" = shop9 ]; }
+t_mail_imap()   { python3 /tmp/imap.py imaps 127.0.0.1 info@nine.example.test "$MPW" | grep -q 'MESSAGES 1' && python3 /tmp/imap.py pop3s 127.0.0.1 INFO@Nine.Example.Test "$MPW" | grep -q 'messages 1' \
+                  && ! python3 /tmp/imap.py imaps 127.0.0.1 info@nine.example.test wrong-password && ! python3 /tmp/imap.py imaps 127.0.0.1 shop9 Owner-Pass-Word-9 \
+                  && ! python3 /tmp/imap.py imaps 127.0.0.1 root "$ROOT_PASSWORD"; }
+# Dovecot counts a connection from the machine's own address as secure, so
+# its refusal of passwords before TLS is checked in its configuration.
+t_mail_plain()  { doveconf -h disable_plaintext_auth | grep -qx yes && doveconf -h ssl | grep -qx required && python3 /tmp/imap.py imap-starttls "$MIP" info@nine.example.test "$MPW" \
+                  && ! swaks --helo x -s "$MIP" -p 587 --quit-after EHLO 2>&1 | grep -q '250-AUTH'; }
+t_mail_out()    { sw -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@nine.example.test --auth-password "$MPW" --from info@nine.example.test --to someone@example.net --h-From '"Info" <info@nine.example.test>' --h-Subject "out 587" \
+                  && sw -s "$MIP" -p 465 -tlsc --auth LOGIN --auth-user bob@nine.example.test --auth-password "$MPW" --from bob@nine.example.test --to someone@example.net --h-Subject "out 465" \
+                  && waitfor '[ -n "$(caught "out 587")" ] && [ -n "$(caught "out 465")" ]'; }
+t_mail_dkim()   { python3 /tmp/dkim-check.py "$(caught 'out 587')" && grep -q 'd=nine.example.test; s=default' "$(caught 'out 587')"; }
+t_mail_site()   { su -s /bin/bash shop9 -c 'printf "From: info@nine.example.test\nTo: a@example.net\nSubject: from php\n\nhi\n" | /usr/sbin/sendmail -t' \
+                  && su -s /bin/bash shop3 -c 'printf "From: info@nine.example.test\nTo: a@example.net\nSubject: forged by shop3\n\nhi\n" | /usr/sbin/sendmail -t' \
+                  && waitfor '[ -n "$(caught "from php")" ] && [ -n "$(caught "forged by shop3")" ]' \
+                  && python3 /tmp/dkim-check.py "$(caught 'from php')" && ! grep -q '^DKIM-Signature' "$(caught 'forged by shop3')"; }
+t_mail_noauth() { WANT='550 Log in' refused -s "$MIP" -p 587 -tls --from info@nine.example.test --to someone@example.net \
+                  && WANT='550 relay not permitted' refused -s "$MIP" -p 25 --from sender@three.example.test --to someone@example.net \
+                  && WANT='535' refused -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@nine.example.test --auth-password wrong-password --from info@nine.example.test --to someone@example.net; }
+t_mail_spoof()  { WANT='550 sender@three.example.test is not an address of your account' refused -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@nine.example.test --auth-password "$MPW" --from sender@three.example.test --to someone@example.net \
+                  && WANT='550 The From: address belongs to another account' refused -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@nine.example.test --auth-password "$MPW" --from info@nine.example.test --h-From sender@three.example.test --to someone@example.net; }
+t_mail_unknown() { WANT='550' refused -s "$MIP" -p 25 --from sender@three.example.test --to nobody@nine.example.test \
+                  && lpanel mail:domain shop9 nine.example.test --catchall=bob@nine.example.test >/dev/null && sw -s "$MIP" -p 25 --from sender@three.example.test --to nobody@nine.example.test --h-Subject "to anyone" \
+                  && waitfor 'grep -rq "to anyone" "$(maildir shop9 nine.example.test bob)"' && lpanel mail:domain shop9 nine.example.test --catchall=refuse >/dev/null; }
+t_mail_plus()   { sw -s "$MIP" -p 25 --from sender@three.example.test --to info+news@nine.example.test --h-Subject "tagged" && waitfor 'grep -rq "tagged" "$(maildir shop9 nine.example.test info)"'; }
+t_mail_forward() { lpanel mail:forward shop9 info@nine.example.test boss@example.net >/dev/null && lpanel mail:forward shop9 sales@nine.example.test bob@nine.example.test >/dev/null \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "copy please" \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to sales@nine.example.test --h-Subject "for sales" \
+                  && waitfor 'grep -rq "copy please" "$(maildir shop9 nine.example.test info)" && [ -n "$(caught "copy please")" ] && grep -rq "for sales" "$(maildir shop9 nine.example.test bob)"' \
+                  && lpanel mail:unforward shop9 info@nine.example.test boss@example.net >/dev/null; }
+t_mail_reply()  { printf 'Back on Monday.\nInfo' | lpanel mail:responder shop9 info@nine.example.test --subject="Away now" --days=2 >/dev/null \
+                  && [ -s /etc/dovecot/lpanel/sieve/nine.example.test/info.svbin ] && [ "$(stat -c '%a %U %G' /etc/dovecot/lpanel/sieve/nine.example.test/info.sieve)" = "640 root shop9" ] \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "are you there" \
+                  && waitfor 'grep -rlq "Away now" "$(maildir shop3 three.example.test sender)"' \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "still there" && sleep 3 \
+                  && [ "$(grep -l "Away now" "$(maildir shop3 three.example.test sender)"/new/* "$(maildir shop3 three.example.test sender)"/cur/* 2>/dev/null | wc -l)" = 1 ] && lpanel mail:responder shop9 info@nine.example.test --off >/dev/null \
+                  && [ ! -e /etc/dovecot/lpanel/sieve/nine.example.test ]; }
+t_mail_full()   { local before; before=$(count_new shop9 nine.example.test info); head -c 1500000 /dev/urandom | base64 > /tmp/big.txt \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --attach @/tmp/big.txt --h-Subject "too big" \
+                  && waitfor 'grep -q "info@nine.example.test.*Quota exceeded\|info@nine.example.test.*Mailbox is full\|info@nine.example.test.*quota" /var/log/exim/main.log' \
+                  && [ "$(count_new shop9 nine.example.test info)" = "$before" ]; }
+t_mail_usage()  { (cd /usr/local/lpanel && runuser -u lpanel -- env APP_DEBUG=1 php83 laika mail:usage) && [ "$(mariadb -uroot -N lpanel -e "select used_bytes > 0 from mail_boxes b join mail_domains d on d.id = b.mail_domain_id where d.name = 'nine.example.test' and b.local = 'info'")" = 1 ] \
+                  && lpanel mail:list shop9 > /tmp/ml.out && grep -qE '^info@nine.example.test +[0-9.]+ (B|KB|MB)' /tmp/ml.out; }
+t_mail_suspend() { lpanel accounts:suspend shop9 >/dev/null && grep -qx 'suspended: yes' /etc/exim/lpanel/owners/nine.example.test && sleep 1.2 \
+                  && ! python3 /tmp/imap.py imaps 127.0.0.1 info@nine.example.test "$MPW" \
+                  && WANT='550 This account is suspended' refused -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@nine.example.test --auth-password "$MPW" --from info@nine.example.test --to someone@example.net \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to bob@nine.example.test --h-Subject "while away" && waitfor 'grep -rq "while away" "$(maildir shop9 nine.example.test bob)"' \
+                  && lpanel accounts:unsuspend shop9 >/dev/null && sleep 1.2 && python3 /tmp/imap.py imaps 127.0.0.1 info@nine.example.test "$MPW" >/dev/null
+                  local r=$?; lpanel accounts:unsuspend shop9 >/dev/null 2>&1; return $r; }
+t_mail_panel()  { [ "$(signin_as 7444 /panel shop9 Owner-Pass-Word-9)" = "303 https://127.0.0.1:7444/panel" ] \
+                  && curl -ks -b /tmp/jar2 -c /tmp/jar2 https://127.0.0.1:7444/panel/email -o /tmp/email.html && grep -q 'info@nine.example.test' /tmp/email.html && grep -q 'e2e-panel.test' /tmp/email.html \
+                  && local did; did=$(mariadb -uroot -N lpanel -e "select id from mail_domains where name='nine.example.test'") \
+                  && curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null --data-urlencode "_token=$(token /tmp/email.html)" -d local=web -d "domain=$did" -d "password=$MPW" -d quota=10 https://127.0.0.1:7444/panel/email/mailboxes \
+                  && grep -qx 'web: shop9' /etc/exim/lpanel/mailboxes/nine.example.test; }
+t_mail_api()    { [ "$(api -o /tmp/mapi.json -w '%{http_code}' https://127.0.0.1:7443/admin/api/v1/accounts/shop9/email)" = 200 ] && grep -q '"address":"web@nine.example.test"' /tmp/mapi.json \
+                  && [ "$(api -o /dev/null -w '%{http_code}' -X DELETE https://127.0.0.1:7443/admin/api/v1/accounts/shop9/email/mailboxes/web@nine.example.test)" = 204 ] \
+                  && ! grep -q '^web' /etc/exim/lpanel/mailboxes/nine.example.test; }
+t_mail_delete() { [ -d "$(maildir shop9 nine.example.test bob)" ] && lpanel mail:delete shop9 bob@nine.example.test --yes >/dev/null \
+                  && waitfor '[ ! -e /home/shop9/mail/nine.example.test/bob ]' && ! grep -q '^bob:' /etc/dovecot/lpanel/passwd.d/nine.example.test; }
+t_mail_gone()   { lpanel accounts:terminate shop9 --yes >/dev/null \
+                  && for _ in $(seq 60); do getent passwd shop9 >/dev/null || break; lpanel accounts:settle >/dev/null; sleep 2; done \
+                  && lpanel accounts:settle >/dev/null && [ ! -e /etc/exim/lpanel/owners/nine.example.test ] && [ ! -e /etc/dovecot/lpanel/passwd.d/nine.example.test ] \
+                  && [ ! -e /etc/exim/lpanel/dkim/nine.example.test ] && [ "$(mariadb -uroot -N lpanel -e "select count(*) from mail_domains where name = 'nine.example.test'")" = 0 ]; }
+t_mail_audit()  { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'mail.%'" | tr '\n' ' '); echo "$got" >&2
+                  for want in mail.mailbox_create:ok mail.mailbox_delete:ok mail.forwarder_add:ok mail.forwarder_remove:ok mail.responder_on:ok mail.responder_off:ok mail.domain_settings:ok mail.settings:ok; do
+                      grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
+                  done; }
+check "Exim and Dovecot run, on every mail port" t_mail_up
+check "their data is root's, readable by each server's group; TLS is the hostname's certificate" t_mail_files
+check "every domain of every account is a mail domain, with its own DKIM key" t_mail_domains
+check "the DKIM key and DMARC policy are in the zone, SPF for a subdomain" t_mail_dns
+check "lpanel mail:create: mailboxes, and only a bcrypt hash on the server" t_mail_create
+check "mail from another server reaches the mailbox, owned by the account" t_mail_in
+check "IMAP and POP3 over TLS; a wrong password, a system user and root are refused" t_mail_imap
+check "no password before TLS from outside; STARTTLS works" t_mail_plain
+check "a mailbox sends on 587 and 465 after logging in" t_mail_out
+check "its mail is signed with the domain's key, and verifies against the zone" t_mail_dkim
+check "a site's own mail is signed; another account's forgery is not" t_mail_site
+check "no sending without a login, no relaying, no wrong password" t_mail_noauth
+check "a mailbox cannot send as another account's address" t_mail_spoof
+check "unknown addresses are refused, or go to the catch-all" t_mail_unknown
+check "info+tag@ reaches info@" t_mail_plus
+check "forwarders: a copy stays in the mailbox, one goes on" t_mail_forward
+check "an autoresponder answers once per sender, and goes away" t_mail_reply
+check "a full mailbox refuses mail" t_mail_full
+check "lpanel mail:usage measures each mailbox" t_mail_usage
+check "a suspended account receives mail but cannot log in or send" t_mail_suspend
+check "the owner sees the mailboxes and makes one in the User panel" t_mail_panel
+check "the API lists and deletes mailboxes" t_mail_api
+check "a deleted mailbox's mail is deleted" t_mail_delete
+check "terminating an account removes its mail" t_mail_gone
+check "mail changes are in the audit log" t_mail_audit
+lpanel mail:settings --smarthost none >/dev/null
+
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"
 t_switched() {

@@ -82,7 +82,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites)"
+step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim and Dovecot)"
 
 rpm -q epel-release >/dev/null 2>&1 || dnf -y -q install epel-release
 rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
@@ -90,7 +90,8 @@ dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
     php83-php-pdo php83-php-mysqlnd php83-php-process php83-php-opcache php83-php-xml \
     mariadb-server nginx httpd mod_ssl openssl policycoreutils-python-utils procps-ng iproute logrotate \
-    pdns pdns-backend-mysql bind-utils
+    pdns pdns-backend-mysql bind-utils \
+    exim dovecot dovecot-pigeonhole
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -397,6 +398,39 @@ $PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true)
 note "$(pdns_server --version 2>&1 | grep -o 'PowerDNS Authoritative Server [0-9.]*' | head -1), answering on port 53"
 
 # ---------------------------------------------------------------------------
+step "Mail (Exim and Dovecot)"
+# Exim takes port 25 and the sendmail command; another mail server would
+# hold them.
+for mta in postfix sendmail; do
+    if systemctl is-enabled --quiet "$mta" 2>/dev/null || systemctl is-active --quiet "$mta" 2>/dev/null; then
+        systemctl disable -q --now "$mta" && note "$mta stopped: Exim receives and sends mail now"
+    fi
+done
+alternatives --set mta /usr/sbin/sendmail.exim >/dev/null 2>&1 || true
+# The servers' own configurations, whole; accounts' mail is data the agent
+# writes into the folders below (design/ARCHITECTURE.md, "Mail").
+install -m 0644 "$BUNDLE/packaging/exim.conf" /etc/exim/exim.conf
+sed "s/LPANEL_HOSTNAME/$HOST/" "$BUNDLE/packaging/dovecot.conf" > /etc/dovecot/dovecot.conf
+chmod 0644 /etc/dovecot/dovecot.conf
+install -d -m 0750 -o root -g exim /etc/exim/lpanel /etc/exim/lpanel/owners /etc/exim/lpanel/local \
+    /etc/exim/lpanel/mailboxes /etc/exim/lpanel/forwards /etc/exim/lpanel/dkim
+install -d -m 0750 -o root -g dovecot /etc/dovecot/lpanel /etc/dovecot/lpanel/passwd.d
+install -d -m 0755 -o root -g root /etc/dovecot/lpanel/sieve
+# The hostname certificate, readable by Exim's group (Exim reads it as its
+# own user; /etc/pki/lpanel itself is root's alone). The agent copies it
+# again whenever it changes.
+install -d -m 0750 -o root -g exim /etc/pki/lpanel-mail
+install -m 0640 -o root -g exim /etc/lpanel/tls/panel.crt /etc/pki/lpanel-mail/host.crt
+install -m 0640 -o root -g exim /etc/lpanel/tls/panel.key /etc/pki/lpanel-mail/host.key
+exim -bV >/dev/null || die "Exim refused its configuration (exim -bV)"
+doveconf -n >/dev/null || die "Dovecot refused its configuration (doveconf -n)"
+$PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
+    $c["mail"] = "on";
+    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+systemctl enable -q exim dovecot && systemctl restart exim dovecot
+note "$(exim -bV | head -1 | awk '{print "Exim", $3}'), Dovecot $(dovecot --version | awk '{print $1}'): SMTP 25, 465, 587; IMAP 993, 143; POP3 995, 110"
+
+# ---------------------------------------------------------------------------
 step "Services"
 
 for unit in lpa.service lpanel-authd.service lpanel-authd.socket lpanel-php-fpm.service \
@@ -411,12 +445,12 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     # booleans customers' sites need. Installed in permissive mode too, so
     # switching to enforcing later needs nothing more.
     bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
-    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma
+    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma /etc/exim /etc/dovecot /etc/pki/lpanel-mail
     install -d -m 0755 /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
     for d in /etc/nginx/lpanel /var/log/nginx/lpanel /etc/nginx/nginx.conf; do
         if [ -e "$d" ]; then restorecon -R "$d"; fi
     done
-    for d in "$HOMES"/*/public_html "$HOMES"/*/tmp "$HOMES"/*/logs; do
+    for d in "$HOMES"/*/public_html "$HOMES"/*/tmp "$HOMES"/*/logs "$HOMES"/*/mail; do
         if [ -d "$d" ]; then restorecon -R "$d"; fi
     done
     for d in /run/lpa /run/lpanel /run/lpanel-nginx /run/lpanel-authd; do
@@ -426,9 +460,11 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
 fi
 
 if systemctl is-active --quiet firewalld; then
-    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-service=http --add-service=https --add-service=dns
+    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-service=http --add-service=https --add-service=dns \
+        --add-service=smtp --add-service=smtps --add-service=smtp-submission \
+        --add-service=imap --add-service=imaps --add-service=pop3 --add-service=pop3s
     firewall-cmd -q --reload
-    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS) open"
+    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS), mail (25, 465, 587, 143, 993, 110, 995) open"
 fi
 
 step "Database tables"
@@ -454,6 +490,9 @@ if runuser -u lpanel -- $PHP "$PANEL/laika" dns:settings 2>/dev/null | grep -q '
     [ -n "$IP4" ] && runuser -u lpanel -- $PHP "$PANEL/laika" dns:settings --ip "$IP4" >/dev/null && note "new zones point at $IP4"
 fi
 runuser -u lpanel -- $PHP "$PANEL/laika" dns:sync >/dev/null || note "some zones are not on the DNS server yet; dns:settle retries them every minute"
+# Mail: every account's domains (accounts made before mail came), their
+# DKIM keys and DNS records.
+runuser -u lpanel -- $PHP "$PANEL/laika" mail:sync --all >/dev/null || note "some accounts' mail is not on the server yet; mail:settle retries it every minute"
 
 # After a switch of stack, every account's sites are written for the new one
 # (the agent also removes the old stack's files).

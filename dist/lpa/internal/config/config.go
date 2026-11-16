@@ -48,6 +48,9 @@ type Config struct {
 	// DNS is the server's PowerDNS; without an API address the DNS
 	// operations are off.
 	DNS DNS `json:"dns"`
+	// Mail is "on" when the installer set up Exim and Dovecot; "off" turns
+	// the mail operations off.
+	Mail string `json:"mail"`
 }
 
 // DNS is lpa.json's "dns".
@@ -83,6 +86,7 @@ func Defaults() Config {
 		Quota:        "on",
 		Web:          "apache",
 		PanelPHP:     "83",
+		Mail:         "off",
 		ACME: ACME{
 			LetsEncrypt: "https://acme-v02.api.letsencrypt.org/directory",
 			ZeroSSL:     "https://acme.zerossl.com/v2/DV90",
@@ -128,6 +132,9 @@ func (c Config) validate() error {
 	case "apache", "nginx", "hybrid", "off":
 	default:
 		return fmt.Errorf("web must be \"apache\", \"nginx\", \"hybrid\" or \"off\", not %q", c.Web)
+	}
+	if c.Mail != "on" && c.Mail != "off" {
+		return fmt.Errorf("mail must be \"on\" or \"off\", not %q", c.Mail)
 	}
 	if len(c.PanelPHP) != 2 || c.PanelPHP < "50" || c.PanelPHP > "89" || strings.Trim(c.PanelPHP, "0123456789") != "" {
 		return fmt.Errorf("panel_php must be two digits such as \"83\", not %q", c.PanelPHP)

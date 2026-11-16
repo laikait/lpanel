@@ -69,7 +69,7 @@ under `modules/`. The framework in `engine/` is not edited.
 | `Ssl` | AutoSSL, certificates |
 | `Databases` | MariaDB DBs/users, phpMyAdmin SSO |
 | `Dns` | PowerDNS zones and templates |
-| `Mail` | mailboxes, forwarders, filters, DKIM, queue |
+| `Mail` | mail domains (every domain of an account), mailboxes, forwarders, catch-alls, autoresponders, DKIM, the relay host; later filters and the queue |
 | `Files` | file manager, FTP, SSH keys |
 | `Backups` | schedules, destinations, restore |
 | `Security` | firewall, brute force, ModSecurity |
@@ -141,6 +141,31 @@ come from the nameservers of whoever the zone belongs to (the account's
 reseller, or the server), so changing nameservers changes every zone at
 once. For a wildcard certificate, the agent answers the DNS-01 check in the
 account's own zone.
+
+Mail (M6) follows them too, with one difference: Exim and Dovecot run from
+configurations the installer writes once, and the agent writes only their
+data, one file a domain, which both read on every lookup. So no mail change
+reloads anything. `mail.apply` takes an account's whole mail state:
+
+- `/etc/exim/lpanel/{owners,local,mailboxes,forwards,dkim}/<domain>`:
+  which account a domain belongs to (and whether it is suspended), whether
+  its mail is delivered here, its mailboxes, its forwarders and catch-all,
+  and its DKIM private key (made by the agent when missing);
+- `/etc/dovecot/lpanel/passwd.d/<domain>`: each mailbox's bcrypt hash, the
+  account's uid and gid, its home and quota;
+- `/etc/dovecot/lpanel/sieve/<domain>/<local>.sieve`: autoresponders,
+  compiled by the agent, readable by the account's group only.
+
+Exim finds a domain's files with `dsearch`, which answers only with a name
+that is in the folder, so a name from a message never becomes part of a
+path. Exim hands local mail to Dovecot over LMTP and checks logins through
+Dovecot's auth socket. Mail is kept in the account's home
+(`~/mail/<domain>/<local>/Maildir`), written as the account's user, so it
+counts against the account's disk space. `mail.apply` never deletes mail:
+`mail.purge` does, once the mailbox is no longer set up. The DKIM public key
+comes back in the answer; the panel publishes it, with a DMARC policy, in
+the account's zone through the DNS module's "provided records", which the
+owner may still edit or remove.
 
 Certificates (M3) follow the same lines. The agent makes every key itself
 and keeps it. `ssl.issue`:
@@ -235,6 +260,10 @@ user, not from SELinux.
 | `/var/lib/lpanel-pma/{sessions,tmp,log}/` | phpMyAdmin's sessions, temporary files and PHP error log (0700 lpanel-pma) |
 | `/etc/pdns/pdns.conf` | PowerDNS: the MySQL backend (database `pdns`), port 53 on every address, the API on 127.0.0.1:8081 (0640 root:pdns) |
 | `/etc/lpa/pdns.key` | PowerDNS's API key, the agent's alone (0600 root) |
+| `/etc/exim/exim.conf`, `/etc/dovecot/dovecot.conf` | the mail servers' configurations, written by the installer whole |
+| `/etc/exim/lpanel/` | accounts' mail data for Exim (lpa; 0750 root:exim): owners, local, mailboxes, forwards, dkim, smarthost |
+| `/etc/dovecot/lpanel/` | mailbox logins (`passwd.d`, 0750 root:dovecot) and autoresponders (`sieve/<domain>`, root:account group) |
+| `/etc/pki/lpanel-mail/` | the hostname certificate's copy for Exim and Dovecot (0640 root:exim), refreshed by lpa when it changes |
 | `/var/lib/mysql/<user>_<name>/` | each account database's files, owned by MariaDB; their size comes off the home's quota |
 | `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444) |
 | `/etc/lpanel/authd.json`, `/etc/pam.d/lpanel` | root sign-in: who may be checked, and the PAM stack used |
@@ -257,9 +286,10 @@ user, not from SELinux.
 | `/etc/logrotate.d/lpanel` | rotates the accounts' Apache and nginx logs daily and the panel's weekly |
 | `/home/<user>/public_html/` | every site's folder is this or one below it (0750 with the web server's group, `httpd_user_rw_content_t`) |
 | `/home/<user>/tmp/`, `/home/<user>/logs/` | the account's PHP sessions and uploads, and its PHP error log |
+| `/home/<user>/mail/<domain>/<local>/` | a mailbox's home and Maildir, written by Dovecot as the account's user (`mail_home_rw_t`) |
 
 Services: `lpa`, `lpanel-authd.socket` (socket-activated), `lpanel-php-fpm`,
-`lpanel-nginx`, `lpanel-scheduler.timer` (every minute), `mariadb` and `pdns`. For
+`lpanel-nginx`, `lpanel-scheduler.timer` (every minute), `mariadb`, `pdns`, `exim` and `dovecot`. For
 customers' sites: `httpd`, and `php<XY>-php-fpm` for each PHP version in use.
 The agent enables each of those when an account first uses it, and stops a
 version left with no pools. The stock `nginx` service stays off; the panel

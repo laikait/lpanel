@@ -142,9 +142,9 @@ packages in a fresh container.
 ```bash
 dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
-dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (53 checks)
+dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (71 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
-tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 191–196 checks per stack
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 216–221 checks per stack
 KEEP=1 tests/e2e/install.sh  # the same, and leaves the container running to look inside
 WEB=nginx tests/e2e/install.sh   # the same on another web stack (nginx or hybrid); each run also
                                  # switches to another stack at the end and checks every site moved
@@ -157,6 +157,13 @@ checks run against the container's real MariaDB and phpMyAdmin.
 The DNS checks run against the container's real PowerDNS (EPEL's 5.0) and
 ask it with `dig`; the wildcard certificate comes from a third Pebble that
 resolves through it.
+
+The mail checks run against the container's real Exim (EPEL) and Dovecot,
+with `swaks` and Python's `imaplib`/`poplib`. Outgoing mail goes to a small
+catcher set as the relay host (`mail:settings --smarthost`), and its DKIM
+signature is verified with `dkimpy` against the key PowerDNS publishes. An
+"outside" sender connects to the container's own address, since 127.0.0.1
+is a relay host.
 
 The certificate checks run against Pebble, Let's Encrypt's test authority.
 `tests/e2e/install.sh` builds it once into `dist/build/pebble/` (it needs Go

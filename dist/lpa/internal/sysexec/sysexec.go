@@ -35,6 +35,11 @@ var Tools = map[string]string{
 	// MariaDB's client, for databases and their users. SQL goes on standard
 	// input (RunInput), never in the arguments.
 	"mariadb": "/usr/bin/mariadb",
+	// Mail: Exim's version and queue, Dovecot's version, and Pigeonhole's
+	// compiler for the autoresponders the agent writes.
+	"exim":    "/usr/sbin/exim",
+	"dovecot": "/usr/sbin/dovecot",
+	"sievec":  "/usr/bin/sievec",
 }
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Modules\Dns;
 
 use App\Engine\Auth\Identity;
+use App\Engine\Hook\HookEngine;
 use App\Engine\Http\Request;
 use App\Modules\Accounts\Accounts;
 use App\Modules\Audit\AuditLog;
@@ -25,6 +26,7 @@ final class DnsActions
         private readonly DnsSync $sync,
         private readonly Accounts $accounts,
         private readonly AuditLog $audit,
+        private readonly HookEngine $hooks,
     ) {}
 
     /**
@@ -84,7 +86,14 @@ final class DnsActions
         $account = $zone['account_id'] === null ? null : $this->accounts->byId((int) $zone['account_id']);
         $ownerId = $account === null || $account['owner_id'] === null ? null : (int) $account['owner_id'];
 
-        return $this->attempt($actor, $request, $zone, 'dns.zone_reset', '', fn() => $this->zones->fill($zone, $ownerId));
+        $outcome = $this->attempt($actor, $request, $zone, 'dns.zone_reset', '', fn() => $this->zones->fill($zone, $ownerId));
+
+        // Other modules put their records back (mail: DKIM, DMARC).
+        if ($outcome->ok()) {
+            $this->hooks->do('dns.zone_reset', $zone);
+        }
+
+        return $outcome;
     }
 
     /**

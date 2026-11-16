@@ -538,6 +538,63 @@ backoff are tested against Pebble.
 **Exit:** a mailbox sends and receives over IMAP/SMTP with TLS. DKIM-signed
 mail passes the checks of an external mail test service.
 
+M6 is in two parts: M6a (mail flow and mailboxes), M6b (filtering, webmail,
+the queue and limits).
+
+**M6a: mail flow and mailboxes. Built 2026-11-16.**
+- **Exim 4.100 (EPEL) and Dovecot 2.3 (AppStream)**, with configurations the
+  installer writes whole. Accounts' mail is data the agent writes, one file
+  a domain, read on every lookup: no change reloads a server.
+  - SMTP 25; submission 465 (TLS) and 587 (STARTTLS), a login required;
+    IMAP 993/143 and POP3 995/110; passwords only over TLS.
+  - Local mail goes from Exim to Dovecot over LMTP; Exim checks logins
+    through Dovecot. Only localhost relays.
+  - The hostname certificate serves both; the agent copies it whenever it
+    changes and reloads them.
+- **Mail domains:** every domain of an account (main, addon, alias and
+  subdomains) receives mail. Mail for a domain may be "delivered by another
+  server" (its MX is elsewhere).
+- **Mailboxes:** a password (only its bcrypt hash leaves the panel) and a
+  quota (0: none of its own). Mail is kept in the account's home, as the
+  account, so it counts against the package's disk space. `info+tag@`
+  reaches `info@`. The package's `mailboxes` limit applies.
+- **Forwarders** (a copy stays when the address is also a mailbox),
+  **catch-alls** (refuse, discard, or an address) and **autoresponders**
+  (Sieve, once per sender in 1–30 days, with optional dates).
+- **DKIM, SPF, DMARC:** the agent makes each domain's DKIM key; the panel
+  publishes it with `v=DMARC1; p=none` (and SPF for subdomains) in the
+  account's zone. The owner may change or remove them, and they come back
+  when a zone is reset. When the domain's DNS is elsewhere, the User panel
+  lists the records to add there.
+- **Sending is checked:** a mailbox sends only as its own account's domains
+  (envelope and `From:`). Mail is DKIM-signed only when the `From:` domain
+  is the sender's own account's, including a site's own mail through the
+  sendmail command. A suspended account still receives mail; its mailboxes
+  cannot log in or send.
+- **Deleting:** a deleted mailbox's mail is deleted once the server no
+  longer has the mailbox; `mail:settle` (every minute) finishes what the
+  agent could not take at once. A terminated account's mail files go
+  before its user.
+- **Usage:** `mail:usage` (every 15 minutes) measures each mailbox.
+- **Admin panel → Email** (capability `server.mail`): Exim's and Dovecot's
+  state, the queue, every account's mail domains, and the **relay host** for
+  outgoing mail (for servers that may not send on port 25).
+- **Where it shows:** User panel → Email (feature `email`), the API
+  (`/admin/api/v1/accounts/{user}/email…`, `/admin/api/v1/email…`), and
+  `lpanel mail:list|create|password|quota|delete|forward|unforward|responder|domain|settings|info|usage|settle|sync`.
+  Passwords and autoresponder messages are read from standard input.
+- **Tests:** Go (every file, idempotence, refused input, ownership,
+  suspension, Sieve quoting, purges that cannot leave the home, usage, the
+  relay host); PHP 128; SELinux check 71 (mail labels and EL's rules for
+  Exim and Dovecot); `tests/e2e/install.sh` against the real servers
+  (`swaks`, IMAP, POP3, DKIM verified against PowerDNS): `WEB=apache`
+  216 checks, `WEB=nginx` 217, `WEB=hybrid` 221; agent e2e 37.
+- **Not yet (M6b):** Rspamd and ClamAV; Sieve filters of the owner's own;
+  Roundcube with single sign-on; autodiscover and autoconfig; per-account
+  sending limits; the queue manager and delivery tracking; SRS for
+  forwarders; relay host authentication; a certificate for each mail
+  domain (SNI); the deliverability check page.
+
 ### M7: Files and access
 - File manager, Pure-FTPd/FTPS, jailed SSH/SFTP, SSH key manager, disk usage
   explorer.

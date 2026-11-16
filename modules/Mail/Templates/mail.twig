@@ -1,0 +1,307 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro err(errors, key) %}{% if errors[key] is defined %}<div class="error">{{ errors[key]|local }}</div>{% endif %}{% endmacro %}
+
+{% macro domain_select(domains, id, selected, main) %}
+    <select class="input mono" id="{{ id }}" name="domain">
+        {% for d in domains %}<option value="{{ d.id }}"{% if (selected ? selected : (main ? main.id : 0)) ~ '' == d.id ~ '' %} selected{% endif %}>@{{ d.name }}</option>{% endfor %}
+    </select>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Mail.title'|local }}</h1>
+        <p>{{ 'Mail.lead'|local }}</p>
+    </div>
+</div>
+
+{% if state and state.state == 'failed' %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Mail.last_failed'|local }}</strong><br><span class="mono">{{ state.error }}</span></p></div>
+{% elseif state and state.state == 'pending' %}
+    <div class="alert alert-info">{{ icon('clock') }}<p>{{ 'Mail.pending_text'|local({since: state.changed_at|when}) }}</p></div>
+{% endif %}
+{% if account.status == 'suspended' %}
+    <div class="alert alert-warning">{{ icon('pause') }}<p>{{ 'Mail.suspended_text'|local }}</p></div>
+{% endif %}
+
+{% if domains is empty %}
+<div class="card"><div class="empty">{{ icon('mail') }}<h3>{{ 'Mail.no_domains'|local }}</h3><p>{{ 'Mail.no_domains_hint'|local }}</p></div></div>
+{% else %}
+
+<div class="grid grid-3 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('mail') }}</span>
+        <div><div class="stat-label">{{ 'Mail.mailboxes'|local }}</div><div class="stat-value">{{ mailboxes|length }} / {{ limit ? limit : '∞' }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('disk') }}</span>
+        <div><div class="stat-label">{{ 'Mail.space'|local }}</div><div class="stat-value">{{ total_bytes|bytes }}</div><div class="stat-sub">{{ 'Mail.space_hint'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('link') }}</span>
+        <div><div class="stat-label">{{ 'Mail.forwarders'|local }}</div><div class="stat-value">{{ forwarders|length }}</div></div>
+    </div>
+</div>
+
+{# Mailboxes #}
+<div class="grid grid-side" style="margin-bottom:20px">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Mail.mailboxes'|local }}</h2><p>{{ 'Mail.mailboxes_lead'|local }}</p></div></div>
+        {% if mailboxes is empty %}
+            <div class="empty">{{ icon('mail') }}<h3>{{ 'Mail.none'|local }}</h3><p>{{ 'Mail.none_hint'|local }}</p></div>
+        {% else %}
+        <ul class="mail-rows">
+            {% for b in mailboxes %}
+                {% set editing = responder_id == b.id %}
+                {% set r = editing ? responder_old : (b.responder ? {subject: b.responder.subject, body: b.responder.body, from_name: b.responder.from_name, days: b.responder.days, start: b.responder.starts_on, end: b.responder.ends_on} : {}) %}
+                <li class="mail-row">
+                    <div class="mail-row-main">
+                        <strong class="mono mail-address">{{ b.address }}</strong>
+                        {% if b.responder %}<span class="badge info mail-badge">{{ 'Mail.responder_on_badge'|local }}</span>{% endif %}
+                    </div>
+                    <div class="mail-row-usage">
+                        <div class="usage">{{ b.used_bytes|bytes }} {% if b.quota_mb > 0 %}{{ 'Mail.of'|local }} {{ (b.quota_mb * 1048576)|bytes }}{% else %}· {{ 'Mail.no_cap'|local }}{% endif %}</div>
+                        {% if b.percent is not null %}<div class="meter compact{% if b.percent >= 95 %} is-bad{% elseif b.percent >= 80 %} is-warn{% endif %}"><span style="width:{{ max(b.percent, 2) }}%"></span></div>{% endif %}
+                    </div>
+                            <details class="mail-more">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Mail.manage_name'|local({name: b.address}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Mail.manage'|local }}</span></summary>
+                                <div class="db-panel">
+                                    <form method="post" action="{{ b.password_url }}">
+                                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                                        <div class="field">
+                                            <label for="pw-{{ b.id }}">{{ 'Mail.new_password'|local }}</label>
+                                            <div class="input-row">
+                                                <input class="input mono" type="password" id="pw-{{ b.id }}" name="password" minlength="{{ password_min }}" maxlength="128" autocomplete="new-password" required>
+                                                <button class="btn btn-sm" type="button" data-generate="pw-{{ b.id }}">{{ icon('refresh') }}{{ 'Mail.generate'|local }}</button>
+                                            </div>
+                                        </div>
+                                        <button class="btn btn-sm btn-primary" type="submit">{{ 'Mail.change_password'|local }}</button>
+                                    </form>
+                                    <form method="post" action="{{ b.quota_url }}" class="mail-panel-split">
+                                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                                        <div class="field">
+                                            <label for="q-{{ b.id }}">{{ 'Mail.quota'|local }} <span class="muted">(MB)</span></label>
+                                            <input class="input" type="number" id="q-{{ b.id }}" name="quota" min="0" max="{{ disk_mb ?: 1048576 }}" value="{{ b.quota_mb }}" required>
+                                            <div class="hint">{{ 'Mail.quota_hint'|local }}</div>
+                                        </div>
+                                        <button class="btn btn-sm" type="submit">{{ 'Mail.save_quota'|local }}</button>
+                                    </form>
+                                </div>
+                            </details>
+                            <details class="mail-more"{% if editing %} open{% endif %}>
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Mail.responder_for'|local({name: b.address}) }}">{{ icon('clock') }}<span class="hide-sm">{{ 'Mail.responder'|local }}</span></summary>
+                                <div class="db-panel mail-responder">
+                                    <form method="post" action="{{ b.responder_url }}">
+                                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                                        <p class="muted mail-panel-lead">{{ 'Mail.responder_lead'|local }}</p>
+                                        <div class="field">
+                                            <label for="rs-{{ b.id }}">{{ 'Mail.subject'|local }}</label>
+                                            <input class="input{% if editing and responder_errors.subject is defined %} is-invalid{% endif %}" id="rs-{{ b.id }}" name="subject" maxlength="200" value="{{ r.subject|default('') }}" placeholder="{{ 'Mail.subject_placeholder'|local }}" required>
+                                            {% if editing %}{{ _self.err(responder_errors, 'subject') }}{% endif %}
+                                        </div>
+                                        <div class="field">
+                                            <label for="rb-{{ b.id }}">{{ 'Mail.message'|local }}</label>
+                                            <textarea class="input{% if editing and responder_errors.body is defined %} is-invalid{% endif %}" id="rb-{{ b.id }}" name="body" rows="4" maxlength="10000" required>{{ r.body|default('') }}</textarea>
+                                            {% if editing %}{{ _self.err(responder_errors, 'body') }}{% endif %}
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="field">
+                                                <label for="rf-{{ b.id }}">{{ 'Mail.from_name'|local }} <span class="muted">({{ 'Mail.optional'|local }})</span></label>
+                                                <input class="input{% if editing and responder_errors.from_name is defined %} is-invalid{% endif %}" id="rf-{{ b.id }}" name="from_name" maxlength="100" value="{{ r.from_name|default('') }}">
+                                                {% if editing %}{{ _self.err(responder_errors, 'from_name') }}{% endif %}
+                                            </div>
+                                            <div class="field">
+                                                <label for="rd-{{ b.id }}">{{ 'Mail.days'|local }}</label>
+                                                <input class="input{% if editing and responder_errors.days is defined %} is-invalid{% endif %}" type="number" id="rd-{{ b.id }}" name="days" min="1" max="30" value="{{ r.days|default(1) }}" required>
+                                                {% if editing %}{{ _self.err(responder_errors, 'days') }}{% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="form-row">
+                                            <div class="field">
+                                                <label for="ra-{{ b.id }}">{{ 'Mail.start'|local }} <span class="muted">({{ 'Mail.optional'|local }})</span></label>
+                                                <input class="input{% if editing and responder_errors.start is defined %} is-invalid{% endif %}" type="date" id="ra-{{ b.id }}" name="start" value="{{ r.start|default('') }}">
+                                                {% if editing %}{{ _self.err(responder_errors, 'start') }}{% endif %}
+                                            </div>
+                                            <div class="field">
+                                                <label for="re-{{ b.id }}">{{ 'Mail.end'|local }} <span class="muted">({{ 'Mail.optional'|local }})</span></label>
+                                                <input class="input{% if editing and responder_errors.end is defined %} is-invalid{% endif %}" type="date" id="re-{{ b.id }}" name="end" value="{{ r.end|default('') }}">
+                                                {% if editing %}{{ _self.err(responder_errors, 'end') }}{% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="mail-buttons">
+                                            <button class="btn btn-sm btn-primary" type="submit">{{ b.responder ? 'Mail.save_responder'|local : 'Mail.turn_on'|local }}</button>
+                                            {% if b.responder %}<button class="btn btn-sm" type="submit" formaction="{{ b.responder_off_url }}" formnovalidate>{{ 'Mail.turn_off'|local }}</button>{% endif %}
+                                        </div>
+                                    </form>
+                                </div>
+                            </details>
+                            <form class="inline-form mail-row-end" method="post" action="{{ b.delete_url }}" data-confirm="{{ 'Mail.confirm_delete'|local({name: b.address}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Mail.delete_name'|local({name: b.address}) }}">{{ icon('trash') }}</button>
+                            </form>
+                </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ store_url }}">
+        <div class="card-head"><div><h2>{{ 'Mail.create'|local }}</h2><p>{{ 'Mail.create_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            {% if at_limit %}<div class="alert alert-warning" style="margin-top:0">{{ icon('alert') }}<p>{{ 'Mail.error_limit'|local }}</p></div>{% endif %}
+            <div class="field">
+                <label for="m-local">{{ 'Mail.address'|local }}</label>
+                <div class="mail-address-input">
+                    <input class="input mono{% if errors.box_local is defined %} is-invalid{% endif %}" id="m-local" name="local" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.box.local|default('') }}" placeholder="info" required>
+                    {{ _self.domain_select(domains, 'm-domain', old.box.domain|default(''), main_domain) }}
+                </div>
+                {{ _self.err(errors, 'box_local') }}
+            </div>
+            <div class="field">
+                <label for="m-password">{{ 'Mail.password'|local }}</label>
+                <div class="input-row">
+                    <input class="input mono{% if errors.box_password is defined %} is-invalid{% endif %}" type="password" id="m-password" name="password" minlength="{{ password_min }}" maxlength="128" autocomplete="new-password" required>
+                    <button class="btn btn-sm" type="button" data-generate="m-password">{{ icon('refresh') }}{{ 'Mail.generate'|local }}</button>
+                </div>
+                {{ _self.err(errors, 'box_password') }}
+                <div class="hint">{{ 'Mail.password_hint'|local({min: password_min}) }}</div>
+            </div>
+            <div class="field">
+                <label for="m-quota">{{ 'Mail.quota'|local }} <span class="muted">(MB)</span></label>
+                <input class="input{% if errors.box_quota is defined %} is-invalid{% endif %}" type="number" id="m-quota" name="quota" min="0" max="{{ disk_mb ?: 1048576 }}" value="{{ old.box.quota|default(default_quota) }}" required>
+                {{ _self.err(errors, 'box_quota') }}
+                <div class="hint">{{ 'Mail.quota_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit"{% if at_limit %} disabled{% endif %}>{{ icon('plus') }}{{ 'Mail.create_button'|local }}</button></div>
+    </form>
+</div>
+
+{# Forwarders #}
+<div class="grid grid-side" style="margin-bottom:20px">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Mail.forwarders'|local }}</h2><p>{{ 'Mail.forwarders_lead'|local }}</p></div></div>
+        {% if forwarders is empty %}
+            <div class="empty">{{ icon('link') }}<h3>{{ 'Mail.no_forwarders'|local }}</h3><p>{{ 'Mail.no_forwarders_hint'|local }}</p></div>
+        {% else %}
+        <ul class="list">
+            {% for f in forwarders %}
+                <li>
+                    <div class="mail-forward"><strong class="mono">{{ f.address }}</strong><span class="mail-arrow" aria-hidden="true">→</span><span class="mono">{{ f.destination }}</span></div>
+                    <form class="inline-form" method="post" action="{{ f.delete_url }}" data-confirm="{{ 'Mail.confirm_unforward'|local({name: f.address, to: f.destination}) }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Mail.unforward_name'|local({name: f.address, to: f.destination}) }}">{{ icon('trash') }}</button>
+                    </form>
+                </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ forward_url }}">
+        <div class="card-head"><div><h2>{{ 'Mail.add_forwarder'|local }}</h2><p>{{ 'Mail.add_forwarder_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label for="f-local">{{ 'Mail.address'|local }}</label>
+                <div class="mail-address-input">
+                    <input class="input mono{% if errors.fwd_local is defined %} is-invalid{% endif %}" id="f-local" name="local" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.fwd.local|default('') }}" placeholder="sales" required>
+                    {{ _self.domain_select(domains, 'f-domain', old.fwd.domain|default(''), main_domain) }}
+                </div>
+                {{ _self.err(errors, 'fwd_local') }}
+            </div>
+            <div class="field">
+                <label for="f-to">{{ 'Mail.forward_to'|local }}</label>
+                <input class="input mono{% if errors.fwd_destination is defined %} is-invalid{% endif %}" type="email" id="f-to" name="destination" maxlength="254" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.fwd.destination|default('') }}" placeholder="someone@example.net" required>
+                {{ _self.err(errors, 'fwd_destination') }}
+                <div class="hint">{{ 'Mail.forward_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Mail.add_forwarder_button'|local }}</button></div>
+    </form>
+</div>
+
+{# Domains, and connecting a mail client #}
+<div class="grid grid-side">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Mail.domains'|local }}</h2><p>{{ 'Mail.domains_lead'|local }}</p></div></div>
+        <ul class="mail-rows">
+            {% for d in domains %}
+                {% set open = domain_id == d.id %}
+                <li class="mail-row">
+                    <div class="mail-row-main">
+                        <strong class="mono mail-address">{{ d.name }}</strong>
+                        <div class="chips mail-chips">
+                            {% if d.local %}<span class="badge ok">{{ 'Mail.delivered_here'|local }}</span>{% else %}<span class="badge plain">{{ 'Mail.delivered_elsewhere'|local }}</span>{% endif %}
+                            {% if d.dns_here %}<span class="badge info">{{ 'Mail.dns_here'|local }}</span>{% else %}<span class="badge warn">{{ 'Mail.dns_elsewhere'|local }}</span>{% endif %}
+                        </div>
+                        <div class="domain-sub">{{ 'Mail.catchall'|local }}: {{ ('Mail.catchall_' ~ d.catchall_action)|local }}{% if d.catchall_action == 'forward' %} <span class="mono">{{ d.catchall }}</span>{% endif %}</div>
+                    </div>
+                            <details class="mail-more"{% if open %} open{% endif %}>
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Mail.settings_for'|local({name: d.name}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Mail.settings'|local }}</span></summary>
+                                <form class="db-panel" method="post" action="{{ d.save_url }}" data-show-from="catchall">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <fieldset class="field">
+                                        <legend>{{ 'Mail.catchall'|local }}</legend>
+                                        <p class="hint" style="margin-top:0">{{ 'Mail.catchall_lead'|local }}</p>
+                                        {% for a in ['refuse', 'discard', 'forward'] %}
+                                            <label class="check"><input type="radio" name="catchall" value="{{ a }}"{% if d.catchall_action == a %} checked{% endif %}> {{ ('Mail.catchall_' ~ a)|local }}</label>
+                                        {% endfor %}
+                                    </fieldset>
+                                    <div class="field" data-show-for="forward">
+                                        <label for="ct-{{ d.id }}">{{ 'Mail.catchall_to'|local }}</label>
+                                        <input class="input mono{% if open and domain_error %} is-invalid{% endif %}" type="email" id="ct-{{ d.id }}" name="catchall_to" maxlength="254" value="{{ open ? domain_old.catchall_to|default('') : (d.catchall_action == 'forward' ? d.catchall : '') }}" placeholder="info@{{ d.name }}">
+                                        {% if open and domain_error %}<div class="error">{{ domain_error|local }}</div>{% endif %}
+                                    </div>
+                                    <div class="field">
+                                        <label for="lo-{{ d.id }}">{{ 'Mail.delivery'|local }}</label>
+                                        <select class="input" id="lo-{{ d.id }}" name="local">
+                                            <option value="1"{% if d.local %} selected{% endif %}>{{ 'Mail.delivery_here'|local }}</option>
+                                            <option value="0"{% if not d.local %} selected{% endif %}>{{ 'Mail.delivery_elsewhere'|local }}</option>
+                                        </select>
+                                        <div class="hint">{{ 'Mail.delivery_hint'|local }}</div>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" type="submit">{{ 'Mail.save'|local }}</button>
+                                </form>
+                            </details>
+                            <details class="mail-more">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Mail.records_for'|local({name: d.name}) }}">{{ icon('globe') }}<span class="hide-sm">{{ 'Mail.records'|local }}</span></summary>
+                                <div class="db-panel mail-records">
+                                    <p class="muted mail-panel-lead">{{ d.dns_here ? 'Mail.records_here'|local : 'Mail.records_elsewhere'|local }}</p>
+                                    <div class="mail-record">
+                                        <div class="mail-record-head"><span class="badge dns-type dns-mx">MX</span><span class="mono">{{ d.name }}</span></div>
+                                        <div class="mono mail-record-value">10 {{ d.dns_here ? 'mail.' ~ d.name : hostname }}</div>
+                                    </div>
+                                    {% for rec in d.records %}
+                                        <div class="mail-record">
+                                            <div class="mail-record-head">
+                                                <span class="badge dns-type dns-txt">{{ rec.type }}</span><span class="mono">{{ rec.name }}</span>
+                                                <button class="btn btn-sm btn-ghost" type="button" data-copy="{{ rec.content }}" data-copied="{{ 'Mail.copied'|local }}">{{ icon('copy') }}<span class="sr-only">{{ 'Mail.copy'|local }}</span></button>
+                                            </div>
+                                            <div class="mono mail-record-value">{{ rec.content }}</div>
+                                        </div>
+                                    {% endfor %}
+                                    {% if d.dkim is empty %}<p class="hint">{{ 'Mail.dkim_coming'|local }}</p>{% endif %}
+                                </div>
+                            </details>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Mail.client'|local }}</h2><p>{{ 'Mail.client_lead'|local }}</p></div></div>
+        <dl class="mail-client">
+            <dt>{{ 'Mail.client_user'|local }}</dt><dd>{{ 'Mail.client_user_value'|local }}</dd>
+            <dt>{{ 'Mail.client_server'|local }}</dt><dd class="mono">{{ hostname }}</dd>
+            <dt>IMAP</dt><dd>993 · SSL/TLS</dd>
+            <dt>POP3</dt><dd>995 · SSL/TLS</dd>
+            <dt>SMTP</dt><dd>465 · SSL/TLS<br><span class="muted">587 · STARTTLS</span></dd>
+        </dl>
+        <div class="card-body mail-client-foot"><p class="hint" style="margin:0">{{ 'Mail.client_hint'|local }}</p></div>
+    </section>
+</div>
+{% endif %}
+{% endblock %}

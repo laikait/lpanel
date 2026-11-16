@@ -101,7 +101,7 @@ return static function (ModuleContext $module): void {
         $hosting = ['accounts.manage', 'accounts.create', 'accounts.modify', 'accounts.suspend', 'accounts.terminate', 'accounts.login_as', 'packages.manage'];
         $access->role('root', ['*']);
         $access->role('admin', [
-            'admin.panel', 'account.self', 'api.tokens', 'audit.view', 'audit.own', 'system.view', 'server.php', 'server.ssl', 'server.databases', 'server.dns', 'dns.own',
+            'admin.panel', 'account.self', 'api.tokens', 'audit.view', 'audit.own', 'system.view', 'server.php', 'server.ssl', 'server.databases', 'server.dns', 'dns.own', 'server.mail',
             ...$hosting, 'packages.all', 'accounts.all', 'resellers.manage', 'resellers.login_as',
         ]);
         $access->role('reseller', ['admin.panel', 'account.self', 'api.tokens', 'audit.own', 'dns.own', ...$hosting]);

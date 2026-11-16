@@ -42,3 +42,9 @@ semanage fcontext "${noreload[@]}" -a -t httpd_user_rw_content_t "$web" 2>/dev/n
 for b in httpd_enable_homedirs httpd_can_network_connect httpd_can_network_connect_db httpd_can_sendmail; do
     semanage boolean "${noreload[@]}" -m --on "$b"
 done
+
+# Accounts' mail (~/mail/<domain>/<local>/Maildir), written by Dovecot as
+# the account's user.
+mail="$homes/[^/]+/mail(/.*)?"
+semanage fcontext "${noreload[@]}" -a -t mail_home_rw_t "$mail" 2>/dev/null \
+    || semanage fcontext "${noreload[@]}" -m -t mail_home_rw_t "$mail"

@@ -97,6 +97,23 @@ check "httpd_builtin_scripting is on"            on_by_default httpd_builtin_scr
 check "Apache reads its site files"              allowed -s httpd_t -t httpd_config_t -c file -p read
 check "Apache connects to the pools"             allowed -s httpd_t -t httpd_t -c unix_stream_socket -p connectto
 
+echo "== mail (Exim and Dovecot, from EL's own policy)"
+check "an account's mail is mail_home_rw_t"      label /home/shop1/mail/example.com/info/Maildir/cur/1 mail_home_rw_t
+check "the mail folder itself too"               label /home/shop1/mail mail_home_rw_t
+check "Dovecot writes it"                        allowed -s dovecot_t -t mail_home_rw_t -c file -p create,write,rename,unlink
+check "and makes its folders"                    allowed -s dovecot_t -t mail_home_rw_t -c dir -p create,add_name
+check "Dovecot finds it in the home"             allowed -s dovecot_t -t user_home_dir_t -c dir -p search
+check "Dovecot reads its data (passwd.d, sieve)" bash -c 'matchpathcon /etc/dovecot/lpanel/passwd.d/example.com | grep -q dovecot_etc_t'
+check "Exim reads its data"                      bash -c 't=$(matchpathcon -n /etc/exim/lpanel/owners/example.com); sesearch -A -s exim_t -t "$t" -c file -p read | grep -q .'
+check "Exim delivers to Dovecot's LMTP socket"   allowed -s exim_t -t dovecot_t -c unix_stream_socket -p connectto
+check "and checks logins on its auth socket"     allowed -s exim_t -t dovecot_var_run_t -c sock_file -p write
+check "both read the hostname certificate copy"  bash -c 'matchpathcon /etc/pki/lpanel-mail/host.key | grep -q cert_t'
+check "Exim reads cert_t"                        allowed -s exim_t -t cert_t -c file -p read
+check "Dovecot reads cert_t"                     allowed -s dovecot_t -t cert_t -c file -p read
+check "accounts' PHP runs Exim as system_mail_t" bash -c 'sesearch -T -s httpd_t -t exim_exec_t -c process | grep -q system_mail_t'
+check "which becomes exim_t"                     bash -c 'sesearch -T -s system_mail_t -t exim_exec_t -c process | grep -q exim_t'
+check "autoresponders (Dovecot) send through it" bash -c 'sesearch -T -s dovecot_t -t exim_exec_t -c process | grep -q sendmail_t'
+
 echo "== what the panel (httpd_t) is not given"
 check "no other unconfined service"              refused -s httpd_t -t unconfined_service_t -c unix_stream_socket -p connectto
 check "no shadow"                                refused -s httpd_t -t shadow_t -c file -p read

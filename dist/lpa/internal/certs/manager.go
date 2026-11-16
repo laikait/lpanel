@@ -67,6 +67,9 @@ type Manager struct {
 	// HostUnits are reloaded, when running, after the hostname certificate
 	// changes: lpanel-nginx, and httpd when Apache serves HTTPS itself.
 	HostUnits []string
+	// AfterHost runs once a new hostname certificate is in place, for the
+	// servers that keep a copy of their own (mail).
+	AfterHost func(ctx context.Context) error
 	Run       sysexec.Runner
 	Log       *slog.Logger
 	// Owner describes an LPanel account and refuses anything else.
@@ -665,6 +668,11 @@ func (m *Manager) installHost(ctx context.Context, p Pair) error {
 		}
 	}
 	m.Log.Info("hostname certificate installed", "names", strings.Join(p.Names, ","), "serial", p.Serial)
+	if m.AfterHost != nil {
+		if err := m.AfterHost(ctx); err != nil {
+			m.Log.Warn("a server did not take the hostname certificate", "err", err)
+		}
+	}
 	return nil
 }
 

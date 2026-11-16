@@ -29,6 +29,7 @@ import (
 	"lpa/internal/config"
 	"lpa/internal/dns"
 	"lpa/internal/journal"
+	"lpa/internal/mail"
 	"lpa/internal/mysql"
 	"lpa/internal/ops"
 	"lpa/internal/peer"
@@ -55,7 +56,7 @@ func main() {
 	case "facts":
 		err = printJSON(ops.ReadFacts(sysinfo.New(), version, time.Now()))
 	case "ops":
-		fmt.Println(strings.Join(registry(config.Defaults(), nil, time.Now()).Names(), "\n"))
+		fmt.Println(strings.Join(registry(config.Defaults(), nil, time.Now(), false).Names(), "\n"))
 	case "version", "-v", "--version":
 		fmt.Println(version)
 	default:
@@ -72,7 +73,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "usage: lpa serve [-config path] | facts | ops | version")
 }
 
-func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Registry {
+func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bool) *ops.Registry {
 	if log == nil {
 		log = slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	}
@@ -123,8 +124,11 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Regis
 	tls.Defaults()
 	dbs := &mysql.Manager{SQL: mysql.CLI{Exec: sysexec.Exec{}}, Owner: acc.Owner, Log: log}
 	dbs.Defaults()
-	// A terminated account's sites, then its databases and its zones, go
-	// before its user.
+	mails := &mail.Manager{Enabled: cfg.Mail == "on", Run: sysexec.Exec{}, Owner: acc.Owner, Log: log, SELinux: acc.SELinux}
+	mails.Defaults()
+	tls.AfterHost = mails.HostTLS
+	// A terminated account's sites, then its databases, its zones and its
+	// mail, go before its user.
 	acc.BeforeRemove = func(ctx context.Context, username string) error {
 		if err := sites.RemoveFor(ctx, username); err != nil {
 			return err
@@ -132,13 +136,24 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time) *ops.Regis
 		if err := dbs.RemoveFor(ctx, username); err != nil {
 			return err
 		}
-		return zones.RemoveFor(ctx, username)
+		if err := zones.RemoveFor(ctx, username); err != nil {
+			return err
+		}
+		return mails.RemoveFor(ctx, username)
 	}
 	ops.Accounts(reg, acc)
 	ops.Web(reg, sites)
 	ops.SSL(reg, tls)
 	ops.DB(reg, dbs)
 	ops.DNS(reg, zones)
+	ops.Mail(reg, mails)
+	if serving {
+		// The hostname certificate may have changed while the agent was
+		// stopped, or before mail was installed.
+		if err := mails.HostTLS(context.Background()); err != nil {
+			log.Warn("the mail servers did not take the hostname certificate", "err", err)
+		}
+	}
 	return reg
 }
 
@@ -188,7 +203,7 @@ func serve(args []string) error {
 	}
 
 	srv := &server.Server{
-		Registry: registry(cfg, log, time.Now()), Journal: j, PanelKey: key,
+		Registry: registry(cfg, log, time.Now(), true), Journal: j, PanelKey: key,
 		AllowedUIDs: []int{panelUID}, PeerUID: peer.UID, Now: time.Now, Log: log,
 		MaxRunning: cfg.MaxRunning,
 	}

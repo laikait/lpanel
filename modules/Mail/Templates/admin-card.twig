@@ -1,0 +1,29 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Mail.title'|local }}</h2><p>{{ 'Mail.admin_card_lead'|local({n: mailboxes|length, forwarders: forwarders, domains: mail_domains|length}) }}</p></div>
+        {% if mail_state %}
+            {% if mail_state.state == 'applied' %}<span class="badge ok">{{ 'Mail.state_applied'|local }}</span>
+            {% elseif mail_state.state == 'pending' %}<span class="badge warn">{{ 'Mail.state_pending'|local }}</span>
+            {% else %}<span class="badge bad">{{ 'Mail.state_failed'|local }}</span>{% endif %}
+        {% endif %}
+    </div>
+    {% if mail_state and mail_state.state == 'failed' %}
+        <div class="card-body"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p><span class="mono">{{ mail_state.error }}</span></p></div></div>
+    {% endif %}
+    {% if mailboxes is empty %}
+        <div class="card-body"><p class="muted">{{ 'Mail.none'|local }}</p></div>
+    {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>{{ 'Mail.mailbox'|local }}</th><th>{{ 'Mail.usage'|local }}</th><th class="hide-sm">{{ 'Mail.quota'|local }}</th></tr></thead>
+            <tbody>
+            {% for b in mailboxes %}
+                <tr>
+                    <td class="mono"><strong>{{ b.address }}</strong>{% if b.responder %} <span class="badge info mail-badge">{{ 'Mail.responder_on_badge'|local }}</span>{% endif %}</td>
+                    <td>{{ b.used_bytes|bytes }}</td>
+                    <td class="hide-sm">{{ b.quota_mb > 0 ? (b.quota_mb * 1048576)|bytes : 'Mail.no_cap'|local }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+</div>

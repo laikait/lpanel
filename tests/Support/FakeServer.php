@@ -88,6 +88,18 @@ final class FakeServer
     /** @var array<string, string> account => its phpMyAdmin password now */
     public array $sso = [];
 
+    /** @var array<string, array<string, mixed>> account => its last mail.apply state */
+    public array $mail = [];
+
+    /** @var array<string, int> address => bytes, as mail.usage reports */
+    public array $mailUsage = [];
+
+    /** @var list<string> mail deleted: "account domain local" */
+    public array $mailPurged = [];
+
+    /** The relay host mail.settings set ("" for none). */
+    public string $smarthost = '';
+
     /** @var array{op: string, code: string, message: string}|null the next time this op runs, it fails */
     public ?array $failNext = null;
 
@@ -100,7 +112,7 @@ final class FakeServer
     {
         $answers = [];
 
-        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove'] as $op) {
+        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove', 'mail.apply', 'mail.purge', 'mail.settings'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -126,6 +138,15 @@ final class FakeServer
             static fn(string $db): bool => !\is_array($args['usernames'] ?? null) || \in_array(\explode('_', $db)[0], $args['usernames'], true),
             \ARRAY_FILTER_USE_KEY,
         )]];
+        $answers['mail.usage'] = fn(array $args): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['mailboxes' => (object) \array_filter(
+            $this->mailUsage,
+            fn(string $address): bool => \in_array(\substr($address, (int) \strrpos($address, '@') + 1), $this->mailDomainsOf((string) $args['username']), true),
+            \ARRAY_FILTER_USE_KEY,
+        )]];
+        $answers['mail.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'enabled' => true, 'exim' => ['running' => true, 'version' => '4.100.1'], 'dovecot' => ['running' => true, 'version' => '2.3.16'],
+            'queue' => 3, 'domains' => \count($this->mailOwners()),
+        ]];
         $answers['db.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['installed' => true, 'running' => true, 'version' => '10.5.27-MariaDB', 'uptime' => 3600, 'threads' => \count($this->dbProcesses), 'queries' => 42]];
         $answers['db.processes'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['processes' => $this->dbProcesses]];
         $answers['ssl.host_info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
@@ -205,6 +226,10 @@ final class FakeServer
             return $this->runDns($op, $args);
         }
 
+        if (\str_starts_with($op, 'mail.')) {
+            return $this->runMail($op, $args);
+        }
+
         if ($op === 'account.create') {
             if (isset($this->users[$name])) {
                 return ['status' => 'failed', 'error' => ['code' => 'exists', 'message' => 'a user named ' . $name . ' already exists']];
@@ -218,7 +243,7 @@ final class FakeServer
         if ($op === 'account.terminate') {
             $existed = isset($this->users[$name]);
             // The agent removes the sites first (BeforeRemove).
-            unset($this->users[$name], $this->sites[$name], $this->dbs[$name], $this->sso[$name]);
+            unset($this->users[$name], $this->sites[$name], $this->dbs[$name], $this->sso[$name], $this->mail[$name]);
             // And the account's zones.
             $this->zones = \array_filter($this->zones, static fn(array $z): bool => $z['username'] !== $name);
 
@@ -319,6 +344,107 @@ final class FakeServer
         $this->zones[$zone] = $args;
 
         return ['status' => 'done', 'result' => ['zone' => $zone, 'created' => $have === null, 'changed' => $have !== $args, 'serial' => 2026111501]];
+    }
+
+    /**
+     * The mail operations, checked the way the agent checks them.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    private function runMail(string $op, array $args): array
+    {
+        $fail = static fn(string $code, string $message): array => ['status' => 'failed', 'error' => ['code' => $code, 'message' => $message]];
+
+        if ($op === 'mail.settings') {
+            $host = (string) ($args['smarthost'] ?? '');
+
+            if ($host !== '' && \preg_match('/^[a-z0-9.-]+:\d{1,5}$/', $host) !== 1) {
+                return $fail('bad_args', $host . ' is not a host');
+            }
+
+            $this->smarthost = $host;
+
+            return ['status' => 'done', 'result' => ['smarthost' => $host]];
+        }
+
+        $name = (string) $args['username'];
+
+        if (!isset($this->users[$name])) {
+            return $fail('no_such_account', 'there is no user named ' . $name);
+        }
+
+        if ($op === 'mail.purge') {
+            $domain = (string) $args['domain'];
+            $local = (string) $args['local'];
+
+            foreach ($this->mail[$name]['domains'] ?? [] as $d) {
+                if ($d['name'] === $domain && ($local === '' || \in_array($local, \array_column($d['mailboxes'], 'local'), true))) {
+                    return $fail('mail_in_use', $domain . ' is still set up');
+                }
+            }
+
+            $this->mailPurged[] = $name . ' ' . $domain . ' ' . $local;
+
+            return ['status' => 'done', 'result' => ['removed' => true]];
+        }
+
+        $owners = $this->mailOwners();
+        $dkim = [];
+
+        foreach ($args['domains'] as $d) {
+            if (($owners[$d['name']] ?? $name) !== $name) {
+                return $fail('mail_not_owner', 'the mail of ' . $d['name'] . ' belongs to another account');
+            }
+
+            if (!\is_bool($d['local']) || !\is_array($d['mailboxes']) || !\is_array($d['forwarders']) || !\in_array($d['catchall'], ['', ':fail:', ':blackhole:'], true) && !\str_contains($d['catchall'], '@')) {
+                return $fail('bad_args', 'not a mail domain');
+            }
+
+            foreach ($d['mailboxes'] as $b) {
+                if (\preg_match('/^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$/', $b['local']) !== 1 || \preg_match('/^\$2[aby]\$\d\d\$[.\/A-Za-z0-9]{53}$/', $b['hash']) !== 1 || !\is_int($b['quota_mb'])) {
+                    return $fail('bad_args', 'not a mailbox: ' . $b['local']);
+                }
+
+                if (isset($b['autoresponder']) && ((int) $b['autoresponder']['days'] < 1 || $b['autoresponder']['subject'] === '')) {
+                    return $fail('bad_args', 'not an autoresponder');
+                }
+            }
+
+            foreach ($d['forwarders'] as $f) {
+                if (!\is_array($f['to']) || $f['to'] === []) {
+                    return $fail('bad_args', 'a forwarder needs somewhere to go');
+                }
+            }
+
+            $dkim[$d['name']] = 'v=DKIM1; k=rsa; p=' . \base64_encode(\md5($d['name'], true));
+        }
+
+        $changed = ($this->mail[$name] ?? null) !== $args;
+        $this->mail[$name] = $args;
+
+        return ['status' => 'done', 'result' => ['domains' => \count($args['domains']), 'changed' => $changed ? 1 : 0, 'dkim' => (object) $dkim]];
+    }
+
+    /** @return array<string, string> mail domain => account */
+    private function mailOwners(): array
+    {
+        $owners = [];
+
+        foreach ($this->mail as $name => $state) {
+            foreach ($state['domains'] as $d) {
+                $owners[$d['name']] = $name;
+            }
+        }
+
+        return $owners;
+    }
+
+    /** @return list<string> */
+    private function mailDomainsOf(string $name): array
+    {
+        return \array_column($this->mail[$name]['domains'] ?? [], 'name');
     }
 
     /**
