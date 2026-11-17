@@ -166,3 +166,117 @@ document.querySelectorAll('input[data-all]').forEach((all) => {
     all.addEventListener('change', () => boxes.forEach((b) => { b.checked = all.checked; }));
     boxes.forEach((b) => b.addEventListener('change', sync));
 });
+
+// Small panels that open from a button (<details class="fm-pop">): one open
+// at a time, closed by a click elsewhere or Escape, focus on their first field.
+document.querySelectorAll('details.fm-pop').forEach((pop) => {
+    pop.addEventListener('toggle', () => {
+        if (!pop.open) return;
+        if (pop.querySelector(':scope > summary[aria-disabled="true"]')) { pop.open = false; return; }
+        document.querySelectorAll('details.fm-pop[open]').forEach((other) => { if (other !== pop) other.open = false; });
+        const field = pop.querySelector('input:not([type="hidden"]):not([type="checkbox"]), select, textarea');
+        if (field) setTimeout(() => field.focus(), 0);
+    });
+});
+document.addEventListener('click', (event) => {
+    document.querySelectorAll('details.fm-pop[open]').forEach((pop) => { if (!pop.contains(event.target)) pop.open = false; });
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') document.querySelectorAll('details.fm-pop[open]').forEach((pop) => { pop.open = false; });
+});
+
+// The file manager's list: what is selected, and which buttons apply to it.
+document.querySelectorAll('form[data-fm]').forEach((form) => {
+    const count = form.querySelector('[data-fm-count]');
+    const boxes = () => Array.from(form.querySelectorAll('input[type="checkbox"][name="paths[]"]'));
+    const name = form.querySelector('[data-fm-name]');
+    const mode = form.querySelector('[data-fm-mode]');
+    const update = () => {
+        const chosen = boxes().filter((b) => b.checked);
+        if (count) {
+            count.textContent = chosen.length ? count.getAttribute('data-some').replace('#', chosen.length) : count.getAttribute('data-none');
+            count.classList.toggle('is-active', chosen.length > 0);
+        }
+        form.querySelectorAll('[data-fm-needs]').forEach((el) => {
+            const need = el.getAttribute('data-fm-needs');
+            const ok = need === 'one' ? chosen.length === 1 : chosen.length > 0;
+            const target = el.tagName === 'SUMMARY' ? el.parentElement : el;
+            if (el.tagName === 'BUTTON') el.disabled = !ok;
+            else el.setAttribute('aria-disabled', ok ? 'false' : 'true');
+            if (!ok && target.tagName === 'DETAILS') target.open = false;
+        });
+        // Rename starts from the current name; permissions from the current mode.
+        if (name && chosen.length === 1 && name.dataset.for !== chosen[0].value) {
+            name.value = chosen[0].getAttribute('data-name') || '';
+            name.dataset.for = chosen[0].value;
+        }
+        if (mode && chosen.length >= 1 && !mode.dataset.touched) {
+            mode.value = (chosen[0].getAttribute('data-mode') || '').replace(/^0/, '');
+        }
+    };
+    if (mode) mode.addEventListener('input', () => { mode.dataset.touched = '1'; });
+    form.addEventListener('change', update);
+    update();
+});
+
+// The file editor: Tab indents, Ctrl+S (or Cmd+S) saves, and leaving with
+// unsaved changes asks first.
+document.querySelectorAll('textarea[data-editor]').forEach((editor) => {
+    const form = editor.form;
+    const dirtyNote = form ? form.querySelector('[data-editor-dirty]') : null;
+    const original = editor.value;
+    let dirty = false;
+    const indent = /^\t/m.test(original) ? '\t' : '    ';
+    editor.addEventListener('keydown', (event) => {
+        if (event.key === 'Tab' && !event.ctrlKey && !event.metaKey && !event.altKey && !editor.readOnly) {
+            event.preventDefault();
+            const start = editor.selectionStart;
+            const end = editor.selectionEnd;
+            if (event.shiftKey) {
+                const lineStart = editor.value.lastIndexOf('\n', start - 1) + 1;
+                const line = editor.value.slice(lineStart);
+                const remove = line.startsWith('\t') ? 1 : (line.match(/^ {1,4}/) || [''])[0].length;
+                if (remove) {
+                    editor.setRangeText('', lineStart, lineStart + remove, 'preserve');
+                    editor.setSelectionRange(Math.max(lineStart, start - remove), Math.max(lineStart, end - remove));
+                }
+            } else {
+                editor.setRangeText(indent, start, end, 'end');
+            }
+            editor.dispatchEvent(new Event('input'));
+        }
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+            event.preventDefault();
+            if (form && !editor.readOnly) { dirty = false; form.requestSubmit(); }
+        }
+    });
+    editor.addEventListener('input', () => {
+        dirty = editor.value !== original;
+        if (dirtyNote) dirtyNote.hidden = !dirty;
+    });
+    if (form) form.addEventListener('submit', () => { dirty = false; });
+    window.addEventListener('beforeunload', (event) => {
+        if (dirty) { event.preventDefault(); event.returnValue = editor.getAttribute('data-unsaved') || ''; }
+    });
+});
+
+// Files dropped on the file manager are uploaded into the folder shown.
+document.querySelectorAll('[data-drop-upload]').forEach((zone) => {
+    const form = document.getElementById(zone.getAttribute('data-drop-upload'));
+    const input = form ? form.querySelector('input[type="file"]') : null;
+    if (!form || !input) return;
+    let depth = 0;
+    const has = (event) => Array.from(event.dataTransfer?.types || []).includes('Files');
+    zone.addEventListener('dragenter', (event) => { if (!has(event)) return; depth++; zone.classList.add('is-dropping'); });
+    zone.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) zone.classList.remove('is-dropping'); });
+    zone.addEventListener('dragover', (event) => { if (has(event)) event.preventDefault(); });
+    zone.addEventListener('drop', (event) => {
+        if (!has(event)) return;
+        event.preventDefault();
+        depth = 0;
+        zone.classList.remove('is-dropping');
+        if (!event.dataTransfer.files.length) return;
+        input.files = event.dataTransfer.files;
+        form.requestSubmit();
+    });
+});

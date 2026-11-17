@@ -1,0 +1,5 @@
+{# The Files pages' tabs. Needs: tab ("files" or "usage"), tab_urls (files, usage). #}
+<nav class="page-tabs" aria-label="{{ 'Files.title'|local }}">
+    <a href="{{ tab_urls.files }}"{% if tab == 'files' %} aria-current="page"{% endif %}>{{ 'Files.tab_files'|local }}</a>
+    <a href="{{ tab_urls.usage }}"{% if tab == 'usage' %} aria-current="page"{% endif %}>{{ 'Files.tab_usage'|local }}</a>
+</nav>

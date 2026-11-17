@@ -130,6 +130,17 @@ final class FakeServer
     /** @var array{op: string, code: string, message: string}|null the next time this op runs, it fails */
     public ?array $failNext = null;
 
+    /**
+     * Each account's home, as files.* sees it: path => content, or null for
+     * a folder. Created with the server's own folders.
+     *
+     * @var array<string, array<string, string|null>>
+     */
+    public array $homes = [];
+
+    /** The panel's staging folder, which files.* reads uploads from and writes downloads into. */
+    public string $staging = '';
+
     /** @var array<string, array<string, mixed>> request id => response */
     private array $journal = [];
 
@@ -141,6 +152,14 @@ final class FakeServer
 
         foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove', 'mail.apply', 'mail.purge', 'mail.settings', 'mail.filtering', 'mail.queue_act', 'mail.sso', 'mail.sso_revoke', 'mail.sso_expire'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
+        }
+
+        foreach (['files.write', 'files.upload', 'files.mkdir', 'files.create', 'files.rename', 'files.move', 'files.copy', 'files.delete', 'files.chmod', 'files.compress', 'files.extract'] as $op) {
+            $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
+        }
+
+        foreach (['files.list', 'files.read', 'files.usage', 'files.download'] as $op) {
+            $answers[$op] = fn(array $args): array => $this->down ? throw FakeAgent::unavailable() : $this->files($op, $args);
         }
 
         $answers['account.info'] = fn(array $args): array => $this->read($args);
@@ -284,6 +303,10 @@ final class FakeServer
 
         if (\str_starts_with($op, 'php.')) {
             return $this->runPhp($op, $args);
+        }
+
+        if (\str_starts_with($op, 'files.')) {
+            return $this->files($op, $args);
         }
 
         if (\str_starts_with($op, 'ssl.')) {
@@ -875,5 +898,236 @@ final class FakeServer
             'shell' => $u['shell'], 'suspended' => $u['suspended'],
             'usage' => ['used_bytes' => $u['used'], 'used_inodes' => 12, 'limit_kib' => $u['quota']['blocks_kib'] ?? 0, 'inode_limit' => $u['quota']['inodes'] ?? 0],
         ];
+    }
+
+    /**
+     * files.*: the agent's file operations over the in-memory homes. Paths
+     * arrive clean (the panel cleans them first); errors carry the agent's codes.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    private function files(string $op, array $args): array
+    {
+        $user = (string) $args['username'];
+        $this->homes[$user] ??= ['public_html' => null, 'mail' => null, 'tmp' => null, 'logs' => null];
+        $home = &$this->homes[$user];
+        $fail = static fn(string $code, string $message = ''): array => ['status' => 'failed', 'error' => ['code' => $code, 'message' => $message !== '' ? $message : $code]];
+        $done = static fn(array $result): array => ['status' => 'done', 'result' => $result];
+        $isDir = static fn(string $p): bool => $p === '' || (\array_key_exists($p, $home) && $home[$p] === null);
+        $parent = static fn(string $p): string => \str_contains($p, '/') ? \substr($p, 0, (int) \strrpos($p, '/')) : '';
+        $join = static fn(string $d, string $n): string => $d === '' ? $n : $d . '/' . $n;
+        $protected = static fn(string $p): bool => \in_array($p, ['public_html', 'mail', 'tmp', 'logs'], true);
+        $staged = fn(string $token): string => $this->staging . '/' . $token;
+
+        switch ($op) {
+            case 'files.list':
+                $dir = (string) $args['path'];
+
+                if (!$isDir($dir)) {
+                    return \array_key_exists($dir, $home) ? $fail('files_type') : $fail('files_missing', '/' . $dir . ' is not there');
+                }
+
+                $entries = [];
+
+                foreach ($home as $p => $content) {
+                    if ($parent((string) $p) === $dir) {
+                        $entries[] = ['name' => \basename((string) $p), 'type' => $content === null ? 'dir' : 'file', 'size' => $content === null ? 0 : \strlen($content), 'mode' => $content === null ? '0755' : '0644', 'mtime' => 1763337600];
+                    }
+                }
+
+                \usort($entries, static fn(array $a, array $b): int => [$a['type'] !== 'dir', \strtolower($a['name'])] <=> [$b['type'] !== 'dir', \strtolower($b['name'])]);
+
+                return $done(['path' => $dir === '' ? '.' : $dir, 'mode' => '0711', 'entries' => $entries, 'truncated' => false]);
+
+            case 'files.read':
+                $p = (string) $args['path'];
+
+                if (!\array_key_exists($p, $home)) {
+                    return $fail('files_missing');
+                }
+
+                if ($home[$p] === null) {
+                    return $fail('files_type');
+                }
+
+                $binary = \str_contains($home[$p], "\0");
+
+                return $done(['path' => $p, 'size' => \strlen($home[$p]), 'mtime' => 1763337600, 'mode' => '0644', 'sha256' => \hash('sha256', $home[$p]), 'binary' => $binary, 'content' => $binary ? '' : $home[$p]]);
+
+            case 'files.write':
+                $p = (string) $args['path'];
+
+                if (!$isDir($parent($p))) {
+                    return $fail('files_missing');
+                }
+
+                if (\array_key_exists($p, $home) && ($args['create'] ?? false) === true) {
+                    return $fail('files_exists');
+                }
+
+                if (($args['expect'] ?? '') !== '' && \hash('sha256', (string) ($home[$p] ?? '')) !== $args['expect']) {
+                    return $fail('files_changed');
+                }
+
+                $home[$p] = (string) \file_get_contents($staged((string) $args['staged']));
+
+                return $done(['path' => $p, 'size' => \strlen($home[$p]), 'sha256' => \hash('sha256', $home[$p])]);
+
+            case 'files.upload':
+                $p = $join((string) $args['dir'], (string) $args['name']);
+
+                if (!$isDir((string) $args['dir'])) {
+                    return $fail('files_missing');
+                }
+
+                if (\array_key_exists($p, $home) && ($args['overwrite'] ?? false) !== true) {
+                    return $fail('files_exists');
+                }
+
+                $home[$p] = (string) \file_get_contents($staged((string) $args['staged']));
+
+                return $done(['path' => $p, 'size' => \strlen($home[$p])]);
+
+            case 'files.download':
+                $p = (string) $args['path'];
+
+                if (!\array_key_exists($p, $home)) {
+                    return $fail('files_missing');
+                }
+
+                if ($home[$p] === null) {
+                    return $fail('files_type');
+                }
+
+                \file_put_contents($staged((string) $args['into']), $home[$p]);
+
+                return $done(['name' => \basename($p), 'size' => \strlen($home[$p])]);
+
+            case 'files.mkdir':
+            case 'files.create':
+                $p = (string) $args['path'];
+
+                if (\array_key_exists($p, $home)) {
+                    return $fail('files_exists');
+                }
+
+                if (!$isDir($parent($p))) {
+                    return $fail('files_missing');
+                }
+
+                $home[$p] = $op === 'files.mkdir' ? null : '';
+
+                return $done(['path' => $p]);
+
+            case 'files.rename':
+            case 'files.move':
+            case 'files.copy':
+                $pairs = $op === 'files.rename' ? [(string) $args['from'] => (string) $args['to']] : [];
+
+                foreach ($op === 'files.rename' ? [] : (array) $args['paths'] as $p) {
+                    if (!$isDir((string) $args['to'])) {
+                        return $fail('files_type');
+                    }
+
+                    $pairs[(string) $p] = $join((string) $args['to'], \basename((string) $p));
+                }
+
+                foreach ($pairs as $from => $to) {
+                    if ($op !== 'files.copy' && $protected((string) $from)) {
+                        return $fail('files_protected');
+                    }
+
+                    if (!\array_key_exists((string) $from, $home)) {
+                        return $fail('files_missing');
+                    }
+
+                    if (\array_key_exists($to, $home)) {
+                        return $fail('files_exists');
+                    }
+                }
+
+                foreach ($pairs as $from => $to) {
+                    foreach ($home as $p => $content) {
+                        $p = (string) $p;
+
+                        if ($p === (string) $from || \str_starts_with($p, $from . '/')) {
+                            $home[$to . \substr($p, \strlen((string) $from))] = $content;
+
+                            if ($op !== 'files.copy') {
+                                unset($home[$p]);
+                            }
+                        }
+                    }
+                }
+
+                return $done($op === 'files.rename' ? ['from' => $args['from'], 'to' => $args['to']] : ['count' => \count($pairs), 'skipped' => 0]);
+
+            case 'files.delete':
+                $count = 0;
+
+                foreach ((array) $args['paths'] as $d) {
+                    if ($protected((string) $d)) {
+                        return $fail('files_protected');
+                    }
+
+                    foreach (\array_keys($home) as $p) {
+                        if ((string) $p === $d || \str_starts_with((string) $p, $d . '/')) {
+                            unset($home[$p]);
+                            $count += (string) $p === $d ? 1 : 0;
+                        }
+                    }
+                }
+
+                return $done(['count' => $count, 'skipped' => \count((array) $args['paths']) - $count]);
+
+            case 'files.chmod':
+                if (\preg_match('/^0?[0-7]{3}$/', (string) $args['mode']) !== 1) {
+                    return $fail('bad_args', 'permissions must be three octal digits such as 644 or 755');
+                }
+
+                return $done(['count' => \count((array) $args['paths']), 'skipped' => 0]);
+
+            case 'files.compress':
+                $home[(string) $args['to']] = 'PK-archive';
+
+                return $done(['path' => $args['to'], 'size' => 10, 'items' => \count((array) $args['paths'])]);
+
+            case 'files.extract':
+                $home[$join((string) $args['to'], 'extracted.txt')] = 'x';
+
+                return $done(['to' => $args['to'], 'files' => 1, 'dirs' => 0, 'bytes' => 1, 'skipped' => 0]);
+
+            case 'files.usage':
+                $dir = (string) $args['path'];
+                $entries = [];
+                $total = 0;
+
+                foreach ($home as $p => $content) {
+                    if ($parent((string) $p) !== $dir) {
+                        continue;
+                    }
+
+                    $bytes = 0;
+                    $items = 0;
+
+                    foreach ($home as $q => $c) {
+                        if ((string) $q === (string) $p || \str_starts_with((string) $q, $p . '/')) {
+                            $bytes += \strlen((string) $c);
+                            $items += (string) $q === (string) $p ? 0 : 1;
+                        }
+                    }
+
+                    $entries[] = ['name' => \basename((string) $p), 'type' => $content === null ? 'dir' : 'file', 'bytes' => $bytes, 'items' => $items];
+                    $total += $bytes;
+                }
+
+                \usort($entries, static fn(array $a, array $b): int => $b['bytes'] <=> $a['bytes']);
+
+                return $done(['path' => $dir === '' ? '.' : $dir, 'bytes' => $total, 'items' => \count($entries), 'entries' => $entries, 'truncated' => false]);
+        }
+
+        return $fail('unknown_op');
     }
 }

@@ -19,7 +19,6 @@ use App\Modules\Dns\DnsOutcome;
 use App\Modules\Dns\DnsRecords;
 use App\Modules\Dns\DnsSync;
 use App\Modules\Dns\DnsZones;
-use App\Modules\Packages\Http\PackageApi;
 
 /**
  * DNS through the API, with the same rules as the panels.

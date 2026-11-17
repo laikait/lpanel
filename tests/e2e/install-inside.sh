@@ -465,8 +465,10 @@ t_default443() { case "$WEB" in
                  esac; }
 t_renew()     { local before; before=$(issuer shop.example.test | grep serial)
                 mariadb -uroot lpanel -e "update ssl_sites s join domains d on d.id = s.domain_id set s.not_before = now() - interval 80 day, s.not_after = now() + interval 10 day where d.name = 'shop.example.test'"
-                lpanel ssl:autossl --wait >/dev/null && local after; after=$(issuer shop.example.test | grep serial)
-                echo "$before -> $after" >&2; [ -n "$after" ] && [ "$before" != "$after" ] && [ "$(sget shop.example.test /)" = "200 " ]; }
+                lpanel ssl:autossl --wait > /tmp/renew.out 2>&1; local after; after=$(issuer shop.example.test | grep serial)
+                echo "$before -> $after" >&2; [ "$before" != "$after" ] || { cat /tmp/renew.out >&2; ssl_row shop.example.test "concat_ws(' ', cert_id, not_after, failures, retry_at, last_error)" >&2
+                    ls -l --time-style=+%T /etc/pki/lpanel/sites/shop1/ >&2; mariadb -uroot -N lpanel -e "select id, kind, state, error, created_at, finished_at from ssl_orders order by id desc limit 3" >&2 || true; }
+                [ -n "$after" ] && [ "$before" != "$after" ] && [ "$(sget shop.example.test /)" = "200 " ]; }
 t_fallback()  { acme https://127.0.0.1:14999/dir \
                 && lpanel ssl:settings --eab-kid kid-1 --eab-hmac zWNDZM6eQGHWpSRTPal5eIUYFTu7EajVIoguysqZ9wG44nMEtx3MUAsUDkMTQ12W > /tmp/ssl.settings \
                 && grep -q "letsencrypt then zerossl" /tmp/ssl.settings \
@@ -1077,6 +1079,92 @@ check "a deleted mailbox's mail is deleted" t_mail_delete
 check "terminating an account removes its mail" t_mail_gone
 check "mail changes are in the audit log" t_mail_audit
 lpanel mail:settings --smarthost none >/dev/null
+
+# M7a: the file manager. Every operation runs as the account's own user,
+# inside its home; contents go through the panel's staging folder.
+echo "== files"
+lpanel packages:create Filer --disk=20 >/dev/null
+echo "Owner-Pass-Word-7" | lpanel accounts:create shop7 seven.example.test Filer >/dev/null
+F=/home/shop7
+t_files_staging() { [ "$(stat -c '%a %U %G' /var/lib/lpanel/files)" = "700 lpanel lpanel" ]; }
+t_files_cli()     { lpanel files:mkdir shop7 public_html/app >/dev/null && printf 'hello\n' | lpanel files:write shop7 public_html/app/index.html >/dev/null \
+                    && [ "$(lpanel files:read shop7 public_html/app/index.html)" = hello ] \
+                    && [ "$(stat -c '%U %G %a' $F/public_html/app/index.html)" = "shop7 shop7 644" ] && [ "$(stat -c '%U %a' $F/public_html/app)" = "shop7 755" ] \
+                    && lpanel files:list shop7 public_html/app | grep -q 'index.html' \
+                    && lpanel files:rename shop7 public_html/app/index.html public_html/app/home.html >/dev/null && [ -f $F/public_html/app/home.html ] \
+                    && lpanel files:copy shop7 public_html/app tmp >/dev/null && [ -f $F/tmp/app/home.html ] \
+                    && lpanel files:mkdir shop7 public_html/old >/dev/null \
+                    && lpanel files:move shop7 tmp/app public_html/old >/dev/null && [ -f $F/public_html/old/app/home.html ] \
+                    && lpanel files:delete shop7 public_html/old >/dev/null && [ ! -e $F/public_html/old ] \
+                    && lpanel files:chmod shop7 public_html/app/home.html 600 >/dev/null && [ "$(stat -c %a $F/public_html/app/home.html)" = 600 ] \
+                    && lpanel files:chmod shop7 public_html/app/home.html 644 >/dev/null; }
+t_files_owner()   { install -d -o root -g root -m 0755 $F/rootdir && echo root-only > $F/rootdir/file \
+                    && ! echo changed | lpanel files:write shop7 rootdir/file 2>/tmp/fown.err && grep -q 'permissions do not allow' /tmp/fown.err && [ "$(cat $F/rootdir/file)" = root-only ] \
+                    && ! lpanel files:delete shop7 rootdir/file 2>/dev/null && [ -f $F/rootdir/file ] \
+                    && ! lpanel files:delete shop7 public_html 2>/dev/null && [ -d $F/public_html ] && rm -rf $F/rootdir; }
+t_files_escape()  { runuser -u shop7 -- ln -s /etc $F/etclink && runuser -u shop7 -- ln -s /home/shop1 $F/neighbour || { echo "links"; return 1; }
+                    lpanel files:read shop7 etclink/passwd >/tmp/fesc.out 2>&1 && { echo "read through the link"; return 1; }
+                    grep -q 'out of your home' /tmp/fesc.out || { echo "read: $(cat /tmp/fesc.out)"; return 1; }
+                    lpanel files:list shop7 neighbour >/tmp/fesc.out 2>&1 && { echo "listed a neighbour: $(cat /tmp/fesc.out)"; return 1; }
+                    lpanel files:read shop7 ../shop1/public_html/index.php >/dev/null 2>&1 && { echo "read with .."; return 1; }
+                    echo x | lpanel files:write shop7 etclink/lpanel-e2e >/tmp/fesc.out 2>&1 && { echo "wrote through the link"; return 1; }
+                    [ ! -e /etc/lpanel-e2e ] || { echo "/etc/lpanel-e2e exists"; return 1; }
+                    lpanel files:delete shop7 etclink >/tmp/fesc.out 2>&1 || { echo "delete: $(cat /tmp/fesc.out)"; return 1; }
+                    [ ! -L $F/etclink ] && [ -f /etc/passwd ] || { echo "the link or its target"; return 1; }
+                    rm -f $F/neighbour; }
+t_files_quota()   { head -c 30000000 /dev/urandom > /tmp/big.bin && ! lpanel files:upload shop7 /tmp/big.bin public_html 2>/tmp/fq.err \
+                    && grep -q 'out of disk space' /tmp/fq.err && [ ! -e $F/public_html/big.bin ] && ! ls -a $F/public_html | grep -q '^\.lpanel-' \
+                    && head -c 100000 /dev/urandom > /tmp/small.bin && lpanel files:upload shop7 /tmp/small.bin public_html >/dev/null && cmp -s /tmp/small.bin $F/public_html/small.bin \
+                    && rm -f /tmp/dl.bin && lpanel files:download shop7 public_html/small.bin /tmp/dl.bin >/dev/null && cmp -s /tmp/small.bin /tmp/dl.bin; }
+t_files_archive() { lpanel files:compress shop7 public_html/app backup.tar.gz >/dev/null && lpanel files:compress shop7 public_html/app backup.zip >/dev/null \
+                    && tar tzf $F/backup.tar.gz | grep -q '^app/home.html$' && [ "$(stat -c %U $F/backup.zip)" = shop7 ] \
+                    && lpanel files:extract shop7 backup.zip restore >/dev/null && cmp -s $F/public_html/app/home.html $F/restore/app/home.html \
+                    && python3 -c 'import zipfile; z = zipfile.ZipFile("/tmp/slip.zip", "w"); z.writestr("../../escaped.txt", "x"); z.writestr("ok.txt", "y"); z.close()' \
+                    && install -o shop7 -g shop7 -m 0644 /tmp/slip.zip $F/slip.zip && lpanel files:extract shop7 slip.zip slip | tee /dev/stderr | grep -q 'left out' \
+                    && [ -f $F/slip/ok.txt ] && [ ! -e /home/escaped.txt ] && [ ! -e $F/escaped.txt ]; }
+t_files_usage()   { lpanel files:usage shop7 > /tmp/fusage.out; cat /tmp/fusage.out >&2; grep -Eq ' public_html/$' /tmp/fusage.out && grep -q ' total' /tmp/fusage.out; }
+t_files_panel()   { [ "$(signin_as 7444 /panel shop7 Owner-Pass-Word-7)" = "303 https://127.0.0.1:7444/panel" ] \
+                    && curl -ks -b /tmp/jar2 -c /tmp/jar2 'https://127.0.0.1:7444/panel/files?path=public_html/app' -o /tmp/files.html && grep -q 'home.html' /tmp/files.html \
+                    && curl -ks -b /tmp/jar2 -c /tmp/jar2 'https://127.0.0.1:7444/panel/files/edit?path=public_html/app/home.html' -o /tmp/edit.html \
+                    && local sum; sum=$(grep -o 'name="expect" value="[0-9a-f]*"' /tmp/edit.html | sed 's/.*value="//;s/"$//') && [ -n "$sum" ] \
+                    && curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null --data-urlencode "_token=$(token /tmp/edit.html)" -d path=public_html/app/home.html -d "expect=$sum" \
+                         --data-urlencode 'content=<h1>from the panel</h1>' https://127.0.0.1:7444/panel/files/save && grep -q 'from the panel' $F/public_html/app/home.html \
+                    && [ "$(curl -ks -b /tmp/jar2 -o /dev/null -w '%{http_code}' --data-urlencode "_token=$(token /tmp/edit.html)" -d path=public_html/app/home.html -d "expect=$sum" -d content=stale https://127.0.0.1:7444/panel/files/save)" = 422 ] \
+                    && echo "uploaded through the panel" > /tmp/up.txt \
+                    && curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null -F "_token=$(token /tmp/files.html)" -F dir=public_html/app -F 'files[]=@/tmp/up.txt' https://127.0.0.1:7444/panel/files/upload \
+                    && cmp -s /tmp/up.txt $F/public_html/app/up.txt && [ "$(stat -c %U $F/public_html/app/up.txt)" = shop7 ] \
+                    && [ "$(curl -ks -b /tmp/jar2 'https://127.0.0.1:7444/panel/files/download?path=public_html/app/up.txt')" = "uploaded through the panel" ] \
+                    && curl -ks -b /tmp/jar2 'https://127.0.0.1:7444/panel/files/usage' | grep -q 'public_html' \
+                    && [ -z "$(ls -A /var/lib/lpanel/files)" ] || { echo "staging: $(ls -A /var/lib/lpanel/files)"; return 1; }; }
+t_files_site()    { [ "$(curl -skL --resolve seven.example.test:80:127.0.0.1 --resolve seven.example.test:443:127.0.0.1 http://seven.example.test/app/home.html)" = '<h1>from the panel</h1>' ]; }
+t_files_api()     { [ "$(api -o /tmp/fapi.json -w '%{http_code}' 'https://127.0.0.1:7443/admin/api/v1/accounts/shop7/files?path=public_html/app')" = 200 ] && grep -q '"name":"up.txt"' /tmp/fapi.json \
+                    && [ "$(api -o /dev/null -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"path":"public_html/api.txt","content":"from the api"}' https://127.0.0.1:7443/admin/api/v1/accounts/shop7/files/content)" = 200 ] \
+                    && [ "$(cat $F/public_html/api.txt)" = "from the api" ] \
+                    && [ "$(api -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{"paths":["mail"]}' https://127.0.0.1:7443/admin/api/v1/accounts/shop7/files/delete)" = 403 ] \
+                    && [ "$(api 'https://127.0.0.1:7443/admin/api/v1/accounts/shop7/files/download?path=public_html/api.txt')" = "from the api" ]; }
+t_files_label()   { echo moved > $F/moved.html && chown shop7:shop7 $F/moved.html && restorecon $F/moved.html \
+                    && lpanel files:move shop7 moved.html public_html >/dev/null && stat -c %C $F/public_html/moved.html | grep -q httpd_user_rw_content_t \
+                    || { stat -c %C $F/public_html/moved.html; return 1; }; }
+t_files_audit()   { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'files.%'" | tr '\n' ' '); echo "$got" >&2
+                    for want in files.mkdir:ok files.write:ok files.rename:ok files.copy:ok files.delete:ok files.chmod:ok files.upload:ok files.download:ok \
+                                files.compress:ok files.extract:ok files.move:ok files.write:failed; do
+                        grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
+                    done
+                    ! mariadb -uroot -N lpanel -e "select details from audit_log where action like 'files.%'" | grep -q 'from the panel'; }
+check "the file manager's staging folder is the panel's alone" t_files_staging
+check "lpanel files:*: make, write, read, rename, copy, delete, chmod, as the account's user" t_files_cli
+check "the agent works as the account: a root-owned file and the server's folders stay" t_files_owner
+check "links out of the home lead nowhere: no reading, listing or writing through them" t_files_escape
+check "the account's quota holds for uploads, and nothing half-written is left" t_files_quota
+check "archives: .tar.gz and .zip made and extracted; a zip-slip entry is left out" t_files_archive
+check "lpanel files:usage shows what takes the space" t_files_usage
+check "the User panel lists, edits (and refuses a stale save), uploads and downloads" t_files_panel
+check "the site serves what the file manager saved" t_files_site
+check "the API lists, saves, refuses the server's folders and downloads" t_files_api
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    check "a file moved into public_html gets the web's label" t_files_label
+fi
+check "file changes are in the audit log, never their contents" t_files_audit
 
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"

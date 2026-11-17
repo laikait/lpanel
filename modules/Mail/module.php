@@ -17,16 +17,16 @@ use App\Modules\Mail\Http\MailClientPages;
 use App\Modules\Mail\Http\MailPages;
 use App\Modules\Mail\Http\MailToolPages;
 use App\Modules\Mail\MailActions;
-use App\Modules\Mail\MailChecks;
-use App\Modules\Mail\MailHosts;
-use App\Modules\Mail\MailSetup;
-use App\Modules\Mail\Webmail;
 use App\Modules\Mail\Mailboxes;
+use App\Modules\Mail\MailChecks;
 use App\Modules\Mail\MailDomains;
+use App\Modules\Mail\MailHosts;
 use App\Modules\Mail\MailListeners;
 use App\Modules\Mail\MailQueue;
+use App\Modules\Mail\MailSetup;
 use App\Modules\Mail\MailSync;
 use App\Modules\Mail\MailUsage;
+use App\Modules\Mail\Webmail;
 
 /**
  * Mail: each account's domains receive and send mail. Mailboxes (IMAP,

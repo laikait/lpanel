@@ -194,6 +194,9 @@ install -d -m 0755 -o root -g root "$PANEL" /usr/local/lpa /usr/local/lpa/bin /e
 install -d -m 0750 -o root -g lpanel /etc/lpanel
 install -d -m 0750 -o lpanel -g lpanel /var/log/lpanel /var/lib/lpanel
 install -d -m 0700 -o nginx -g nginx /var/lib/lpanel/nginx
+# The file manager's uploads, saved files and downloads on their way to and
+# from the agent, which opens them by name only (lpa.json's files_staging).
+install -d -m 0700 -o lpanel -g lpanel /var/lib/lpanel/files
 install -d -m 0700 -o root -g root /etc/lpanel/tls
 # Sites' certificates and keys (the agent's store), and the folder every site
 # answers certificate checks from (HTTP-01).

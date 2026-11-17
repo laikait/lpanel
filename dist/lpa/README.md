@@ -51,7 +51,7 @@ Operations marked async answer `accepted` at once. The panel then asks
 
 | Path | What |
 |---|---|
-| `cmd/lpa` | the command: `serve`, `facts`, `ops`, `version` |
+| `cmd/lpa` | the command: `serve`, `facts`, `ops`, `version` (and `files-worker`, which only the agent starts) |
 | `internal/protocol` | wire format, signing, golden vectors |
 | `internal/server` | socket, peer check, replay cache, dispatch, journal use |
 | `internal/journal` | exactly-once records |
@@ -64,6 +64,7 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `internal/quota` | kernel user quotas through `quotactl(2)` (ext4 and XFS) |
 | `internal/web` | accounts' sites: an Apache file and PHP-FPM pools per account, through the staged pipeline below |
 | `internal/certs` | certificates: the store, checks of key and chain, the ACME client (`golang.org/x/crypto/acme`) and the hostname's certificate |
+| `internal/files` | the file manager: a worker as the account's user, inside its home (`os.Root`), and the staging folder |
 | `internal/sysexec` | runs `useradd`, `usermod`, `userdel`, `pkill`, `restorecon`, `httpd`, `systemctl` and Remi's `php-fpm` by absolute path, no shell, fixed environment |
 | `packaging/` | the systemd unit and the default configuration |
 
@@ -120,6 +121,19 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `mail.sso_revoke` | change | `{username, address}`: forget a mailbox's sign-on password, or (no address) every one of the account's |
 | `mail.sso_expire` | change | `{}`: forget every sign-on password past its time |
 | `mail.check` | read-only | `{domains, ip, hostname, lists}`: each domain's SPF (and its result for the address), DKIM, DMARC and MX as the world's DNS has them; the address's reverse name, whether it leads back, and the blocklists |
+| `files.list` | read-only | `{username, path}`: a folder's files and folders (10,000 at most), links with where they lead |
+| `files.read` | read-only | `{username, path}`: a file's text and SHA-256, for the editor (4 MB at most; `binary` when it is not text) |
+| `files.usage` | read-only | `{username, path}`: the disk space each thing in a folder takes, largest first |
+| `files.download` | read-only | `{username, path, into}`: copy a file (2 GB at most) into a staged file the panel made |
+| `files.write` | change | `{username, path, staged, expect, create}`: replace a file with staged content; refused (`files_changed`) when its SHA-256 is no longer `expect` |
+| `files.upload` | change | `{username, dir, name, staged, overwrite}`: put a staged upload into a folder |
+| `files.mkdir`, `files.create` | change | `{username, path}`: a folder, or an empty file |
+| `files.rename` | change | `{username, from, to}`: rename or move one path |
+| `files.move`, `files.copy` | change | `{username, paths, to}`: into a folder; refused whole when a name is taken there |
+| `files.delete` | change | `{username, paths}`: folders with everything in them; a link, not what it leads to |
+| `files.chmod` | change | `{username, paths, mode}`: the nine permission bits, not recursively |
+| `files.compress` | change | `{username, paths, to}`: paths in one folder into a new `.zip`, `.tar.gz` or `.tar` |
+| `files.extract` | change | `{username, path, to}`: an archive into a folder; what is there already, links, and names that would climb out are left out |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -400,3 +414,35 @@ empty when nobody signed on. `web.apply` takes `mail_setup` and `webmail`
 for each site and `webmail_url`: the site passes mail clients' setup
 requests to the panel (`127.0.0.1:7449/mail-setup/`) and sends its webmail
 names to webmail, before HTTPS, a suspension and the owner's own rules.
+
+### Files (`files.*`)
+
+M7a's file operations never touch an account's files as root. The agent
+starts its own binary as the account's user (`lpa files-worker`: that uid,
+its group only, a fixed environment, umask 022, killed with the agent),
+sends it the request on standard input and reads one reply. The worker opens
+the home as an `os.Root`, so every path resolves beneath it: a link that
+leads out (or is absolute) is refused with `files_outside`, wherever it is
+in the path, however it was swapped in. The account's own permissions and
+disk quota then apply to everything the worker does.
+
+Contents never travel in a request. The panel puts uploads and saved files
+in its staging folder (`lpa.json` `files_staging`, default
+`/var/lib/lpanel/files`, 0700 lpanel) under 64 hex digits, and makes an empty
+one for a download. The agent opens that name without following links and
+takes only a plain file with one link that root does not own, then hands the
+worker the open descriptor (3 to read, 4 to write); the worker never sees the
+folder.
+
+Saving writes a temporary file beside the target and renames it over, so a
+file is either the old one or the whole new one (through a link, or with
+more than one hard link, it is written in place). `public_html`, `mail`,
+`tmp` and `logs` at the top of the home are the server's: their contents
+are the owner's, but they cannot be deleted, renamed, moved or chmod'ed.
+Archives unpack at most 8 GB and 200,000 entries; links, devices and names
+with `..` are left out, and no entry keeps setuid bits. With SELinux on,
+what is moved into one of those folders is relabelled. The error codes are
+`files_missing`, `files_exists`, `files_denied`, `files_quota`,
+`files_outside`, `files_type`, `files_too_big`, `files_binary`,
+`files_changed`, `files_protected`, `files_archive`, `files_staged` and
+`files_into`.

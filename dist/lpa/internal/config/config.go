@@ -51,6 +51,9 @@ type Config struct {
 	// Mail is "on" when the installer set up Exim and Dovecot; "off" turns
 	// the mail operations off.
 	Mail string `json:"mail"`
+	// FilesStaging is the panel's folder for the file manager's uploads,
+	// saved files and downloads; the agent opens files in it by name only.
+	FilesStaging string `json:"files_staging"`
 }
 
 // DNS is lpa.json's "dns".
@@ -87,6 +90,7 @@ func Defaults() Config {
 		Web:          "apache",
 		PanelPHP:     "83",
 		Mail:         "off",
+		FilesStaging: "/var/lib/lpanel/files",
 		ACME: ACME{
 			LetsEncrypt: "https://acme-v02.api.letsencrypt.org/directory",
 			ZeroSSL:     "https://acme.zerossl.com/v2/DV90",
@@ -114,7 +118,7 @@ func Load(file string) (Config, error) {
 }
 
 func (c Config) validate() error {
-	for name, p := range map[string]string{"socket": c.Socket, "panel_key_file": c.PanelKeyFile, "journal_dir": c.JournalDir, "homes_base": c.HomesBase} {
+	for name, p := range map[string]string{"socket": c.Socket, "panel_key_file": c.PanelKeyFile, "journal_dir": c.JournalDir, "homes_base": c.HomesBase, "files_staging": c.FilesStaging} {
 		if !path.IsAbs(p) {
 			return fmt.Errorf("%s must be an absolute path, not %q", name, p)
 		}

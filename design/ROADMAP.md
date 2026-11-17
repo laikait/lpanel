@@ -708,6 +708,74 @@ autoconfiguration, a certificate for each mail domain, deliverability).
 - File manager, Pure-FTPd/FTPS, jailed SSH/SFTP, SSH key manager, disk usage
   explorer.
 
+M7 is in three parts: M7a (the file manager and the disk usage explorer),
+M7b (FTP accounts on Pure-FTPd, with FTPS), M7c (jailed SSH and SFTP, and
+the SSH key manager).
+
+**M7a: the file manager and disk usage. Built 2026-11-17.**
+- **The agent works as the account.** Every file operation runs in a
+  worker, the agent's own binary started as the account's user (its uid,
+  its group only, a fixed environment), which opens the home as an
+  `os.Root`: every path stays beneath it, and a link that leads out is
+  refused wherever it is in the path. The account's own permissions and disk
+  quota apply, as to its SSH or PHP. The agent never reads or writes a
+  customer's file as root.
+- **Contents never travel in a request** (requests are small, signed and
+  journalled). Uploads, saved files and downloads go through the panel's
+  staging folder (`/var/lib/lpanel/files`, the panel's alone, also its PHP's
+  upload folder) under random names; the agent opens one by name, takes only
+  a plain file with one link that root does not own, and hands the worker the
+  open descriptor.
+- **The file manager** (User panel → Files, feature `file_manager`):
+  - browse with a path bar, hidden files shown or not, links with where they
+    lead (and a warning when it is out of the home);
+  - new folder, new file, upload several files at once (64 MB, the panel's
+    limit), from the form or dropped on the list, replace or not;
+  - with what is selected: rename, move, copy (to a folder typed from the
+    home or from here), permissions (the nine bits, never setuid),
+    compress (`.zip`, `.tar.gz`, `.tar`), delete; extract an archive into a
+    folder; download a file;
+  - **the editor**: text up to 4 MB, Tab and Shift+Tab, Ctrl+S, a warning
+    before leaving unsaved changes; line ends kept; saved over a temporary
+    file renamed into place; a save over someone else's change since it was
+    opened is refused (its SHA-256) and what was typed is kept;
+  - `public_html`, `mail`, `tmp` and `logs` are the server's: what is in
+    them is the owner's, but they cannot be deleted, renamed, moved or
+    chmod'ed;
+  - archives unpack at most 8 GB and 200,000 entries; links, devices and
+    names that would climb out are left out, and files already there stay.
+  - Every page works without JavaScript; on a phone the panels open as a
+    sheet along the bottom.
+- **Disk usage** (Files → Disk usage): what in a folder takes the space,
+  largest first, with each folder's share and how many files are in it;
+  open a folder to look inside; the account's files, mail and databases
+  against the package's space.
+- **A suspended account's owner** is signed out as before; administrators
+  still look and clean up through the API and the CLI.
+- **With SELinux on**, what is moved into `public_html`, `tmp`, `logs` or
+  `mail` gets that folder's labels.
+- **Where it shows:** the API (`/admin/api/v1/accounts/{user}/files`,
+  `…/content`, `…/download`, `…/upload`, `…/usage`, `…/mkdir|create|rename|move|copy|delete|chmod|compress|extract`)
+  and `lpanel files:list|read|write|upload|download|mkdir|rename|move|copy|delete|chmod|compress|extract|usage|sweep`
+  (`files:write` reads standard input). Every change is audited
+  (`files.*`, and downloads), never a file's contents.
+- **Tests:** Go (paths and names; staged files: links, hard links, root's;
+  links out of the home for every operation; saving and its conflict;
+  copying, moving and the server's folders; archives in all three formats,
+  zip-slip and a tar link followed by a file through it; disk usage); PHP
+  147; `tests/e2e/install.sh` with the real agent, as the account's user
+  (a root-owned folder, links to `/etc` and to another account, the quota on
+  an upload, the panel's edit, upload and download, the site serving what
+  was saved, the label of a moved file): `WEB=apache` 249 checks,
+  `WEB=nginx` 250, `WEB=hybrid` 254; `tests/e2e/agent.sh`
+  37.
+- **Not yet:** uploads over 64 MB in pieces (FEATURES.md's "chunked");
+  syntax highlighting in the editor (it needs an editor library served by
+  the panel itself, as the CSP allows no other); archives packed or unpacked in
+  the background for very large folders; a trash to undo a delete;
+  recursive permissions; administrators opening the file manager itself
+  (they log in as the owner).
+
 ### M8: Backups
 - Restic schedules and retention; local, S3, B2, Wasabi and SFTP destinations.
 - User downloads and self-service restore; admin restore.

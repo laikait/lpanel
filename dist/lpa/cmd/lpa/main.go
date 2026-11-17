@@ -28,6 +28,7 @@ import (
 	"lpa/internal/certs"
 	"lpa/internal/config"
 	"lpa/internal/dns"
+	"lpa/internal/files"
 	"lpa/internal/journal"
 	"lpa/internal/mail"
 	"lpa/internal/mysql"
@@ -53,6 +54,9 @@ func main() {
 	switch os.Args[1] {
 	case "serve":
 		err = serve(os.Args[2:])
+	case "files-worker":
+		// Started by the agent itself, as an account's user (internal/files).
+		os.Exit(files.WorkerMain(os.Stdin, os.Stdout))
 	case "facts":
 		err = printJSON(ops.ReadFacts(sysinfo.New(), version, time.Now()))
 	case "ops":
@@ -147,6 +151,13 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	ops.DB(reg, dbs)
 	ops.DNS(reg, zones)
 	ops.Mail(reg, mails)
+	self, err := os.Executable()
+	if err != nil {
+		self = "/usr/local/lpa/bin/lpa"
+	}
+	fm := &files.Manager{Owner: acc.Owner, Staging: cfg.FilesStaging, Self: self, SELinux: acc.SELinux, Run: sysexec.Exec{}, Log: log}
+	fm.Defaults()
+	ops.Files(reg, fm)
 	if serving {
 		// The hostname certificate may have changed while the agent was
 		// stopped, or before mail was installed.

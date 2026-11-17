@@ -195,6 +195,18 @@ the world's DNS for the deliverability page: each domain's SPF (evaluated
 for the server's address), DKIM, DMARC and MX, and the address's reverse
 name and blocklists.
 
+The file manager (M7a) is the one place the agent works on customers' own
+files, and it does not do that as root. Each `files.*` operation starts the
+agent's own binary as the account's user (`lpa files-worker`: its uid and
+group only, a fixed environment), which opens the home as an `os.Root`, so
+every path resolves beneath it and a link out of it is refused. The kernel
+applies the account's permissions and quota, exactly as to its own PHP or
+SSH. File contents never go in a request (they are capped at 64 KB, signed
+and journalled): the panel stages uploads and saved files in
+`/var/lib/lpanel/files` under random names, the agent opens one by name
+(no links, one hard link, not root's) and passes the worker the open
+descriptor. Downloads come back the same way into a file the panel made.
+
 Exim finds a domain's files with `dsearch`, which answers only with a name
 that is in the folder, so a name from a message never becomes part of a
 path. Exim hands local mail to Dovecot over LMTP and checks logins through
@@ -310,6 +322,7 @@ user, not from SELinux.
 | `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444, and 127.0.0.1:7449 for mail clients' setup) |
 | `/etc/lpanel/authd.json`, `/etc/pam.d/lpanel` | root sign-in: who may be checked, and the PAM stack used |
 | `/var/lib/lpanel/`, `/var/log/lpanel/` | panel data and logs |
+| `/var/lib/lpanel/files/` | the file manager's staging folder (0700 lpanel): uploads (also PHP's upload folder), saved files and downloads on their way to and from the agent, under 64 hex digits; `files:sweep` removes what nobody collected |
 | `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs (`lpanel_agent_exec_t`, `lpanel_authd_exec_t`) |
 | `/etc/lpa/lpa.json`, `/etc/lpa/panel.pub` | agent config, and the panel's public key |
 | `/var/lib/lpa/journal/` | agent journal |

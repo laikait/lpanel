@@ -11,17 +11,17 @@ use App\Modules\Accounts\Accounts;
 use App\Modules\Agent\AgentClient;
 use App\Modules\Agent\AgentUnavailable;
 use App\Modules\Identity\PanelUsers;
-use App\Modules\Mail\MailActions;
-use App\Modules\Mail\MailChecks;
-use App\Modules\Mail\MailSetup;
-use App\Modules\Mail\Webmail;
-use App\Modules\Mail\Mailboxes;
 use App\Modules\Mail\Http\MailToolPages;
+use App\Modules\Mail\MailActions;
+use App\Modules\Mail\Mailboxes;
+use App\Modules\Mail\MailChecks;
 use App\Modules\Mail\MailDomains;
 use App\Modules\Mail\MailOutcome;
 use App\Modules\Mail\MailQueue;
+use App\Modules\Mail\MailSetup;
 use App\Modules\Mail\MailSync;
 use App\Modules\Mail\MailUsage;
+use App\Modules\Mail\Webmail;
 
 /**
  * mail:* from the shell, as root: the same actions as the panels and the

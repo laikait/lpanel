@@ -1,0 +1,57 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div class="fm-edit-title">
+        <nav class="fm-crumbs fm-crumbs-plain" aria-label="{{ 'Files.path_label'|local }}">
+            {% for c in crumbs %}
+                {% if not loop.first %}<span class="fm-sep" aria-hidden="true">/</span>{% endif %}
+                <a href="{{ c.url }}">{% if loop.first %}{{ icon('folder') }}<span>{{ 'Files.home'|local }}</span>{% else %}{{ c.name }}{% endif %}</a>
+            {% endfor %}
+            <span class="fm-sep" aria-hidden="true">/</span>
+        </nav>
+        <h1 class="mono fm-edit-name">{{ name }}</h1>
+    </div>
+    <div class="fm-edit-actions">
+        <a class="btn btn-sm" href="{{ back_url }}">{{ icon('folder') }}{{ 'Files.back'|local }}</a>
+        <a class="btn btn-sm" href="{{ download_url }}">{{ icon('download') }}{{ 'Files.download'|local }}</a>
+    </div>
+</div>
+
+{% if readonly %}
+    <div class="alert alert-warning">{{ icon('pause') }}<p>{{ 'Files.suspended_text'|local }}</p></div>
+{% endif %}
+{% if error %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ error|local }}</p></div>
+{% endif %}
+
+{% if too_big or binary %}
+<div class="card">
+    <div class="empty">
+        {{ icon('file') }}
+        <h3>{{ too_big ? 'Files.too_big_title'|local : 'Files.binary_title'|local }}</h3>
+        <p>{{ too_big ? 'Files.too_big_text'|local : 'Files.binary_text'|local }}</p>
+        <p><a class="btn btn-primary" href="{{ download_url }}">{{ icon('download') }}{{ 'Files.download'|local }}</a></p>
+    </div>
+</div>
+{% else %}
+<form class="card fm-editor-card" method="post" action="{{ save_url }}" data-editor-form>
+    <input type="hidden" name="_token" value="{{ lp.token }}">
+    <input type="hidden" name="path" value="{{ path }}">
+    <input type="hidden" name="expect" value="{{ expect }}">
+    <input type="hidden" name="crlf" value="{{ crlf ? '1' : '0' }}">
+    <div class="fm-editor-head">
+        <span class="badge plain">{{ language }}</span>
+        <span class="fm-editor-meta">{% if mtime_text %}{{ 'Files.editor_meta'|local({size: size|bytes, when: mtime_text, mode: mode}) }}{% else %}{{ 'Files.editor_new'|local }}{% endif %}</span>
+        <span class="fm-editor-dirty" data-editor-dirty hidden>{{ 'Files.unsaved'|local }}</span>
+        {% if not readonly %}<button class="btn btn-sm btn-primary" type="submit">{{ icon('check') }}{{ 'Files.save'|local }}</button>{% endif %}
+    </div>
+    <label class="sr-only" for="fm-content">{{ 'Files.editor_label'|local({name: name}) }}</label>
+    <textarea class="fm-editor mono" id="fm-content" name="content" rows="28" spellcheck="false" autocapitalize="none" autocomplete="off" wrap="off" data-editor data-unsaved="{{ 'Files.unsaved'|local }}"{% if readonly %} readonly{% endif %}>{{ content }}</textarea>
+    <div class="card-foot fm-editor-foot">
+        <span class="hint">{{ 'Files.save_hint'|local }}</span>
+        {% if not readonly %}<button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Files.save'|local }}</button>{% endif %}
+    </div>
+</form>
+{% endif %}
+{% endblock %}
