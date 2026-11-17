@@ -116,6 +116,10 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `mail.queue` | read-only | `{search, limit}`: the messages in Exim's queue, oldest first |
 | `mail.queue_view` | read-only | `{id}`: one queued message (up to 256 KB) and Exim's log of it |
 | `mail.track` | read-only | `{username, search, status, days, limit}`: what became of each message, from Exim's log; with a username, only mail from or to its domains |
+| `mail.sso` | change | `{username, address, hours}`: a webmail sign-on password for one of the account's mailboxes (Dovecot accepts it beside the mailbox's own); the same one while it has an hour left |
+| `mail.sso_revoke` | change | `{username, address}`: forget a mailbox's sign-on password, or (no address) every one of the account's |
+| `mail.sso_expire` | change | `{}`: forget every sign-on password past its time |
+| `mail.check` | read-only | `{domains, ip, hostname, lists}`: each domain's SPF (and its result for the address), DKIM, DMARC and MX as the world's DNS has them; the address's reverse name, whether it leads back, and the blocklists |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -384,3 +388,15 @@ folder/forward/discard, `target`, `stop`). A mailbox's Sieve script holds,
 in order: blocked senders (discarded), spam filing by `X-LPanel-Spam-Score`
 (unless the sender is allowed), its filters, its autoresponder. No script is
 written for a mailbox with nothing to do.
+
+M6c adds to each mail domain the certificate of its site (`cert`, its id in
+the certificate store): when it covers `mail.<domain>` and is valid, the
+agent copies it to `/etc/pki/lpanel-mail/sni/mail.<domain>/` (Exim finds it
+by SNI) and lists it in Dovecot's `/etc/dovecot/lpanel/sni.conf` (then
+reloads Dovecot). Webmail's sign-on passwords live in
+`/etc/dovecot/lpanel/sso.d/<domain>` (salted SHA-256, Dovecot's second
+passdb) and `sso.keep/<domain>` (root's alone); every domain has the first,
+empty when nobody signed on. `web.apply` takes `mail_setup` and `webmail`
+for each site and `webmail_url`: the site passes mail clients' setup
+requests to the panel (`127.0.0.1:7449/mail-setup/`) and sends its webmail
+names to webmail, before HTTPS, a suspension and the owner's own rules.

@@ -46,6 +46,7 @@ final class MailToolPages
             ['key' => 'mailboxes', 'label' => 'Mail.tab_mailboxes', 'url' => $router->url('user.mail')],
             ['key' => 'spam', 'label' => 'Mail.tab_spam', 'url' => $router->url('user.mail.spam')],
             ['key' => 'track', 'label' => 'Mail.tab_track', 'url' => $router->url('user.mail.track')],
+            ['key' => 'checks', 'label' => 'Mail.tab_checks', 'url' => $router->url('user.mail.checks')],
         ];
     }
 
@@ -56,6 +57,7 @@ final class MailToolPages
             ['key' => 'overview', 'label' => 'Mail.tab_overview', 'url' => $router->url('admin.mail')],
             ['key' => 'queue', 'label' => 'Mail.tab_queue', 'url' => $router->url('admin.mail.queue')],
             ['key' => 'track', 'label' => 'Mail.tab_track', 'url' => $router->url('admin.mail.track')],
+            ['key' => 'checks', 'label' => 'Mail.tab_checks', 'url' => $router->url('admin.mail.checks')],
         ];
     }
 

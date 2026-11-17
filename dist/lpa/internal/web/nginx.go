@@ -94,6 +94,7 @@ func (m *Manager) renderNginxSites(a ApplyArgs, home string) string {
 		// (a suspension, HTTPS, the www. choice, redirects) skip them.
 		b.WriteString("    if ($uri ~ \"^/\\.well-known/acme-challenge/\") {\n        break;\n    }\n")
 		m.nginxChallenge(&b)
+		m.nginxMail(&b, a, s)
 		if secure && s.TLS.Force {
 			b.WriteString("    if ($scheme = \"http\") {\n        return 301 https://$host$request_uri;\n    }\n")
 		}
@@ -179,6 +180,26 @@ func nginxInner(b *strings.Builder, in, socket, etc string) {
 // folder: a prefix location that wins over every regex one.
 func (m *Manager) nginxChallenge(b *strings.Builder) {
 	fmt.Fprintf(b, "    location ^~ /.well-known/acme-challenge/ {\n        alias %s/;\n        default_type text/plain;\n    }\n", m.Challenges)
+}
+
+// nginxMail sends the site's webmail names on to webmail, and mail clients'
+// setup requests to the panel, ahead of HTTPS, a suspension and the owner's
+// own rules (the "break" skips those). Regex locations are tried in order,
+// so these come before the site's own.
+func (m *Manager) nginxMail(b *strings.Builder, a ApplyArgs, s Site) {
+	if len(s.Webmail) > 0 {
+		names := make([]string, len(s.Webmail))
+		for i, w := range s.Webmail {
+			names[i] = regexp.QuoteMeta(w)
+		}
+		fmt.Fprintf(b, "    if ($host ~* \"^(%s)$\") {\n        return 302 %s;\n    }\n", strings.Join(names, "|"), a.WebmailURL)
+	}
+	if !s.MailSetup {
+		return
+	}
+	b.WriteString("    if ($uri ~* \"^/((\\.well-known/autoconfig/)?mail/config-v1\\.1\\.xml|autodiscover/autodiscover\\.xml)$\") {\n        break;\n    }\n")
+	fmt.Fprintf(b, "    location ~* ^/(\\.well-known/autoconfig/)?mail/config-v1\\.1\\.xml$ {\n        proxy_pass %s/mail-setup/autoconfig$is_args$args;\n    }\n", m.MailSetup)
+	fmt.Fprintf(b, "    location ~* ^/autodiscover/autodiscover\\.xml$ {\n        proxy_pass %s/mail-setup/autodiscover$is_args$args;\n    }\n", m.MailSetup)
 }
 
 // renderNginxRules writes the www. choice, the redirects and hotlink

@@ -12,6 +12,7 @@ use App\Modules\Agent\AgentUnavailable;
 use App\Modules\Agent\Protocol;
 use App\Modules\Dns\DnsOutcome;
 use App\Modules\Dns\DnsSync;
+use App\Modules\Dns\DnsZones;
 use App\Modules\Packages\Packages;
 
 /**
@@ -47,6 +48,8 @@ final class MailSync
         private readonly Mailboxes $mail,
         private readonly AgentClient $agent,
         private readonly DnsSync $dns,
+        private readonly DnsZones $zones,
+        private readonly MailHosts $hosts,
     ) {}
 
     /**
@@ -62,7 +65,17 @@ final class MailSync
         }
 
         $row = $this->row($accountId);
-        $args = \json_encode($this->mail->state($account, $this->packages->byId((int) $account['package_id'])), \JSON_THROW_ON_ERROR);
+        $state = $this->mail->state($account, $this->packages->byId((int) $account['package_id']));
+        $certs = $state['domains'] === [] ? [] : $this->hosts->certs($account);
+
+        // Each domain's site certificate, when it covers mail.<domain>.
+        foreach ($state['domains'] as $i => $d) {
+            if (isset($certs[$d['name']])) {
+                $state['domains'][$i]['cert'] = $certs[$d['name']];
+            }
+        }
+
+        $args = \json_encode($state, \JSON_THROW_ON_ERROR);
 
         if ($row['op_args'] === $args && $row['state'] === self::APPLIED && !$force) {
             return MailOutcome::done();
@@ -155,6 +168,7 @@ final class MailSync
 
         $package = $this->packages->byId((int) $account['package_id']);
         $email = $package === null || Packages::has($package, 'email');
+        $ips = $this->zones->addresses();
         $changed = 0;
 
         foreach ($this->mail->domains($accountId) as $d) {
@@ -164,7 +178,7 @@ final class MailSync
                 continue;
             }
 
-            $records = $email ? self::records($d, (string) $domain['kind']) : [];
+            $records = $email ? self::records($d, (string) $domain['kind'], $ips) : [];
 
             if ($this->dns->provide($domain, self::DNS_SOURCE, $records)->status !== DnsOutcome::SKIPPED) {
                 $changed++;
@@ -176,14 +190,16 @@ final class MailSync
 
     /**
      * The records a mail domain needs: its DKIM key, a DMARC policy (not for
-     * subdomains, which take their domain's), and SPF for a subdomain (the
-     * zone's template gives the domain its own).
+     * subdomains, which take their domain's), SPF for a subdomain (the
+     * zone's template gives the domain its own), and the names mail clients'
+     * setup and webmail are reached by (the zone's template gives mail.).
      *
-     * @param array<string, mixed> $domain a row of mail_domains
+     * @param array<string, mixed>             $domain a row of mail_domains
+     * @param array{ip4: string, ip6: string} $ips    the addresses new records point at
      *
      * @return list<array{name: string, type: string, ttl: int, content: string}>
      */
-    public static function records(array $domain, string $kind): array
+    public static function records(array $domain, string $kind, array $ips = ['ip4' => '', 'ip6' => '']): array
     {
         $name = (string) $domain['name'];
         $records = [];
@@ -196,6 +212,14 @@ final class MailSync
             $records[] = ['name' => $name, 'type' => 'TXT', 'ttl' => 3600, 'content' => self::SPF];
         } else {
             $records[] = ['name' => '_dmarc.' . $name, 'type' => 'TXT', 'ttl' => 3600, 'content' => self::DMARC];
+
+            foreach (['autoconfig', 'autodiscover', 'webmail'] as $prefix) {
+                foreach (['A' => $ips['ip4'], 'AAAA' => $ips['ip6']] as $type => $ip) {
+                    if ($ip !== '') {
+                        $records[] = ['name' => $prefix . '.' . $name, 'type' => $type, 'ttl' => 3600, 'content' => $ip];
+                    }
+                }
+            }
         }
 
         return $records;

@@ -46,6 +46,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"lpa/internal/protocol"
 	"lpa/internal/sysexec"
@@ -108,6 +109,10 @@ type Filter struct {
 // Domain is one mail domain of the account.
 type Domain struct {
 	Name string `json:"name"`
+	// Cert is the certificate of the domain's site, by its id in the
+	// certificate store; when it covers mail.<domain>, mail is served under
+	// that name with it too.
+	Cert string `json:"cert,omitempty"`
 	// Local is true when the domain's mail is delivered on this server;
 	// false when its MX is elsewhere (mail to it is sent there, though its
 	// mailboxes may still log in and send).
@@ -199,6 +204,17 @@ type Manager struct {
 	ChownIn func(root *os.Root, name string, uid, gid int) error
 	// KeyBits is the size of new DKIM keys (2048).
 	KeyBits int
+	// Certs finds one of an account's stored certificates (certs.Store.Files),
+	// for a mail domain's own certificate; nil serves the hostname's alone.
+	Certs func(user, id string) (crt, key string, err error)
+	// Now is the time (tests set it).
+	Now func() time.Time
+	// Resolver, when set, is the DNS server ("127.0.0.1:53") the checks ask
+	// instead of the system's; Lookups and LocalIPs replace the lookups and
+	// the server's addresses in tests.
+	Resolver string
+	Lookups  *lookups
+	LocalIPs func() []string
 
 	mu sync.Mutex
 }
@@ -422,6 +438,9 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (ApplyResult, error) {
 		if err := count(m.writeFile(m.passwdPath(d.Name), passwdFile(d, a.Username, uid, gid, home, a.Suspended), 0o640, dovecotGID)); err != nil {
 			return res, err
 		}
+		if err := count(m.applySSO(d, a.Suspended, dovecotGID)); err != nil {
+			return res, err
+		}
 		if err := m.applySieve(ctx, d, a.Spam, gid, &res); err != nil {
 			return res, err
 		}
@@ -468,6 +487,13 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (ApplyResult, error) {
 			}
 			m.Log.Info("mail domain removed", "domain", name, "username", a.Username)
 		}
+	}
+	copies, err := m.applySNI(a, had, eximGID)
+	if err := count(copies, err); err != nil {
+		return res, err
+	}
+	if err := m.dovecotSNI(ctx, dovecotGID, copies); err != nil {
+		return res, err
 	}
 	if boxes > 0 {
 		if err := m.mailDir(ctx, home, uid, gid); err != nil {
@@ -554,7 +580,8 @@ func (m *Manager) removeDomain(name string) (int, error) {
 	n := 0
 	for _, p := range []string{
 		m.eximPath("local", name), m.eximPath("mailboxes", name), m.eximPath("forwards", name),
-		m.eximPath("dkim", name), m.passwdPath(name), m.sieveDir(name), m.eximPath("owners", name),
+		m.eximPath("dkim", name), m.passwdPath(name), m.sieveDir(name), m.ssoPath(name), m.ssoKeepPath(name),
+		filepath.Join(m.sniDir(), mailName(name)), m.eximPath("owners", name),
 	} {
 		if !exists(p) {
 			continue
@@ -725,7 +752,7 @@ func (m *Manager) Usage(_ context.Context, a UsageArgs) (Usage, error) {
 
 // RemoveFor deletes an account's mail files; account.terminate runs it
 // before the account's user goes (its mail goes with its home).
-func (m *Manager) RemoveFor(_ context.Context, username string) error {
+func (m *Manager) RemoveFor(ctx context.Context, username string) error {
 	if !m.Enabled || checkAccount(username) != nil {
 		return nil
 	}
@@ -740,6 +767,15 @@ func (m *Manager) RemoveFor(_ context.Context, username string) error {
 			return err
 		}
 		m.Log.Info("mail domain removed", "domain", d, "username", username)
+	}
+	// Dovecot must not be left naming certificates that are gone: it would
+	// not start again.
+	if len(domains) > 0 {
+		if _, dovecot, err := m.groups(); err == nil {
+			if err := m.dovecotSNI(ctx, dovecot, false); err != nil {
+				return err
+			}
+		}
 	}
 	return os.RemoveAll(m.eximPath("accounts", username))
 }

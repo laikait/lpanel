@@ -6,6 +6,7 @@ namespace App\Modules\Web;
 
 use App\Engine\Database\ConnectionManager;
 use App\Engine\Database\Query\QueryBuilder;
+use App\Engine\Filter\FilterEngine;
 use App\Modules\Accounts\AccountRules;
 use App\Modules\Accounts\Accounts;
 
@@ -38,6 +39,7 @@ final class Domains
         private readonly ConnectionManager $connections,
         private readonly SiteFeatures $features,
         private readonly PhpSettings $php,
+        private readonly FilterEngine $filters,
     ) {}
 
     /** @return list<array<string, mixed>> an account's domains: main first, then by name */
@@ -324,7 +326,7 @@ final class Domains
      *
      * @param array<string, mixed> $account
      *
-     * @return array{username: string, suspended: bool, sites: list<array{name: string, aliases: list<string>, docroot: string, php: string}>, pool: array{max_children: int}}
+     * @return array{username: string, suspended: bool, sites: list<array{name: string, aliases: list<string>, docroot: string, php: string, mail_setup?: bool, webmail?: list<string>}>, pool: array{max_children: int}, webmail_url?: string}
      */
     public function state(array $account): array
     {
@@ -359,13 +361,48 @@ final class Domains
             ] + $this->features->stateOf($row);
         }
 
-        return [
+        $state = [
             'username' => (string) $account['username'],
             'suspended' => $account['status'] === Accounts::SUSPENDED,
             'sites' => $sites,
             'pool' => ['max_children' => 5],
             'php_settings' => (object) $this->php->all((int) $account['id']),
         ];
+
+        // Other modules' names and rules for the sites (web.state: Mail adds
+        // its names, mail clients' setup and webmail). Only those are taken
+        // back, each checked; the agent checks them again.
+        $changed = $this->filters->apply('web.state', $state, $account);
+
+        if (!\is_array($changed) || !\is_array($changed['sites'] ?? null) || \count($changed['sites']) !== \count($sites)) {
+            return $state;
+        }
+
+        $strings = static fn(mixed $list): array => \array_values(\array_filter(\is_array($list) ? $list : [], 'is_string'));
+
+        foreach (\array_values($changed['sites']) as $i => $site) {
+            if (!\is_array($site) || ($site['name'] ?? null) !== $sites[$i]['name']) {
+                continue;
+            }
+
+            $sites[$i]['aliases'] = $strings($site['aliases'] ?? []);
+
+            if (isset($site['mail_setup'])) {
+                $sites[$i]['mail_setup'] = (bool) $site['mail_setup'];
+            }
+
+            if (isset($site['webmail'])) {
+                $sites[$i]['webmail'] = $strings($site['webmail']);
+            }
+        }
+
+        $state['sites'] = $sites;
+
+        if (\is_string($changed['webmail_url'] ?? null)) {
+            $state['webmail_url'] = $changed['webmail_url'];
+        }
+
+        return $state;
     }
 
     /**

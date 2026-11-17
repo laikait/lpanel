@@ -34,6 +34,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -60,6 +61,8 @@ var (
 	versionRule = regexp.MustCompile(`^[5-8][0-9]$`)
 	partRule    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$`)
 	certRule    = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	// webmailRule is where webmail names send visitors.
+	webmailRule = regexp.MustCompile(`^https://[a-z0-9]([a-z0-9.-]{0,251}[a-z0-9])?(:[0-9]{1,5})?/webmail/$`)
 )
 
 // Site is one VirtualHost: a domain, the other names it answers to, the
@@ -79,6 +82,13 @@ type Site struct {
 	// TLS serves the site over HTTPS too, with a certificate the agent
 	// stores (ssl.issue, ssl.install); nil serves HTTP only.
 	TLS *SiteTLS `json:"tls"`
+	// MailSetup sends mail clients' setup requests (Thunderbird's
+	// autoconfig, Outlook's autodiscover) at any of the site's names to the
+	// panel, which answers them for the account's mail domains.
+	MailSetup bool `json:"mail_setup"`
+	// Webmail are names of the site (its aliases) that send visitors on to
+	// webmail (ApplyArgs.WebmailURL).
+	Webmail []string `json:"webmail"`
 }
 
 // SiteTLS names a site's certificate, by its id in the certificate store,
@@ -108,6 +118,9 @@ type ApplyArgs struct {
 	// PHPSettings are the owner's php.ini choices for each PHP version
 	// ("83" → "memory_limit" → "256M"), written into that version's pool.
 	PHPSettings map[string]map[string]string `json:"php_settings"`
+	// WebmailURL is where the sites' webmail names send visitors
+	// (https://<hostname>:7444/webmail/).
+	WebmailURL string `json:"webmail_url"`
 
 	// tls holds each HTTPS site's certificate files, found by Apply.
 	tls map[string]tlsFiles
@@ -158,12 +171,15 @@ type Manager struct {
 	NginxLogDir   string // /var/log/nginx/lpanel
 	// BackendPort is where Apache listens behind nginx (hybrid), on 127.0.0.1.
 	BackendPort int
-	PHPRoot     string // /opt/remi: phpXY/root/usr/sbin/php-fpm
-	PHPConf     string // /etc/opt/remi: phpXY/php-fpm.d/
-	PHPRun      string // /var/opt/remi: phpXY/run/php-fpm/
-	WebGroup    string // apache
-	Run         sysexec.Runner
-	Log         *slog.Logger
+	// MailSetup is the panel's local address for mail clients' setup
+	// requests (the panel's nginx, on 127.0.0.1 only).
+	MailSetup string
+	PHPRoot   string // /opt/remi: phpXY/root/usr/sbin/php-fpm
+	PHPConf   string // /etc/opt/remi: phpXY/php-fpm.d/
+	PHPRun    string // /var/opt/remi: phpXY/run/php-fpm/
+	WebGroup  string // apache
+	Run       sysexec.Runner
+	Log       *slog.Logger
 	// Owner describes an LPanel account and refuses anything else
 	// (accounts.Manager.Owner).
 	Owner func(name string) (uid, gid int, home string, err error)
@@ -226,6 +242,9 @@ func (m *Manager) Defaults() {
 	set(&m.NginxSites, "/etc/nginx/lpanel/sites")
 	set(&m.NginxHtpasswd, "/etc/nginx/lpanel/htpasswd")
 	set(&m.NginxLogDir, "/var/log/nginx/lpanel")
+	if m.MailSetup == "" {
+		m.MailSetup = "http://127.0.0.1:7449"
+	}
 	if m.BackendPort == 0 {
 		m.BackendPort = 8080
 	}
@@ -400,6 +419,14 @@ func (a *ApplyArgs) check() error {
 		}
 		if s.TLS != nil && !certRule.MatchString(s.TLS.Cert) {
 			return badArgs("%s: certificate id %q is not 16 hex digits", s.Name, s.TLS.Cert)
+		}
+		if len(s.Webmail) > 0 && !webmailRule.MatchString(a.WebmailURL) {
+			return badArgs("webmail_url %q is not https://<host>[:port]/webmail/", a.WebmailURL)
+		}
+		for _, w := range s.Webmail {
+			if !slices.Contains(s.Aliases, w) || strings.HasPrefix(w, "*.") {
+				return badArgs("%s: webmail name %q is not one of the site's names", s.Name, w)
+			}
 		}
 	}
 	return checkPHPSettings(a.PHPSettings)

@@ -11,7 +11,7 @@ made of two programs and a small helper:
 
 ```
  Browser / API client / billing system
-        │ HTTPS :7443 (Admin panel)  :7444 (User panel)  :7445 (webmail)
+        │ HTTPS :7443 (Admin panel)  :7444 (User panel, /webmail/, /phpmyadmin/)
         ▼
  ┌──────────────────────────────┐
  │ panel nginx (own instance)   │   separate from the customers' web server
@@ -83,7 +83,12 @@ There are two interfaces over one set of routes and one API:
 | **Admin panel** | :7443 | Root admins and panel admins see everything. Resellers see what their ACL allows, with their own branding. |
 | **User panel** | :7444 | Account owners see their account. Sub-users see what the owner granted. |
 
-Webmail is served on :7445. All three ports can be changed at install time.
+Webmail (Roundcube) is served at `/webmail/` on the User panel's port, as
+phpMyAdmin is at `/phpmyadmin/`: one port fewer to open and to give a
+certificate. Each runs in a PHP-FPM pool of its own, as its own user.
+Customers' sites send `webmail.<domain>` there, and pass mail clients'
+setup requests (autoconfig, autodiscover) to the panel's nginx on
+127.0.0.1:7449, which serves only `/mail-setup/`.
 
 ## Agent (`lpa`)
 
@@ -167,6 +172,28 @@ host and its login. The queue (`mail.queue`, `mail.queue_view`,
 `mail.queue_act`) and delivery tracking (`mail.track`, which reads Exim's
 log and gives an account only its own domains' mail) are read through the
 agent too; the panel never reads Exim's spool or logs itself.
+
+Webmail's single sign-on (`mail.sso`) gives a random password for a
+mailbox, good for a few hours and the same while it is good; Dovecot
+accepts it beside the mailbox's own (a second passdb,
+`/etc/dovecot/lpanel/sso.d/<domain>`, salted SHA-256; the passwords
+themselves in `sso.keep/`, root's alone). Exim checks logins through
+Dovecot, so webmail sends as the mailbox too. The panel hands the password
+to Roundcube in a one-time ticket, as it does for phpMyAdmin; `mail.apply`
+drops it when the mailbox goes or the account is suspended, and
+`mail.sso_expire` when its time is up.
+
+Each mail domain's site answers to `mail.`, `autoconfig.`, `autodiscover.`
+and `webmail.<domain>` (the Mail module adds them through the `web.state`
+filter, and their records to the zone), so AutoSSL puts them in the site's
+certificate. When that certificate covers `mail.<domain>`, `mail.apply`
+names it and the agent copies it to `/etc/pki/lpanel-mail/sni/` for Exim
+(which finds it by SNI with dsearch on each connection) and writes
+Dovecot's `local_name` blocks (`sni.conf`, then a reload). The Web module's
+`web.applied` hook brings a renewed certificate to mail. `mail.check` asks
+the world's DNS for the deliverability page: each domain's SPF (evaluated
+for the server's address), DKIM, DMARC and MX, and the address's reverse
+name and blocklists.
 
 Exim finds a domain's files with `dsearch`, which answers only with a name
 that is in the folder, so a name from a message never becomes part of a
@@ -275,10 +302,12 @@ user, not from SELinux.
 | `/etc/exim/exim.conf`, `/etc/dovecot/dovecot.conf` | the mail servers' configurations, written by the installer whole |
 | `/etc/exim/lpanel/` | accounts' mail data for Exim (lpa; 0750 root:exim): owners, local, mailboxes, forwards, dkim, accounts, smarthost, smarthost_auth (the relay login as Exim sends it), filter; smarthost_login (0600 root: the plain login, to keep a password); srs_secret (the installer) |
 | `/etc/rspamd/local.d/` | Rspamd's settings: workers, no signing (the installer); actions.conf and antivirus.conf (lpa) |
-| `/etc/dovecot/lpanel/` | mailbox logins (`passwd.d`, 0750 root:dovecot) and autoresponders (`sieve/<domain>`, root:account group) |
-| `/etc/pki/lpanel-mail/` | the hostname certificate's copy for Exim and Dovecot (0640 root:exim), refreshed by lpa when it changes |
+| `/etc/dovecot/lpanel/` | mailbox logins (`passwd.d`, 0750 root:dovecot), webmail sign-on passwords (`sso.d`, hashed; `sso.keep`, 0700 root), autoresponders (`sieve/<domain>`, root:account group) and each mail domain's certificate (`sni.conf`) |
+| `/etc/pki/lpanel-mail/` | the hostname certificate's copy for Exim and Dovecot (0640 root:exim), refreshed by lpa when it changes; `sni/mail.<domain>/` each mail domain's own |
+| `/usr/local/lpanel-webmail/roundcube/` | Roundcube, root-owned and read-only; `config/config.inc.php` 0640 root:lpanel-webmail; the `lpanel_sso` plugin takes the panel's tickets |
+| `/var/lib/lpanel-webmail/` | Roundcube's sessions, temporary files and logs (0700 lpanel-webmail); `tickets/` one-time sign-on tickets (2770 lpanel:lpanel-webmail). Its database is `lpanel_webmail` |
 | `/var/lib/mysql/<user>_<name>/` | each account database's files, owned by MariaDB; their size comes off the home's quota |
-| `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444) |
+| `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444, and 127.0.0.1:7449 for mail clients' setup) |
 | `/etc/lpanel/authd.json`, `/etc/pam.d/lpanel` | root sign-in: who may be checked, and the PAM stack used |
 | `/var/lib/lpanel/`, `/var/log/lpanel/` | panel data and logs |
 | `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs (`lpanel_agent_exec_t`, `lpanel_authd_exec_t`) |

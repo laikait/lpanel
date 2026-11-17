@@ -15,6 +15,9 @@ use App\Modules\Accounts\Accounts;
 use App\Modules\Agent\AgentClient;
 use App\Modules\Agent\AgentUnavailable;
 use App\Modules\Mail\MailActions;
+use App\Modules\Mail\MailChecks;
+use App\Modules\Mail\MailSetup;
+use App\Modules\Mail\Webmail;
 use App\Modules\Mail\Mailboxes;
 use App\Modules\Mail\MailOutcome;
 use App\Modules\Mail\MailQueue;
@@ -44,6 +47,9 @@ final class MailApi
         private readonly AgentClient $agent,
         private readonly MailQueue $queue,
         private readonly Localization $localization,
+        private readonly Webmail $webmail,
+        private readonly MailSetup $setup,
+        private readonly MailChecks $checks,
     ) {}
 
     public function index(Identity $identity, string $username): JsonResponse
@@ -236,6 +242,37 @@ final class MailApi
         return $this->tracked((string) $account['username'], $request);
     }
 
+    /** Deliverability of the account's mail domains, and of the server's address. */
+    public function accountChecks(Identity $identity, string $username): Response
+    {
+        return $this->checked($this->mail->domains((int) $this->account($identity, $username)['id']));
+    }
+
+    /** What a mail client needs for a mailbox. */
+    public function setup(Identity $identity, string $username, string $address): Response
+    {
+        $account = $this->account($identity, $username);
+
+        return ApiResponse::item($this->setup->settings($account, (string) $this->mailbox($account, $address)['address']));
+    }
+
+    /**
+     * A one-time address that opens webmail as the mailbox, with no password
+     * (good for a minute): for a billing system's or a support tool's
+     * "open webmail" link.
+     */
+    public function webmail(Request $request, Identity $identity, string $username, string $address): Response
+    {
+        $account = $this->account($identity, $username);
+        [$url, $why] = $this->webmail->signOn($identity, $request, $account, $this->mailbox($account, $address), absolute: true);
+
+        if ($url === null) {
+            return new JsonResponse(['error' => 'conflict', 'message' => $this->localization->get((string) $why)], 409);
+        }
+
+        return ApiResponse::item(['url' => $url, 'expires_in' => Webmail::TICKET_SECONDS]);
+    }
+
     // -------------------------------------------------------------------------
     // The mail servers
 
@@ -316,6 +353,34 @@ final class MailApi
     }
 
     /** ?account=&search=&status=&days= */
+    /** Deliverability of the server's address (its reverse name, the blocklists). */
+    public function serverChecks(): Response
+    {
+        return $this->checked([]);
+    }
+
+    /** @param list<array<string, mixed>> $domains */
+    private function checked(array $domains): Response
+    {
+        $result = $this->checks->run($domains);
+
+        if ($result['error'] !== null) {
+            return $this->unavailable($result['error']);
+        }
+
+        $text = fn(array $c): array => $c + ['message' => $this->localization->get((string) $c['text'], (array) $c['args'])];
+        $domains = [];
+
+        foreach ($result['domains'] as $d) {
+            $domains[] = ['checks' => \array_map($text, $d['checks']), 'worst' => MailChecks::worst($d['checks'])] + $d;
+        }
+
+        return ApiResponse::item([
+            'domains' => $domains,
+            'server' => ['checks' => \array_map($text, (array) ($result['server']['checks'] ?? []))] + $result['server'],
+        ]);
+    }
+
     public function track(Request $request): Response
     {
         $account = (string) $request->query('account', '');

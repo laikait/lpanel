@@ -949,6 +949,67 @@ t_mail_m6b_api() { [ "$(api -o /tmp/mspam.json -w '%{http_code}' -X PUT -H 'Cont
                   && grep -q '"junk":7' /tmp/mspam.json && [ "$(api -o /tmp/mq.json -w '%{http_code}' https://127.0.0.1:7443/admin/api/v1/email/queue)" = 200 ] && grep -q '"total"' /tmp/mq.json \
                   && [ "$(api -o /tmp/mtr.json -w '%{http_code}' 'https://127.0.0.1:7443/admin/api/v1/accounts/shop9/email/track?days=1')" = 200 ] && grep -q '"deliveries"' /tmp/mtr.json; }
 
+# M6c: mail clients' setup through the sites, webmail (Roundcube) and its
+# sign-on, a certificate for mail.<domain>, the deliverability checks.
+AD='<?xml version="1.0"?><Autodiscover xmlns="http://schemas.microsoft.com/exchange/autodiscover/outlook/requestschema/2006"><Request><EMailAddress>info@nine.example.test</EMailAddress><AcceptableResponseSchema>http://schemas.microsoft.com/exchange/autodiscover/outlook/responseschema/2006a</AcceptableResponseSchema></Request></Autodiscover>'
+export AD
+t_mail_autoconf() { curl -s -H 'Host: autoconfig.nine.example.test' http://127.0.0.1/mail/config-v1.1.xml -o /tmp/ac.xml && cat /tmp/ac.xml >&2 \
+                  && grep -q '<emailProvider id="nine.example.test">' /tmp/ac.xml && grep -q '<hostname>e2e-panel.test</hostname>' /tmp/ac.xml \
+                  && curl -s -H 'Host: nine.example.test' 'http://127.0.0.1/.well-known/autoconfig/mail/config-v1.1.xml?emailaddress=info%40nine.example.test' | grep -q '<domain>nine.example.test</domain>' \
+                  && curl -s -H 'Host: autodiscover.nine.example.test' -H 'Content-Type: text/xml' --data "$AD" http://127.0.0.1/autodiscover/autodiscover.xml -o /tmp/ad.xml \
+                  && grep -q '<LoginName>info@nine.example.test</LoginName>' /tmp/ad.xml \
+                  && [ "$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: autoconfig.nobody.example.test' http://127.0.0.1/mail/config-v1.1.xml)" = 404 ] \
+                  && [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7449/panel/login)" = 404 ] && ! ss -ltn | grep -E ':7449 ' | grep -qv '127.0.0.1:7449'; }
+t_webmail_names() { [ "$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'Host: webmail.nine.example.test' http://127.0.0.1/)" = "302 https://e2e-panel.test:7444/webmail/" ] \
+                  && grep -q 'mail.nine.example.test autoconfig.nine.example.test autodiscover.nine.example.test webmail.nine.example.test' $SITES/shop9.conf \
+                  && [ -n "$(q autoconfig.nine.example.test A)" ] && [ -n "$(q webmail.nine.example.test A)" ]; }
+t_webmail_up()  { curl -ks https://127.0.0.1:7444/webmail/ -o /tmp/rc.html && grep -q 'rcmloginuser' /tmp/rc.html \
+                  && [ "$(status https://127.0.0.1:7444/webmail/installer.php)" = 404 ] && [ "$(status https://127.0.0.1:7444/webmail/config/config.inc.php)" = 404 ] \
+                  && [ "$(stat -c '%a %U %G' /usr/local/lpanel-webmail/roundcube/config/config.inc.php)" = "640 root lpanel-webmail" ] \
+                  && ps -eo user:20,args | grep -q '^lpanel-webmail .*php-fpm: pool webmail'; }
+rc_login() { # address password -> the Location after logging in to Roundcube's own form
+    rm -f /tmp/rcjar; curl -ks -c /tmp/rcjar -b /tmp/rcjar https://127.0.0.1:7444/webmail/ -o /tmp/rc.html
+    curl -ks -c /tmp/rcjar -b /tmp/rcjar -o /dev/null -w '%{http_code} %{redirect_url}' --data-urlencode "_token=$(token /tmp/rc.html)" \
+        -d _task=login -d _action=login -d _timezone=UTC -d _url= --data-urlencode "_user=$1" --data-urlencode "_pass=$2" 'https://127.0.0.1:7444/webmail/?_task=login'
+}
+export -f rc_login
+t_webmail_login() { local r; r=$(rc_login info@nine.example.test "$MPW"); echo "$r" >&2; grep -q '^302 .*_task=mail' <<<"$r" \
+                  && curl -ks -b /tmp/rcjar 'https://127.0.0.1:7444/webmail/?_task=mail&_mbox=INBOX' -o /tmp/rcmail.html && { grep -q 'task-mail' /tmp/rcmail.html || { grep -o '<body[^>]*>' /tmp/rcmail.html; return 1; }; } \
+                  && r=$(rc_login info@nine.example.test wrong-password) && ! grep -q '_task=mail' <<<"$r"; }
+t_webmail_sso() { local url; url=$(lpanel mail:webmail shop9 info@nine.example.test) && echo "$url" >&2 && grep -q '^https://e2e-panel.test:7444/webmail/?_task=login&_lpanel=[0-9a-f]\{64\}$' <<<"$url" \
+                  && grep -q '^info:{SSHA256.b64}' /etc/dovecot/lpanel/sso.d/nine.example.test && [ "$(stat -c '%a %U %G' /etc/dovecot/lpanel/sso.d/nine.example.test)" = "640 root dovecot" ] \
+                  && [ "$(stat -c '%a %U' /etc/dovecot/lpanel/sso.keep/nine.example.test)" = "600 root" ] \
+                  && rm -f /tmp/ssojar && local r; r=$(curl -ks --resolve e2e-panel.test:7444:127.0.0.1 -c /tmp/ssojar -b /tmp/ssojar -o /dev/null -w '%{http_code} %{redirect_url}' "$url") && echo "$r" >&2 \
+                  && grep -q '^302 .*_task=mail' <<<"$r" && curl -ks --resolve e2e-panel.test:7444:127.0.0.1 -b /tmp/ssojar 'https://e2e-panel.test:7444/webmail/?_task=mail&_mbox=INBOX' -o /tmp/rcmail.html && { grep -q 'task-mail' /tmp/rcmail.html || { grep -o '<body[^>]*>' /tmp/rcmail.html; return 1; }; } \
+                  && [ -z "$(ls -A /var/lib/lpanel-webmail/tickets)" ] \
+                  && r=$(curl -ks --resolve e2e-panel.test:7444:127.0.0.1 -o /dev/null -w '%{http_code} %{redirect_url}' "$url") && ! grep -q '_task=mail' <<<"$r" \
+                  && echo "Mail-Pass-Word-2" | lpanel mail:password shop9 info@nine.example.test >/dev/null && ! grep -q '^info:' /etc/dovecot/lpanel/sso.d/nine.example.test \
+                  && echo "$MPW" | lpanel mail:password shop9 info@nine.example.test >/dev/null; }
+t_mail_sni()    { printf '127.0.0.1 nine.example.test www.nine.example.test mail.nine.example.test autoconfig.nine.example.test autodiscover.nine.example.test webmail.nine.example.test\n' >> /etc/hosts \
+                  && lpanel ssl:issue shop9 nine.example.test >/dev/null && ssl_row nine.example.test names | grep -q 'mail.nine.example.test' \
+                  && waitfor '[ -s /etc/pki/lpanel-mail/sni/mail.nine.example.test/crt ]' && [ "$(stat -c '%a %U %G' /etc/pki/lpanel-mail/sni/mail.nine.example.test/key)" = "640 root exim" ] \
+                  && grep -q 'local_name mail.nine.example.test' /etc/dovecot/lpanel/sni.conf \
+                  && echo | openssl s_client -connect 127.0.0.1:993 -servername mail.nine.example.test 2>/dev/null | openssl x509 -noout -ext subjectAltName | grep -q 'DNS:mail.nine.example.test' \
+                  && echo | openssl s_client -connect 127.0.0.1:465 -servername mail.nine.example.test 2>/dev/null | openssl x509 -noout -ext subjectAltName | grep -q 'DNS:mail.nine.example.test' \
+                  && echo | openssl s_client -connect 127.0.0.1:587 -starttls smtp -servername mail.nine.example.test 2>/dev/null | openssl x509 -noout -ext subjectAltName | grep -q 'DNS:mail.nine.example.test' \
+                  && ! echo | openssl s_client -connect 127.0.0.1:993 -servername other.name.test 2>/dev/null | openssl x509 -noout -ext subjectAltName | grep -q 'mail.nine.example.test' \
+                  && python3 /tmp/imap.py imaps 127.0.0.1 info@nine.example.test "$MPW" >/dev/null \
+                  && lpanel mail:setup shop9 info@nine.example.test | grep -Eq '^Server +mail.nine.example.test$' \
+                  && curl -s -H 'Host: autoconfig.nine.example.test' http://127.0.0.1/mail/config-v1.1.xml | grep -q '<hostname>mail.nine.example.test</hostname>'; }
+t_mail_check()  { lpanel mail:check shop9 > /tmp/mcheck.out; local c=$?; cat /tmp/mcheck.out >&2; [ $c = 0 ] \
+                  && grep -Eq '^  ok +SPF ' /tmp/mcheck.out && grep -Eq '^  ok +DKIM ' /tmp/mcheck.out && grep -Eq '^  ok +DMARC ' /tmp/mcheck.out && grep -Eq '^  ok +MX ' /tmp/mcheck.out \
+                  && local rid; rid=$(mariadb -uroot -N lpanel -e "select r.id from dns_records r join dns_zones z on z.id = r.zone_id where z.name = 'nine.example.test' and r.name = '_dmarc' and r.type = 'TXT'") \
+                  && lpanel dns:remove nine.example.test "$rid" >/dev/null && waitfor '[ -z "$(q _dmarc.nine.example.test TXT)" ]' \
+                  && { lpanel mail:check shop9 --domain=nine.example.test > /tmp/mcheck2.out; cat /tmp/mcheck2.out >&2; grep -Eq '^  BAD +DMARC ' /tmp/mcheck2.out; } \
+                  && lpanel dns:add nine.example.test _dmarc TXT 'v=DMARC1; p=none' >/dev/null; }
+t_mail_m6c_pages() { [ "$(signin_as 7444 /panel shop9 Owner-Pass-Word-9)" = "303 https://127.0.0.1:7444/panel" ] \
+                  && local id; id=$(mariadb -uroot -N lpanel -e "select b.id from mail_boxes b join mail_domains d on d.id = b.mail_domain_id where d.name = 'nine.example.test' and b.local = 'info'") \
+                  && curl -ks -b /tmp/jar2 "https://127.0.0.1:7444/panel/email/mailboxes/$id/setup" -o /tmp/msetup.html && { grep -q 'mail.nine.example.test' /tmp/msetup.html || { echo "setup page"; return 1; }; } \
+                  && curl -ks -b /tmp/jar2 "https://127.0.0.1:7444/panel/email/mailboxes/$id/setup/profile" -o /tmp/mprofile.xml && { grep -q 'com.apple.mail.managed' /tmp/mprofile.xml || { echo "profile"; return 1; }; } \
+                  && curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/email/checks -o /tmp/mchecks.html && { grep -q 'The published key matches' /tmp/mchecks.html || { echo "checks page"; grep -o '<p>[^<]*</p>' /tmp/mchecks.html | head; return 1; }; } \
+                  && local code; code=$(api -o /tmp/mwm.json -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' https://127.0.0.1:7443/admin/api/v1/accounts/shop9/email/mailboxes/info@nine.example.test/webmail) \
+                  && { [ "$code" = 200 ] && grep -q '_task=login&_lpanel=' /tmp/mwm.json && grep -q 'e2e-panel.test:7444' /tmp/mwm.json || { echo "api $code: $(cat /tmp/mwm.json)"; return 1; }; }; }
+
 t_mail_panel()  { [ "$(signin_as 7444 /panel shop9 Owner-Pass-Word-9)" = "303 https://127.0.0.1:7444/panel" ] \
                   && curl -ks -b /tmp/jar2 -c /tmp/jar2 https://127.0.0.1:7444/panel/email -o /tmp/email.html && grep -q 'info@nine.example.test' /tmp/email.html && grep -q 'e2e-panel.test' /tmp/email.html \
                   && local did; did=$(mariadb -uroot -N lpanel -e "select id from mail_domains where name='nine.example.test'") \
@@ -965,7 +1026,7 @@ t_mail_gone()   { lpanel accounts:terminate shop9 --yes >/dev/null \
                   && [ ! -e /etc/exim/lpanel/dkim/nine.example.test ] && [ "$(mariadb -uroot -N lpanel -e "select count(*) from mail_domains where name = 'nine.example.test'")" = 0 ]; }
 t_mail_audit()  { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'mail.%'" | tr '\n' ' '); echo "$got" >&2
                   for want in mail.mailbox_create:ok mail.mailbox_delete:ok mail.forwarder_add:ok mail.forwarder_remove:ok mail.responder_on:ok mail.responder_off:ok mail.domain_settings:ok mail.settings:ok \
-                              mail.spam:ok mail.filter_add:ok mail.filter_remove:ok mail.filtering:ok mail.queue:ok; do
+                              mail.spam:ok mail.filter_add:ok mail.filter_remove:ok mail.filtering:ok mail.queue:ok mail.webmail:ok; do
                       grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
                   done; }
 check "Exim and Dovecot run, on every mail port" t_mail_up
@@ -1002,6 +1063,14 @@ check "lpanel mail:queue lists, shows, freezes, thaws, removes and delivers" t_m
 check "lpanel mail:track: an account sees its own mail, refusals included" t_mail_track
 check "ClamAV refuses a virus (a local test signature)" t_mail_virus
 check "the API sets spam settings and reads the queue and tracking" t_mail_m6b_api
+check "mail clients find their settings at any of a site's names (autoconfig, autodiscover)" t_mail_autoconf
+check "webmail.<domain> goes to webmail; the mail names are the site's and in its zone" t_webmail_names
+check "Roundcube is served at /webmail/, as its own user; its installer and config are not" t_webmail_up
+check "a mailbox signs in to Roundcube with its own password, and not with a wrong one" t_webmail_login
+check "lpanel mail:webmail opens it with no password, once; a new password ends the sign-on" t_webmail_sso
+check "mail.<domain> gets the site's certificate, served by SNI on IMAP and SMTP" t_mail_sni
+check "lpanel mail:check: SPF, DKIM, DMARC and MX pass, and a missing DMARC is found" t_mail_check
+check "the setup page, the Apple profile, the checks page and the webmail API" t_mail_m6c_pages
 check "the owner sees the mailboxes and makes one in the User panel" t_mail_panel
 check "the API lists and deletes mailboxes" t_mail_api
 check "a deleted mailbox's mail is deleted" t_mail_delete

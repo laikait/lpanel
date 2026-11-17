@@ -52,6 +52,21 @@ echo "$PMA_SHA256  $pma" | sha256sum -c --quiet - || { echo "phpMyAdmin's checks
 install -m 0644 "$pma" "$out/phpmyadmin.tar.gz"
 echo "$PMA_VERSION" > "$out/PHPMYADMIN_VERSION"
 
+echo "== Roundcube"
+# A fixed release, checked against the checksum of the copy whose signature
+# by the Roundcube developers' key (F3E4 C04B B3DB 5D42 15C4 5F7F 5AB2 BAA1
+# 41C4 F7D5) was verified when it was pinned.
+RC_VERSION=1.7.6
+RC_SHA256=0168085bf0bfeeb5d4eca3b9730effbe610dbdb380a68567d292fec51f09db36
+rc="dist/build/cache/roundcubemail-${RC_VERSION}-complete.tar.gz"
+if [ ! -s "$rc" ] || ! echo "$RC_SHA256  $rc" | sha256sum -c --quiet - 2>/dev/null; then
+    mkdir -p dist/build/cache
+    curl -fsSL --retry 3 -o "$rc" "https://github.com/roundcube/roundcubemail/releases/download/${RC_VERSION}/roundcubemail-${RC_VERSION}-complete.tar.gz"
+fi
+echo "$RC_SHA256  $rc" | sha256sum -c --quiet - || { echo "Roundcube's checksum does not match"; rm -f "$rc"; exit 1; }
+install -m 0644 "$rc" "$out/roundcube.tar.gz"
+echo "$RC_VERSION" > "$out/ROUNDCUBE_VERSION"
+
 echo "== packaging"
 cp -r dist/installer/packaging/* "$out/packaging/"
 cp dist/lpa/packaging/lpa.service dist/lpa/packaging/lpa.json "$out/packaging/"

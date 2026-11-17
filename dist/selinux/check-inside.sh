@@ -52,6 +52,8 @@ check "the logs"                                 label /var/log/lpanel/nginx-err
 check "nginx's temporary files"                  label /var/lib/lpanel/nginx/body httpd_var_lib_t
 check "phpMyAdmin's code is read-only web content" label /usr/local/lpanel-pma/phpmyadmin/index.php httpd_sys_content_t
 check "its sessions and sign-on tickets are writable" label /var/lib/lpanel-pma/tickets/abc httpd_sys_rw_content_t
+check "Roundcube's code is read-only web content" label /usr/local/lpanel-webmail/roundcube/public_html/index.php httpd_sys_content_t
+check "its sessions, logs and sign-on tickets are writable" label /var/lib/lpanel-webmail/tickets/abc httpd_sys_rw_content_t
 check "the panel's PHP-FPM binary is httpd_exec_t" label /opt/remi/php83/root/usr/sbin/php-fpm httpd_exec_t
 check "an account's public_html is writable web content" label /home/shop1/public_html/wp-content/uploads/a.jpg httpd_user_rw_content_t
 check "its PHP sessions in tmp/ too"             label /home/shop1/tmp/sess_abc httpd_user_rw_content_t
@@ -88,6 +90,8 @@ echo "== what accounts' sites (Apache and their PHP-FPM, also httpd_t) need"
 on_by_default() { local r; r=$(semanage boolean -l); grep -Eq "^$1 +\([a-z]+ *, *on\)" <<<"$r" || { grep -E "^$1 " <<<"$r"; return 1; }; }
 check "7443 and 7444 are web ports"              bash -c 'semanage port -l | grep -E "^http_port_t" | grep -q 7443'
 check "8080, Apache behind nginx, is a web port"     bash -c 'semanage port -l | grep -E "^http_port_t" | grep -q 8080'
+check "7449, mail clients' setup from sites, is a web port" bash -c 'semanage port -l | grep -E "^http_port_t" | grep -q 7449'
+check "webmail reaches IMAP and SMTP on this machine" allowed -s httpd_t -t pop_port_t -c tcp_socket -p name_connect
 check "Apache may enter homes (httpd_enable_homedirs)" on_by_default httpd_enable_homedirs
 check "PHP may call other sites (httpd_can_network_connect)" on_by_default httpd_can_network_connect
 check "PHP may use databases over TCP"           on_by_default httpd_can_network_connect_db

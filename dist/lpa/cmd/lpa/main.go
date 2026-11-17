@@ -124,7 +124,7 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	tls.Defaults()
 	dbs := &mysql.Manager{SQL: mysql.CLI{Exec: sysexec.Exec{}}, Owner: acc.Owner, Log: log}
 	dbs.Defaults()
-	mails := &mail.Manager{Enabled: cfg.Mail == "on", Run: sysexec.Exec{}, Owner: acc.Owner, Log: log, SELinux: acc.SELinux}
+	mails := &mail.Manager{Enabled: cfg.Mail == "on", Run: sysexec.Exec{}, Owner: acc.Owner, Log: log, SELinux: acc.SELinux, Certs: store.Files, Resolver: cfg.DNS.Resolver}
 	mails.Defaults()
 	tls.AfterHost = mails.HostTLS
 	// A terminated account's sites, then its databases, its zones and its

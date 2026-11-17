@@ -6,6 +6,7 @@ namespace App\Modules\Web;
 
 use App\Engine\Database\ConnectionManager;
 use App\Engine\Database\Query\QueryBuilder;
+use App\Engine\Hook\HookEngine;
 use App\Modules\Accounts\Accounts;
 use App\Modules\Agent\AgentClient;
 use App\Modules\Agent\AgentUnavailable;
@@ -44,6 +45,7 @@ final class WebSync
         private readonly AgentClient $agent,
         private readonly WebSettings $settings,
         private readonly SslSites $ssl,
+        private readonly HookEngine $hooks,
     ) {}
 
     /**
@@ -283,6 +285,10 @@ final class WebSync
             'error' => null,
             'applied_at' => Accounts::now(),
         ]);
+
+        // The server serves this state now, certificates included (Mail
+        // serves each mail domain's certificate from it).
+        $this->hooks->do('web.applied', (int) $row['account_id']);
 
         return WebOutcome::done((bool) ($reply->result['changed'] ?? false));
     }

@@ -207,6 +207,13 @@ getent passwd lpanel-pma >/dev/null || useradd --system --gid lpanel-pma --home-
 install -d -m 0755 -o root -g root /usr/local/lpanel-pma /var/lib/lpanel-pma
 install -d -m 0700 -o lpanel-pma -g lpanel-pma /var/lib/lpanel-pma/sessions /var/lib/lpanel-pma/tmp /var/lib/lpanel-pma/log
 install -d -m 2770 -o lpanel -g lpanel-pma /var/lib/lpanel-pma/tickets
+# Roundcube the same way, as lpanel-webmail; the panel writes its sign-on
+# tickets.
+getent group lpanel-webmail >/dev/null || groupadd --system lpanel-webmail
+getent passwd lpanel-webmail >/dev/null || useradd --system --gid lpanel-webmail --home-dir /var/lib/lpanel-webmail --no-create-home --shell /sbin/nologin lpanel-webmail
+install -d -m 0755 -o root -g root /usr/local/lpanel-webmail /var/lib/lpanel-webmail
+install -d -m 0700 -o lpanel-webmail -g lpanel-webmail /var/lib/lpanel-webmail/sessions /var/lib/lpanel-webmail/temp /var/lib/lpanel-webmail/logs
+install -d -m 2770 -o lpanel -g lpanel-webmail /var/lib/lpanel-webmail/tickets
 # Accounts' Apache logs daily, the panel's own weekly (see the file).
 install -m 0644 "$BUNDLE/packaging/logrotate-lpanel" /etc/logrotate.d/lpanel
 note "lpanel user: uid $(id -u lpanel)"
@@ -434,12 +441,21 @@ if [ ! -s /etc/exim/lpanel/srs_secret ]; then
     (umask 027; head -c 32 /dev/urandom | base64 > /etc/exim/lpanel/srs_secret)
 fi
 chown root:exim /etc/exim/lpanel/srs_secret && chmod 0640 /etc/exim/lpanel/srs_secret
-install -d -m 0750 -o root -g dovecot /etc/dovecot/lpanel /etc/dovecot/lpanel/passwd.d
+install -d -m 0750 -o root -g dovecot /etc/dovecot/lpanel /etc/dovecot/lpanel/passwd.d /etc/dovecot/lpanel/sso.d
+install -d -m 0700 -o root -g root /etc/dovecot/lpanel/sso.keep
 install -d -m 0755 -o root -g root /etc/dovecot/lpanel/sieve
+# Webmail's sign-on passwords: Dovecot asks this file of every domain after
+# the mailbox's own, so each needs one (the agent keeps them from now on).
+for f in /etc/dovecot/lpanel/passwd.d/*; do
+    [ -f "$f" ] || continue
+    s=/etc/dovecot/lpanel/sso.d/$(basename "$f")
+    [ -e "$s" ] || install -m 0640 -o root -g dovecot /dev/null "$s"
+done
+[ -e /etc/dovecot/lpanel/sni.conf ] || install -m 0640 -o root -g dovecot /dev/null /etc/dovecot/lpanel/sni.conf
 # The hostname certificate, readable by Exim's group (Exim reads it as its
 # own user; /etc/pki/lpanel itself is root's alone). The agent copies it
 # again whenever it changes.
-install -d -m 0750 -o root -g exim /etc/pki/lpanel-mail
+install -d -m 0750 -o root -g exim /etc/pki/lpanel-mail /etc/pki/lpanel-mail/sni
 install -m 0640 -o root -g exim /etc/lpanel/tls/panel.crt /etc/pki/lpanel-mail/host.crt
 install -m 0640 -o root -g exim /etc/lpanel/tls/panel.key /etc/pki/lpanel-mail/host.key
 exim -bV >/dev/null || die "Exim refused its configuration (exim -bV)"
@@ -482,6 +498,46 @@ systemctl try-restart rspamd >/dev/null 2>&1 || true
 note "$(rspamd --version 2>/dev/null | awk '{print "Rspamd", $NF}'), ClamAV $(clamd --version 2>/dev/null | awk '{print $2}' | cut -d/ -f1): installed"
 
 # ---------------------------------------------------------------------------
+step "Webmail (Roundcube $(cat "$BUNDLE/ROUNDCUBE_VERSION"))"
+
+# Unpacked beside the old copy, then swapped in; its key and database
+# password are kept across upgrades (the key encrypts its sessions' copies of
+# passwords).
+rc=/usr/local/lpanel-webmail/roundcube
+rm -rf "$rc.new" && mkdir -p "$rc.new"
+tar -C "$rc.new" --strip-components=1 --no-same-owner -xzf "$BUNDLE/roundcube.tar.gz"
+rm -rf "$rc.new/installer" "$rc.new/public_html/installer.php"
+deskey="" dbpass=""
+if [ -f "$rc/config/config.inc.php" ]; then
+    deskey=$(grep -o "^\$config\['des_key'\] = '[0-9a-f]\{24\}';" "$rc/config/config.inc.php" | grep -o '[0-9a-f]\{24\}' || true)
+    dbpass=$(grep -o "mysql://lpanel_webmail:[0-9a-f]\{48\}@" "$rc/config/config.inc.php" | grep -o '[0-9a-f]\{48\}' || true)
+fi
+[ -n "$deskey" ] || deskey=$(openssl rand -hex 12)
+[ -n "$dbpass" ] || dbpass=$(openssl rand -hex 24)
+mariadb -uroot <<SQL
+CREATE DATABASE IF NOT EXISTS lpanel_webmail CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'lpanel_webmail'@'localhost' IDENTIFIED BY '$dbpass';
+ALTER USER 'lpanel_webmail'@'localhost' IDENTIFIED BY '$dbpass';
+GRANT ALL PRIVILEGES ON lpanel_webmail.* TO 'lpanel_webmail'@'localhost';
+SQL
+sed -e "s/@DESKEY@/$deskey/" -e "s/@DBPASS@/$dbpass/" "$BUNDLE/packaging/roundcube-config.inc.php" > "$rc.new/config/config.inc.php"
+rm -rf "$rc.new/plugins/lpanel_sso" && cp -r "$BUNDLE/packaging/roundcube-sso" "$rc.new/plugins/lpanel_sso"
+chown -R root:root "$rc.new"
+find "$rc.new" -type d -exec chmod 0755 {} + -o -type f -exec chmod 0644 {} +
+chmod 0755 "$rc.new"/bin/*.sh
+chown root:lpanel-webmail "$rc.new/config/config.inc.php" && chmod 0640 "$rc.new/config/config.inc.php"
+rm -rf "$rc.old"
+[ -d "$rc" ] && mv "$rc" "$rc.old"
+mv "$rc.new" "$rc" && rm -rf "$rc.old"
+# Its tables: made the first time, brought up to date afterwards.
+if [ -z "$(mariadb -uroot -N lpanel_webmail -e "show tables like 'system'")" ]; then
+    mariadb -uroot lpanel_webmail < "$rc/SQL/mysql.initial.sql"
+else
+    runuser -u lpanel-webmail -- $PHP "$rc/bin/updatedb.sh" --package=roundcube --dir="$rc/SQL" >/dev/null
+fi
+note "served on the User panel's port at /webmail/ (mailbox users sign in with their address)"
+
+# ---------------------------------------------------------------------------
 step "Services"
 
 for unit in lpa.service lpanel-authd.service lpanel-authd.socket lpanel-php-fpm.service \
@@ -496,7 +552,7 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     # booleans customers' sites need. Installed in permissive mode too, so
     # switching to enforcing later needs nothing more.
     bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
-    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma /etc/exim /etc/dovecot /etc/pki/lpanel-mail
+    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma /usr/local/lpanel-webmail /var/lib/lpanel-webmail /etc/exim /etc/dovecot /etc/pki/lpanel-mail
     install -d -m 0755 /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
     for d in /etc/nginx/lpanel /var/log/nginx/lpanel /etc/nginx/nginx.conf; do
         if [ -e "$d" ]; then restorecon -R "$d"; fi
@@ -544,6 +600,9 @@ runuser -u lpanel -- $PHP "$PANEL/laika" dns:sync >/dev/null || note "some zones
 # Mail: every account's domains (accounts made before mail came), their
 # DKIM keys and DNS records.
 runuser -u lpanel -- $PHP "$PANEL/laika" mail:sync --all >/dev/null || note "some accounts' mail is not on the server yet; mail:settle retries it every minute"
+# Sites whose state changed with this release (such as mail clients' setup
+# and webmail names) are written again; the rest are left alone.
+runuser -u lpanel -- $PHP "$PANEL/laika" web:sync --all --changed >/dev/null || note "some sites are not up to date yet; web:settle retries them every minute"
 # Spam filtering is on from the first installation; afterwards it stays as
 # the administrator left it.
 if [ -z "$(mariadb -uroot -N lpanel -e "select value from mail_settings where name = 'spam'" 2>/dev/null)" ]; then

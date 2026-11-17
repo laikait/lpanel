@@ -12,6 +12,9 @@ use App\Modules\Agent\AgentClient;
 use App\Modules\Agent\AgentUnavailable;
 use App\Modules\Identity\PanelUsers;
 use App\Modules\Mail\MailActions;
+use App\Modules\Mail\MailChecks;
+use App\Modules\Mail\MailSetup;
+use App\Modules\Mail\Webmail;
 use App\Modules\Mail\Mailboxes;
 use App\Modules\Mail\Http\MailToolPages;
 use App\Modules\Mail\MailDomains;
@@ -39,7 +42,117 @@ final class MailCommands
         private readonly AgentClient $agent,
         private readonly PanelUsers $users,
         private readonly Localization $localization,
+        private readonly Webmail $webmail,
+        private readonly MailSetup $setup,
+        private readonly MailChecks $checks,
     ) {}
+
+    /** A one-time address that opens webmail as a mailbox (good for a minute). */
+    public function webmail(Output $output, string $username, string $address): int
+    {
+        [$account, $box] = $this->mailbox($output, $username, $address);
+
+        if ($box === null) {
+            return 1;
+        }
+
+        [$url, $why] = $this->webmail->signOn($this->root(), null, $account, $box, absolute: true);
+
+        if ($url === null) {
+            $output->error($this->localization->get((string) $why));
+
+            return 1;
+        }
+
+        $output->line($url);
+
+        return 0;
+    }
+
+    /** What a mail client needs for a mailbox. */
+    public function setup(Output $output, string $username, string $address): int
+    {
+        [$account, $box] = $this->mailbox($output, $username, $address);
+
+        if ($box === null) {
+            return 1;
+        }
+
+        $s = $this->setup->settings($account, (string) $box['address']);
+        $output->line(\sprintf('%-10s %s', 'Username', $s['username']));
+        $output->line(\sprintf('%-10s %s%s', 'Server', $s['server'], $s['own_certificate'] ? '' : ' (the server\'s hostname: ' . $s['domain'] . ' has no certificate of its own for mail yet)'));
+        $output->line(\sprintf('%-10s %d (SSL/TLS), or %d (STARTTLS)', 'IMAP', $s['imap']['port'], $s['imap_starttls']['port']));
+        $output->line(\sprintf('%-10s %d (SSL/TLS), or %d (STARTTLS)', 'POP3', $s['pop3']['port'], $s['pop3_starttls']['port']));
+        $output->line(\sprintf('%-10s %d (SSL/TLS), or %d (STARTTLS); the same login', 'SMTP', $s['smtp']['port'], $s['smtp_starttls']['port']));
+
+        return 0;
+    }
+
+    /** Deliverability: SPF, DKIM, DMARC and MX of an account's domains, and the server's address. */
+    public function check(Output $output, ?string $username = null, ?string $domain = null): int
+    {
+        $domains = [];
+
+        if ($username !== null) {
+            $account = $this->account($output, $username);
+
+            if ($account === null) {
+                return 1;
+            }
+
+            $domains = $this->mail->domains((int) $account['id']);
+
+            if ($domain !== null) {
+                $domains = \array_values(\array_filter($domains, static fn(array $d): bool => $d['name'] === \strtolower($domain)));
+
+                if ($domains === []) {
+                    $output->error(\sprintf('%s has no mail domain %s.', $username, $domain));
+
+                    return 1;
+                }
+            }
+        }
+
+        $result = $this->checks->run($domains);
+
+        if ($result['error'] !== null) {
+            $output->error($this->localization->get($result['error']));
+
+            return 1;
+        }
+
+        $mark = static fn(string $state): string => match ($state) {
+            MailChecks::OK => 'ok  ',
+            MailChecks::WARN => 'warn',
+            MailChecks::BAD => 'BAD ',
+            default => '--  ',
+        };
+        $text = fn(array $c): string => $this->localization->get((string) $c['text'], (array) $c['args']);
+        $bad = 0;
+
+        foreach ($result['domains'] as $d) {
+            $output->line($d['name']);
+
+            foreach ($d['checks'] as $c) {
+                $bad += $c['state'] === MailChecks::BAD ? 1 : 0;
+                $output->line(\sprintf('  %s %-6s %s', $mark((string) $c['state']), \strtoupper((string) $c['key']), $text($c)));
+            }
+        }
+
+        $server = $result['server'];
+        $output->line('This server' . (($server['ip'] ?? '') !== '' ? ' (' . $server['ip'] . ')' : ''));
+
+        foreach ((array) ($server['checks'] ?? []) as $c) {
+            $bad += $c['state'] === MailChecks::BAD ? 1 : 0;
+            $output->line(\sprintf('  %s %-6s %s', $mark((string) $c['state']), \strtoupper((string) $c['key']), $text($c)));
+        }
+
+        foreach ((array) ($server['lists'] ?? []) as $l) {
+            $output->line(\sprintf('         %s %s', $mark((string) $l['state']), $l['name']));
+        }
+
+        return $bad > 0 ? 1 : 0;
+    }
 
     /** An account's mail domains, mailboxes and forwarders. */
     public function list(Output $output, string $username): int
@@ -462,6 +575,11 @@ final class MailCommands
     public function settle(Output $output): int
     {
         $counts = $this->sync->settleAll();
+
+        if (($ended = $this->webmail->expire()) > 0) {
+            $counts['webmail sign-ons ended'] = $ended;
+        }
+
         $output->line($counts === [] ? 'Nothing to send.' : \implode(', ', \array_map(static fn(string $k, int $n): string => $n . ' ' . $k, \array_keys($counts), $counts)));
 
         return 0;

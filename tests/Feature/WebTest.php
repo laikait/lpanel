@@ -41,7 +41,10 @@ final class WebTest extends TestCase
         self::assertNotNull($site, 'the account was given its site');
         self::assertFalse($site['suspended']);
         self::assertCount(1, $site['sites']);
-        self::assertSame(['name' => 'shop.example.com', 'aliases' => ['www.shop.example.com'], 'docroot' => 'public_html', 'php' => '83'], \array_intersect_key($site['sites'][0], ['name' => 1, 'aliases' => 1, 'docroot' => 1, 'php' => 1]));
+        // With email in the package, the site answers to the mail names too
+        // (webmail. only once the server has a hostname set).
+        self::assertSame(['name' => 'shop.example.com', 'aliases' => ['www.shop.example.com', 'mail.shop.example.com', 'autoconfig.shop.example.com', 'autodiscover.shop.example.com'], 'docroot' => 'public_html', 'php' => '83'], \array_intersect_key($site['sites'][0], ['name' => 1, 'aliases' => 1, 'docroot' => 1, 'php' => 1]));
+        self::assertTrue($site['sites'][0]['mail_setup']);
         self::assertSame(['', [], [], [], null], [$site['sites'][0]['canonical'], $site['sites'][0]['redirects'], (array) $site['sites'][0]['error_pages'], $site['sites'][0]['protected'], $site['sites'][0]['hotlink']], 'no features yet');
         self::assertSame(WebSync::APPLIED, $this->web('shop')['state']);
     }
@@ -58,11 +61,12 @@ final class WebTest extends TestCase
 
         $sites = \array_column($this->server->sites['shop']['sites'], null, 'name');
         self::assertSame(['shop.example.com', 'blog.shop.example.com', 'other.test', 'wild.test'], \array_keys($sites));
-        self::assertSame(['www.shop.example.com', 'shop.test', 'www.shop.test'], $sites['shop.example.com']['aliases']);
+        self::assertSame(['www.shop.example.com', 'shop.test', 'www.shop.test', 'mail.shop.example.com', 'autoconfig.shop.example.com', 'autodiscover.shop.example.com', 'mail.shop.test', 'autoconfig.shop.test', 'autodiscover.shop.test'], $sites['shop.example.com']['aliases']);
         self::assertSame(['docroot' => 'public_html/other.test', 'php' => '82'], \array_intersect_key($sites['other.test'], ['docroot' => 1, 'php' => 1]));
-        self::assertSame([], $sites['blog.shop.example.com']['aliases'], 'a subdomain has no www.');
+        self::assertSame([], $sites['blog.shop.example.com']['aliases'], 'a subdomain has no www., nor mail names');
+        self::assertTrue($sites['blog.shop.example.com']['mail_setup'], 'but answers mail clients\' setup');
         self::assertSame('public_html/blog', $sites['blog.shop.example.com']['docroot']);
-        self::assertSame(['www.wild.test', '*.wild.test'], $sites['wild.test']['aliases']);
+        self::assertSame(['www.wild.test', '*.wild.test', 'mail.wild.test', 'autoconfig.wild.test', 'autodiscover.wild.test'], $sites['wild.test']['aliases']);
         self::assertSame('public_html/wild', $sites['wild.test']['docroot']);
 
         $page = $owner->get('/panel/domains')->body();

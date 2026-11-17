@@ -23,7 +23,33 @@ final class MailListeners
         private readonly Subusers $subusers,
         private readonly Authorizer $authorizer,
         private readonly Router $router,
+        private readonly MailHosts $hosts,
     ) {}
+
+    /**
+     * web.state: the mail names of the account's sites, mail clients' setup
+     * and webmail.
+     *
+     * @param array<string, mixed> $state
+     * @param array<string, mixed> $account
+     *
+     * @return array<string, mixed>
+     */
+    public function webState(array $state, array $account): array
+    {
+        return $this->hosts->webState($state, $account);
+    }
+
+    /**
+     * web.applied: the sites serve a new state, perhaps a new certificate,
+     * which mail.<domain> is served with too.
+     */
+    public function webApplied(int $accountId): void
+    {
+        if ($this->sync->stateOf($accountId) !== null) {
+            $this->sync->touch($accountId);
+        }
+    }
 
     /**
      * accounts.changed: a new account's main domain becomes a mail domain

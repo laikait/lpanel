@@ -19,6 +19,8 @@
 # files, its log and the panel's sign-on tickets are written.
 /usr/local/lpanel-pma(/.*)?			gen_context(system_u:object_r:httpd_sys_content_t,s0)
 /var/lib/lpanel-pma(/.*)?				gen_context(system_u:object_r:httpd_sys_rw_content_t,s0)
+/usr/local/lpanel-webmail(/.*)?			gen_context(system_u:object_r:httpd_sys_content_t,s0)
+/var/lib/lpanel-webmail(/.*)?			gen_context(system_u:object_r:httpd_sys_rw_content_t,s0)
 
 # Accounts' Apache sites, written by the agent (internal/web).
 /etc/httpd/lpanel(/.*)?				gen_context(system_u:object_r:httpd_config_t,s0)

@@ -360,7 +360,8 @@ return static function (ModuleContext $module): void {
         $commands->add('web:sync', [WebCommands::class, 'sync'])
             ->describe('Send an account\'s sites to the server again, as the panel has them (after switching the web stack: --all).')
             ->argument('username', 'The account.', required: false)
-            ->flag('all', 'Every account.');
+            ->flag('all', 'Every account.')
+            ->flag('changed', 'Only what differs from what the server has (after an upgrade).');
     });
 
     $module->schedules(static function (ScheduleCollector $schedules): void {

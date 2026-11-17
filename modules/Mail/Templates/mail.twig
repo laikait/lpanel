@@ -66,6 +66,11 @@
                         <div class="usage">{{ b.used_bytes|bytes }} {% if b.quota_mb > 0 %}{{ 'Mail.of'|local }} {{ (b.quota_mb * 1048576)|bytes }}{% else %}· {{ 'Mail.no_cap'|local }}{% endif %}</div>
                         {% if b.percent is not null %}<div class="meter compact{% if b.percent >= 95 %} is-bad{% elseif b.percent >= 80 %} is-warn{% endif %}"><span style="width:{{ max(b.percent, 2) }}%"></span></div>{% endif %}
                     </div>
+                            <form class="inline-form" method="post" action="{{ b.webmail_url }}" target="_blank">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-ghost btn-icon" type="submit" title="{{ 'Mail.webmail_open'|local }}" aria-label="{{ 'Mail.webmail_open_name'|local({name: b.address}) }}">{{ icon('mail') }}</button>
+                            </form>
+                            <a class="btn btn-sm btn-ghost btn-icon" href="{{ b.setup_url }}" title="{{ 'Mail.setup_title'|local }}" aria-label="{{ 'Mail.setup_name'|local({name: b.address}) }}">{{ icon('phone') }}</a>
                             <details class="mail-more">
                                 <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Mail.manage_name'|local({name: b.address}) }}">{{ icon('settings') }}<span class="hide-sm">{{ 'Mail.manage'|local }}</span></summary>
                                 <div class="db-panel">

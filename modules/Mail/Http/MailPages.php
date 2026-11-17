@@ -246,7 +246,7 @@ final class MailPages
         foreach ($this->mail->domains($id) as $d) {
             $here = $this->zones->zoneHolding($id, (string) $d['name']) !== null;
             $kind = $kinds[(int) $d['domain_id']] ?? 'main';
-            $records = MailSync::records($d, $kind);
+            $records = MailSync::records($d, $kind, $this->zones->addresses());
 
             // A domain's own SPF record comes from its zone's template.
             if ($kind !== 'sub') {
@@ -272,6 +272,8 @@ final class MailPages
             'responder_off_url' => $this->router->url('user.mail.responder.delete', ['id' => $b['id']]),
             'delete_url' => $this->router->url('user.mail.delete', ['id' => $b['id']]),
             'filter_url' => $this->router->url('user.mail.filter', ['id' => $b['id']]),
+            'webmail_url' => $this->router->url('user.mail.webmail', ['id' => $b['id']]),
+            'setup_url' => $this->router->url('user.mail.setup', ['id' => $b['id']]),
             'filters' => \array_map(fn(array $f): array => $f + [
                 'delete_url' => $this->router->url('user.mail.filter.delete', ['id' => $f['id']]),
                 'move_url' => $this->router->url('user.mail.filter.move', ['id' => $f['id']]),

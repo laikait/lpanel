@@ -20,6 +20,10 @@ import (
 //	mail.queue_view {id}                        read-only: one queued message and its log
 //	mail.queue_act {action, ids}                deliver, remove, freeze, thaw (ids) or flush (all)
 //	mail.track  {username, search, status, days, limit}  read-only: what became of each message, from Exim's log
+//	mail.sso    {username, address, hours}      a webmail sign-on password for a mailbox (the same while one is good)
+//	mail.sso_revoke {username, address}         forget a mailbox's sign-on password, or (no address) the account's
+//	mail.sso_expire {}                          forget every expired sign-on password
+//	mail.check  {domains, ip, hostname, lists}  read-only: SPF, DKIM, DMARC and MX of domains; PTR and blocklists of the address
 //
 // account.terminate removes the account's mail files itself.
 func Mail(r *Registry, m *mail.Manager) {
@@ -111,5 +115,33 @@ func Mail(r *Registry, m *mail.Manager) {
 			return nil, err
 		}
 		return m.Track(ctx, a)
+	})
+	add("mail.sso", false, 15*time.Second, func(ctx context.Context, args json.RawMessage) (any, error) {
+		var a mail.SSOArgs
+		if err := Decode(args, &a); err != nil {
+			return nil, err
+		}
+		return m.SSO(ctx, a)
+	})
+	add("mail.sso_revoke", false, 15*time.Second, func(ctx context.Context, args json.RawMessage) (any, error) {
+		var a mail.SSORevokeArgs
+		if err := Decode(args, &a); err != nil {
+			return nil, err
+		}
+		return m.SSORevoke(ctx, a)
+	})
+	add("mail.check", true, time.Minute, func(ctx context.Context, args json.RawMessage) (any, error) {
+		var a mail.CheckArgs
+		if err := Decode(args, &a); err != nil {
+			return nil, err
+		}
+		return m.Check(ctx, a)
+	})
+	add("mail.sso_expire", false, 30*time.Second, func(ctx context.Context, args json.RawMessage) (any, error) {
+		var a struct{}
+		if err := Decode(args, &a); err != nil {
+			return nil, err
+		}
+		return m.SSOExpire(ctx)
 	})
 }

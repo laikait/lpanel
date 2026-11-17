@@ -156,6 +156,7 @@ func (m *Manager) apacheSite(b *strings.Builder, a ApplyArgs, s Site, home strin
 		b.WriteString("    RewriteEngine On\n")
 		b.WriteString(m.challengeRule())
 	}
+	m.apacheMail(b, a, s)
 	if toHTTPS {
 		b.WriteString("    RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]\n")
 		b.WriteString("</VirtualHost>\n")
@@ -188,6 +189,32 @@ func (m *Manager) apacheSite(b *strings.Builder, a ApplyArgs, s Site, home strin
 	fmt.Fprintf(b, "        SetHandler \"proxy:unix:%s|fcgi://lpanel-%s-%s\"\n", m.socket(s.PHP, a.Username), a.Username, s.PHP)
 	b.WriteString("    </FilesMatch>\n")
 	b.WriteString("</VirtualHost>\n")
+}
+
+// apacheMail sends the site's webmail names on to webmail, and mail
+// clients' setup requests to the panel (with the name they asked for, which
+// is how the panel knows the domain). Both come before HTTPS, a suspension
+// and the owner's own rules, as the certificate checks do.
+func (m *Manager) apacheMail(b *strings.Builder, a ApplyArgs, s Site) {
+	if !s.MailSetup && len(s.Webmail) == 0 {
+		return
+	}
+	b.WriteString("    RewriteEngine On\n")
+	for i, w := range s.Webmail {
+		flags := "[NC,OR]"
+		if i == len(s.Webmail)-1 {
+			flags = "[NC]"
+		}
+		fmt.Fprintf(b, "    RewriteCond %%{HTTP_HOST} =%s %s\n", w, flags)
+	}
+	if len(s.Webmail) > 0 {
+		fmt.Fprintf(b, "    RewriteRule ^ %s [R=302,L]\n", a.WebmailURL)
+	}
+	if s.MailSetup {
+		b.WriteString("    ProxyPreserveHost On\n")
+		fmt.Fprintf(b, "    RewriteRule ^/(\\.well-known/autoconfig/)?mail/config-v1\\.1\\.xml$ %s/mail-setup/autoconfig [P,NC,L]\n", m.MailSetup)
+		fmt.Fprintf(b, "    RewriteRule ^/autodiscover/autodiscover\\.xml$ %s/mail-setup/autodiscover [P,NC,L]\n", m.MailSetup)
+	}
 }
 
 // renderPool is the account's PHP-FPM pool for one PHP version. It runs as

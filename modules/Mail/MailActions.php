@@ -32,6 +32,7 @@ final class MailActions
         private readonly Packages $packages,
         private readonly AgentClient $agent,
         private readonly AuditLog $audit,
+        private readonly Webmail $webmail,
     ) {}
 
     /**
@@ -102,7 +103,7 @@ final class MailActions
 
         $before = (string) $box['hash'];
 
-        return $this->attempt(
+        $outcome = $this->attempt(
             $actor,
             $request,
             $account,
@@ -112,6 +113,13 @@ final class MailActions
             fn() => $this->mail->updateMailbox((int) $box['id'], ['hash' => Mailboxes::hash($password)]),
             fn() => $this->mail->updateMailbox((int) $box['id'], ['hash' => $before]),
         );
+
+        // A new password ends webmail's sign-on for the mailbox too.
+        if ($outcome->status !== MailOutcome::REFUSED && $outcome->status !== MailOutcome::FAILED) {
+            $this->webmail->revoke($account, $box);
+        }
+
+        return $outcome;
     }
 
     /**

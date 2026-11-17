@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Engine\Auth\AccessCollector;
 use App\Engine\Cli\CommandCollector;
+use App\Engine\Config\Env;
 use App\Engine\Container\ServiceRegistrar;
 use App\Engine\Filter\FilterEngine;
 use App\Engine\Hook\HookEngine;
@@ -12,9 +13,14 @@ use App\Engine\Routing\RouteCollector;
 use App\Engine\Scheduler\ScheduleCollector;
 use App\Modules\Mail\Commands\MailCommands;
 use App\Modules\Mail\Http\MailApi;
+use App\Modules\Mail\Http\MailClientPages;
 use App\Modules\Mail\Http\MailPages;
 use App\Modules\Mail\Http\MailToolPages;
 use App\Modules\Mail\MailActions;
+use App\Modules\Mail\MailChecks;
+use App\Modules\Mail\MailHosts;
+use App\Modules\Mail\MailSetup;
+use App\Modules\Mail\Webmail;
 use App\Modules\Mail\Mailboxes;
 use App\Modules\Mail\MailDomains;
 use App\Modules\Mail\MailListeners;
@@ -27,13 +33,16 @@ use App\Modules\Mail\MailUsage;
  * POP3, SMTP with TLS), forwarders, catch-alls, autoresponders and filters;
  * spam settings and a sending limit for each account; DKIM keys made on the
  * server and published with DMARC in the account's zones; spam and virus
- * filtering, the relay host, the queue and delivery tracking. Exim, Dovecot,
- * Rspamd and ClamAV do the work; the agent writes their data.
+ * filtering, the relay host, the queue and delivery tracking; webmail
+ * (Roundcube) with sign-on from the User panel, mail clients' setup
+ * (autoconfig, autodiscover, a page per mailbox), a certificate for each
+ * mail domain, and the deliverability checks. Exim, Dovecot, Rspamd, ClamAV
+ * and Roundcube do the work; the agent writes their data.
  */
 return static function (ModuleContext $module): void {
     $module
         ->name('Mail')
-        ->version('0.2.0')
+        ->version('0.3.0')
         ->description('Mailboxes, forwarders, catch-alls, autoresponders, filters, spam filtering and DKIM for each account\'s domains.');
 
     $module->requires('Panel', '^0.1')
@@ -46,6 +55,13 @@ return static function (ModuleContext $module): void {
         ->requires('Web', '^0.1')
         ->requires('Dns', '^0.1');
 
+    $module->config([
+        // Where the browser goes for webmail (the User panel's own port).
+        'webmail_url' => Env::string('LPANEL_WEBMAIL_URL', '/webmail/'),
+        // One-time sign-on tickets, shared with Roundcube's PHP pool.
+        'webmail_tickets' => Env::string('LPANEL_WEBMAIL_TICKETS', '/var/lib/lpanel-webmail/tickets'),
+    ]);
+
     $module->services(static function (ServiceRegistrar $services): void {
         $services->singleton(Mailboxes::class);
         $services->singleton(MailSync::class);
@@ -54,8 +70,13 @@ return static function (ModuleContext $module): void {
         $services->singleton(MailUsage::class);
         $services->singleton(MailListeners::class);
         $services->singleton(MailQueue::class);
+        $services->singleton(MailHosts::class);
+        $services->singleton(MailSetup::class);
+        $services->singleton(MailChecks::class);
+        $services->singleton(Webmail::class);
         $services->bind(MailPages::class);
         $services->bind(MailToolPages::class);
+        $services->bind(MailClientPages::class);
         $services->bind(MailApi::class);
         $services->bind(MailCommands::class);
     });
@@ -84,6 +105,10 @@ return static function (ModuleContext $module): void {
             $routes->get('/spam', [MailToolPages::class, 'spam'])->name('.spam');
             $routes->post('/spam', [MailToolPages::class, 'saveSpam'])->name('.spam.save');
             $routes->get('/track', [MailToolPages::class, 'track'])->name('.track');
+            $routes->post('/mailboxes/{id}/webmail', [MailClientPages::class, 'webmail'])->name('.webmail')->where('id', $id)->meta(['rate_limit' => '30/1m']);
+            $routes->get('/mailboxes/{id}/setup', [MailClientPages::class, 'setupPage'])->name('.setup')->where('id', $id);
+            $routes->get('/mailboxes/{id}/setup/profile', [MailClientPages::class, 'profile'])->name('.profile')->where('id', $id);
+            $routes->get('/checks', [MailClientPages::class, 'checks'])->name('.checks')->meta(['rate_limit' => '20/1m']);
         }, name: 'user.mail', meta: ['can' => 'feature.email']);
 
         $routes->group('/admin/email', static function (RouteCollector $routes): void {
@@ -94,7 +119,17 @@ return static function (ModuleContext $module): void {
             $routes->post('/queue', [MailToolPages::class, 'queueAct'])->name('.queue.act');
             $routes->get('/queue/{id}', [MailToolPages::class, 'queueMessage'])->name('.queue.view')->where('id', '[0-9A-Za-z-]{16,23}');
             $routes->get('/track', [MailToolPages::class, 'adminTrack'])->name('.track');
+            $routes->get('/checks', [MailClientPages::class, 'adminChecks'])->name('.checks')->meta(['rate_limit' => '20/1m']);
         }, name: 'admin.mail', meta: ['can' => 'server.mail']);
+
+        // Mail clients' own setup requests, passed on by customers' sites
+        // (the panel's nginx serves these on 127.0.0.1:7449 only). Public:
+        // they carry only servers and ports.
+        $routes->group('/mail-setup', static function (RouteCollector $routes): void {
+            $routes->get('/autoconfig', [MailClientPages::class, 'autoconfig'])->name('.autoconfig');
+            $routes->get('/autodiscover', [MailClientPages::class, 'autodiscover'])->name('.autodiscover.get');
+            $routes->post('/autodiscover', [MailClientPages::class, 'autodiscover'])->name('.autodiscover');
+        }, name: 'mail_setup', meta: ['csrf' => false, 'rate_limit' => '600/1m']);
 
         $routes->group('/admin/api/v1/email', static function (RouteCollector $routes): void {
             $routes->get('', [MailApi::class, 'server'])->name('');
@@ -104,6 +139,7 @@ return static function (ModuleContext $module): void {
             $routes->post('/queue', [MailApi::class, 'queueAct'])->name('.queue.act');
             $routes->get('/queue/{id}', [MailApi::class, 'queueMessage'])->name('.queue.view')->where('id', '[0-9A-Za-z-]{16,23}');
             $routes->get('/track', [MailApi::class, 'track'])->name('.track');
+            $routes->get('/checks', [MailApi::class, 'serverChecks'])->name('.checks');
         }, name: 'api.mail', meta: ['can' => 'server.mail', 'csrf' => false, 'rate_limit' => '60/1m']);
 
         // Changing an account's mail is changing the account.
@@ -127,6 +163,9 @@ return static function (ModuleContext $module): void {
             $routes->get('/spam', [MailApi::class, 'spam'])->name('.spam')->where('username', $user);
             $routes->put('/spam', [MailApi::class, 'setSpam'])->name('.spam.update')->where('username', $user)->meta($modify);
             $routes->get('/track', [MailApi::class, 'accountTrack'])->name('.track')->where('username', $user);
+            $routes->get('/checks', [MailApi::class, 'accountChecks'])->name('.checks')->where('username', $user);
+            $routes->get('/mailboxes/{address}/setup', [MailApi::class, 'setup'])->name('.setup')->where('username', $user)->where('address', $address);
+            $routes->post('/mailboxes/{address}/webmail', [MailApi::class, 'webmail'])->name('.webmail')->where('username', $user)->where('address', $address)->meta($modify);
         }, name: 'api.account_mail', meta: ['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '120/1m']);
     });
 
@@ -218,6 +257,18 @@ return static function (ModuleContext $module): void {
             ->option('search', 'Part of an address or message id.')
             ->option('status', 'delivered, deferred, failed, rejected or pending.')
             ->option('days', 'Look back this many days (1, 3, 7, 14 or 30). Default 7.');
+        $commands->add('mail:webmail', [MailCommands::class, 'webmail'])
+            ->describe('Print a one-time address that opens webmail as a mailbox, with no password (good for a minute).')
+            ->argument('username', 'The account.')
+            ->argument('address', 'The mailbox.');
+        $commands->add('mail:setup', [MailCommands::class, 'setup'])
+            ->describe('Show what a mail client needs for a mailbox: server, ports and login.')
+            ->argument('username', 'The account.')
+            ->argument('address', 'The mailbox.');
+        $commands->add('mail:check', [MailCommands::class, 'check'])
+            ->describe('Check deliverability: SPF, DKIM, DMARC and MX of an account\'s mail domains, and this server\'s reverse name and blocklists.')
+            ->argument('username', 'The account (none: only the server).', required: false)
+            ->option('domain', 'Only this one of its domains.');
         $commands->add('mail:info', [MailCommands::class, 'info'])
             ->describe('Show the mail servers\' state, filtering and the queue.');
         $commands->add('mail:usage', [MailCommands::class, 'usage'])
@@ -247,6 +298,8 @@ return static function (ModuleContext $module): void {
         $hooks->add('web.changed', [$listeners, 'webChanged'], 20, 'Mail', 1);
         $hooks->add('packages.updated', [$listeners, 'packageUpdated'], 20, 'Mail', 1);
         $hooks->add('dns.zone_reset', [$listeners, 'zoneReset'], 10, 'Mail', 1);
+        $hooks->add('web.applied', [$listeners, 'webApplied'], 20, 'Mail', 1);
+        $filters->add('web.state', [$listeners, 'webState'], 20, 'Mail', 2);
         $filters->add('accounts.show', [$listeners, 'accountShow'], 25, 'Mail', 3);
         $filters->add('panel.dashboard', [$listeners, 'dashboard'], 35, 'Mail', 3);
     });

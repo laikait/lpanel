@@ -298,7 +298,8 @@ final class DnsZones
         foreach ($records as $record) {
             $name = DnsRecords::relative($record['name'], (string) $zone['name']);
 
-            if ($name === null || \array_filter($existing, static fn(array $r): bool => $r['name'] === $name && self::sameKind($r, $record)) !== []) {
+            if ($name === null || \array_filter($existing, static fn(array $r): bool => $r['name'] === $name
+                && (self::sameKind($r, $record) || $r['type'] === 'CNAME' || $record['type'] === 'CNAME')) !== []) {
                 continue;
             }
 

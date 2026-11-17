@@ -115,6 +115,18 @@ final class FakeServer
     /** @var list<array<string, mixed>> deliveries mail.track reads (each may carry an "account") */
     public array $deliveries = [];
 
+    /** @var array<string, array{password: string, expires: int}> webmail sign-on passwords by address */
+    public array $mailSso = [];
+
+    /** @var list<string> sign-on passwords forgotten (address, or "expired") */
+    public array $mailSsoRevoked = [];
+
+    /** @var array<string, mixed> what mail.check answers (merged over a clean result) */
+    public array $mailCheck = [];
+
+    /** @var list<array<string, mixed>> mail.check's arguments, each time */
+    public array $mailChecks = [];
+
     /** @var array{op: string, code: string, message: string}|null the next time this op runs, it fails */
     public ?array $failNext = null;
 
@@ -127,7 +139,7 @@ final class FakeServer
     {
         $answers = [];
 
-        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove', 'mail.apply', 'mail.purge', 'mail.settings', 'mail.filtering', 'mail.queue_act'] as $op) {
+        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove', 'mail.apply', 'mail.purge', 'mail.settings', 'mail.filtering', 'mail.queue_act', 'mail.sso', 'mail.sso_revoke', 'mail.sso_expire'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -186,6 +198,27 @@ final class FakeServer
             )),
             'more' => false,
         ]];
+        $answers['mail.check'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $this->mailChecks[] = $args;
+            $ip = (string) ($args['ip'] ?? '') !== '' ? (string) $args['ip'] : '192.0.2.10';
+            $domains = [];
+
+            foreach ((array) ($args['domains'] ?? []) as $d) {
+                $domains[$d] = ($this->mailCheck['domains'][$d] ?? []) + [
+                    'spf' => 'v=spf1 a mx ~all', 'spf_count' => 1, 'spf_result' => [$ip => 'pass'],
+                    'dmarc' => 'v=DMARC1; p=none', 'dkim' => '', 'mx' => [['host' => 'mail.' . $d, 'pref' => 10, 'addresses' => [$ip], 'here' => true]],
+                ];
+            }
+
+            return ['status' => 'done', 'result' => [
+                'domains' => (object) $domains,
+                'ips' => [$ip => ($this->mailCheck['ips'][$ip] ?? []) + ['private' => false, 'ptr' => ['e2e-panel.test'], 'forward' => true, 'lists' => ['zen.spamhaus.org' => 'clear', 'bl.spamcop.net' => 'clear']]],
+            ]];
+        };
         $answers['db.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['installed' => true, 'running' => true, 'version' => '10.5.27-MariaDB', 'uptime' => 3600, 'threads' => \count($this->dbProcesses), 'queries' => 42]];
         $answers['db.processes'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['processes' => $this->dbProcesses]];
         $answers['ssl.host_info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
@@ -434,10 +467,49 @@ final class FakeServer
             return ['status' => 'done', 'result' => ['action' => $args['action'], 'messages' => \count($args['ids'])]];
         }
 
+        if ($op === 'mail.sso_expire') {
+            $before = \count($this->mailSso);
+            $this->mailSso = \array_filter($this->mailSso, static fn(array $e): bool => $e['expires'] > \time());
+            $this->mailSsoRevoked[] = 'expired';
+
+            return ['status' => 'done', 'result' => ['removed' => $before - \count($this->mailSso)]];
+        }
+
         $name = (string) $args['username'];
 
         if (!isset($this->users[$name])) {
             return $fail('no_such_account', 'there is no user named ' . $name);
+        }
+
+        if ($op === 'mail.sso') {
+            $address = (string) $args['address'];
+            [$local, $domain] = \explode('@', $address) + ['', ''];
+            $found = false;
+
+            foreach ($this->mail[$name]['domains'] ?? [] as $d) {
+                $found = $found || ($d['name'] === $domain && \in_array($local, \array_column($d['mailboxes'], 'local'), true));
+            }
+
+            if (!$found) {
+                return $fail('mail_no_mailbox', $address . ' is not a mailbox of this account');
+            }
+
+            if ((bool) ($this->mail[$name]['suspended'] ?? false)) {
+                return $fail('mail_suspended', 'the account is suspended');
+            }
+
+            $old = $this->mailSso[$address] ?? null;
+            $this->mailSso[$address] = ['password' => $old !== null && $old['expires'] > \time() + 3600 ? $old['password'] : \bin2hex(\random_bytes(16)), 'expires' => \time() + 3600 * (int) ($args['hours'] ?? 8)];
+
+            return ['status' => 'done', 'result' => ['user' => $address, 'password' => $this->mailSso[$address]['password'], 'expires' => $this->mailSso[$address]['expires']]];
+        }
+
+        if ($op === 'mail.sso_revoke') {
+            $address = (string) ($args['address'] ?? '');
+            $this->mailSsoRevoked[] = $address === '' ? $name : $address;
+            unset($this->mailSso[$address]);
+
+            return ['status' => 'done', 'result' => ['removed' => 1]];
         }
 
         if ($op === 'mail.purge') {

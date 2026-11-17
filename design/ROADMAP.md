@@ -654,12 +654,55 @@ autoconfiguration, a certificate for each mail domain, deliverability).
   greylisting; per-mailbox spam settings; filters on headers other than
   From, To and Subject; a relay host on port 465 (TLS from the start).
 
-**M6c: webmail, autoconfiguration, certificates, deliverability. Next.**
-- Roundcube with single sign-on from the User panel (and its own login for
-  mailbox users).
-- Autodiscover and autoconfig, and a client setup page per mailbox.
-- A certificate for each mail domain (SNI in Exim and Dovecot).
-- The deliverability check page (SPF, DKIM, DMARC, PTR, blocklists).
+**M6c: webmail, autoconfiguration, certificates, deliverability. Built 2026-11-17.**
+- **Webmail: Roundcube 1.7.6** (its release pinned by checksum, its
+  signature checked when pinned) at `/webmail/` on the User panel's port,
+  in a PHP-FPM pool of its own as `lpanel-webmail`, with its own database
+  (`lpanel_webmail`). Mailbox users sign in with their address and password.
+  - **"Open webmail"** (User panel, each mailbox) signs in with no password:
+    the agent gives a random sign-on password for the mailbox (`mail.sso`),
+    good for eight hours and the same while it is good, which Dovecot
+    accepts beside the mailbox's own; the panel hands it to Roundcube in a
+    one-time ticket (its `lpanel_sso` plugin). It ends when the mailbox goes,
+    the account is suspended, the mailbox's password changes, or its time is
+    up (`mail:settle`).
+  - `webmail.<domain>` on every mail domain's site goes to webmail.
+- **Mail clients set themselves up:** every site of an account with email
+  passes Thunderbird's autoconfig and Outlook's autodiscover on to the panel
+  (on 127.0.0.1:7449, which serves nothing else), at any of its names; the
+  panel answers with the servers and ports for the domain asked about.
+  `autoconfig.` and `autodiscover.<domain>` are in the zone and the site.
+- **A setup page for each mailbox** (User panel, Email, Set up): username,
+  server, every port and its security, copy buttons, and an Apple profile
+  (iPhone, iPad, Mac) to download.
+- **A certificate for each mail domain:** each mail domain's site answers to
+  `mail.<domain>` too, so AutoSSL puts it in the site's certificate; Exim
+  and Dovecot then serve that certificate for `mail.<domain>` by SNI, and
+  mail clients are told to use that name. Until then they are told the
+  server's hostname. A renewal reaches mail by itself (`web.applied`).
+- **Deliverability** (both panels, Email, Deliverability): for each mail
+  domain, SPF evaluated for the server's address (include, a, mx, ip4/6,
+  redirect, the ten-lookup limit), the DKIM key against the server's, DMARC
+  and its policy, MX pointing here; for the server, its address's reverse
+  name (and that it leads back) and five blocklists. Each finding says what
+  to do. The Admin panel checks the server, and any account by name.
+- **Where it shows:** the API (`…/email/mailboxes/{address}/webmail` gives a
+  one-time address, `…/mailboxes/{address}/setup`, `…/email/checks`,
+  `/admin/api/v1/email/checks`) and `lpanel mail:webmail|setup|check`,
+  `web:sync --all --changed`. Sign-ons are audited (`mail.webmail`), their
+  passwords never.
+- **Tests:** Go (sign-on passwords: hashing, reuse, expiry, suspension,
+  removed mailboxes, refusals; SNI copies: coverage, validity, renewal,
+  removal, Dovecot's reload; SPF evaluation and the checks; the sites'
+  mail rules on all three stacks); PHP 139; SELinux check 82;
+  `tests/e2e/install.sh` against the real servers (Roundcube's login and the
+  sign-on, autoconfig and autodiscover through the sites, a Pebble
+  certificate served by SNI on 993, 465 and 587, the checks against
+  PowerDNS): `WEB=apache` 238 checks, `WEB=nginx` 239,
+  `WEB=hybrid` 243; `tests/e2e/agent.sh` 37.
+- **Not yet:** ManageSieve (owners' own Sieve scripts from Roundcube);
+  webmail on a hostname of its own; DNS-based SRV records for autodiscover;
+  checking deliverability on a schedule and alerting (M10).
 
 ### M7: Files and access
 - File manager, Pure-FTPd/FTPS, jailed SSH/SFTP, SSH key manager, disk usage

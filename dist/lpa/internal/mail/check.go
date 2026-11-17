@@ -44,6 +44,7 @@ var (
 	// A foreign address's local part: a narrow set that can never be read
 	// by Exim as a file, a pipe, an include or a second address.
 	foreignLocalRule = regexp.MustCompile(`^[A-Za-z0-9._%=+-]{1,64}$`)
+	certRule         = regexp.MustCompile(`^[0-9a-f]{16}$`)
 	dateRule         = regexp.MustCompile(`^20[0-9]{2}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$`)
 )
 
@@ -145,6 +146,9 @@ func (a *ApplyArgs) check() error {
 }
 
 func (d *Domain) check() error {
+	if d.Cert != "" && !certRule.MatchString(d.Cert) {
+		return badArgs("%s: certificate id %q is not 16 hex digits", d.Name, d.Cert)
+	}
 	switch d.Catchall {
 	case "", Refuse, Discard:
 	default:
