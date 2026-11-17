@@ -17,14 +17,17 @@ use App\Modules\Agent\AgentUnavailable;
 use App\Modules\Mail\MailActions;
 use App\Modules\Mail\Mailboxes;
 use App\Modules\Mail\MailOutcome;
+use App\Modules\Mail\MailQueue;
 use App\Modules\Mail\MailSync;
 use App\Modules\Packages\Http\PackageApi;
 
 /**
  * Mail through the API, with the same rules as the panels.
  *
- *   /admin/api/v1/accounts/{username}/email…   an account's (accounts.manage / accounts.modify)
- *   /admin/api/v1/email…                       the mail servers (server.mail)
+ *   /admin/api/v1/accounts/{username}/email…   an account's (accounts.manage / accounts.modify):
+ *       mailboxes, autoresponders, filters, forwarders, domains, spam, track
+ *   /admin/api/v1/email…                       the mail servers (server.mail):
+ *       state, settings (relay host), filtering, queue, track
  *
  * Passwords are sent in the request body and never returned.
  *
@@ -39,6 +42,7 @@ final class MailApi
         private readonly MailSync $sync,
         private readonly Accounts $accounts,
         private readonly AgentClient $agent,
+        private readonly MailQueue $queue,
         private readonly Localization $localization,
     ) {}
 
@@ -156,6 +160,82 @@ final class MailApi
         return $this->respond($outcome, $account);
     }
 
+    public function filters(Identity $identity, string $username, string $address): JsonResponse
+    {
+        $account = $this->account($identity, $username);
+
+        return ApiResponse::item(['address' => $address, 'filters' => \array_map(self::filter(...), $this->mailbox($account, $address)['filters'])]);
+    }
+
+    /** {field, test, value, action, target?, stop?}: added after the mailbox's other filters */
+    public function addFilter(Request $request, Identity $identity, string $username, string $address): Response
+    {
+        $account = $this->account($identity, $username);
+        $input = [];
+
+        foreach (['field', 'test', 'value', 'action', 'target', 'stop'] as $key) {
+            $v = $request->input($key);
+            $input[$key] = \is_bool($v) ? $v : (\is_scalar($v) ? (string) $v : '');
+        }
+
+        [$outcome, $errors] = $this->actions->addFilter($identity, $request, $account, $this->mailbox($account, $address), $input);
+
+        if ($errors !== []) {
+            return PackageApi::invalid($errors, $this->localization);
+        }
+
+        return $this->respondWith($outcome, fn(): array => ['address' => $address, 'filters' => \array_map(self::filter(...), $this->mailbox($account, $address)['filters'])], 201);
+    }
+
+    public function removeFilter(Request $request, Identity $identity, string $username, string $id): Response
+    {
+        $account = $this->account($identity, $username);
+        $filter = $this->mail->filter((int) $account['id'], (int) $id) ?? throw HttpException::notFound();
+        $outcome = $this->actions->removeFilter($identity, $request, $account, $filter);
+
+        return $outcome->status === MailOutcome::DONE ? ApiResponse::noContent() : $this->respond($outcome, $account);
+    }
+
+    public function spam(Identity $identity, string $username): JsonResponse
+    {
+        return ApiResponse::item($this->presentSpam($this->account($identity, $username)));
+    }
+
+    /** {junk?: score|0, delete?: score|0, allow?: [..], block?: [..]}: what is left out stays */
+    public function setSpam(Request $request, Identity $identity, string $username): Response
+    {
+        $account = $this->account($identity, $username);
+        $now = $this->mail->spam((int) $account['id']);
+        $input = [
+            'junk' => $request->input('junk') ?? MailToolPages::score($now['junk']),
+            'delete' => $request->input('delete') ?? MailToolPages::score($now['delete']),
+            'allow' => $request->input('allow') ?? $now['allow'],
+            'block' => $request->input('block') ?? $now['block'],
+        ];
+
+        foreach (['junk', 'delete'] as $key) {
+            if ($input[$key] === false || $input[$key] === '0' || $input[$key] === 0) {
+                $input[$key] = '';
+            }
+        }
+
+        [$outcome, $errors] = $this->actions->setSpam($identity, $request, $account, $input);
+
+        if ($errors !== []) {
+            return PackageApi::invalid($errors, $this->localization);
+        }
+
+        return $this->respondWith($outcome, fn(): array => $this->presentSpam($account));
+    }
+
+    /** ?search=&status=&days= */
+    public function accountTrack(Request $request, Identity $identity, string $username): Response
+    {
+        $account = $this->account($identity, $username);
+
+        return $this->tracked((string) $account['username'], $request);
+    }
+
     // -------------------------------------------------------------------------
     // The mail servers
 
@@ -176,18 +256,120 @@ final class MailApi
         ]);
     }
 
-    /** {smarthost: "host[:port]" or ""} */
+    /**
+     * {smarthost: "host[:port]" or "", relay_user?: "" for no login,
+     * relay_password?: kept when left out with the same user}
+     */
     public function settings(Request $request, Identity $identity): Response
     {
-        $outcome = $this->actions->setSmarthost($identity, $request, (string) $request->input('smarthost', ''));
+        $user = $request->input('relay_user');
+        $outcome = $this->actions->setSmarthost(
+            $identity,
+            $request,
+            (string) $request->input('smarthost', ''),
+            $user === null ? $this->mail->setting('smarthost_user') : (string) $user,
+            (string) $request->input('relay_password', ''),
+        );
 
+        return $this->serverReply($outcome, ['smarthost', 'relay_user', 'relay_password'], fn(): array => ['smarthost' => $this->mail->setting('smarthost'), 'relay_user' => $this->mail->setting('smarthost_user')]);
+    }
+
+    /** {spam: bool, virus: bool, reject?: score} */
+    public function filtering(Request $request, Identity $identity): Response
+    {
+        $bool = static fn(mixed $v): bool => \filter_var($v, \FILTER_VALIDATE_BOOLEAN);
+        $reject = $request->input('reject') ?? MailToolPages::score((int) $this->mail->setting('reject', '150'));
+        $outcome = $this->actions->setFiltering($identity, $request, $bool($request->input('spam', false)), $bool($request->input('virus', false)), \is_scalar($reject) ? (string) $reject : '');
+
+        return $this->serverReply($outcome, ['reject', 'virus'], fn(): array => [
+            'spam' => $this->mail->setting('spam', 'off') === 'on', 'virus' => $this->mail->setting('virus', 'off') === 'on', 'reject' => (int) $this->mail->setting('reject', '150') / 10,
+        ]);
+    }
+
+    /** ?search= */
+    public function queue(Request $request): Response
+    {
+        [$list, $error] = $this->queue->list((string) $request->query('search', ''), 1000);
+
+        return $list === null ? $this->unavailable($error) : ApiResponse::item($list);
+    }
+
+    public function queueMessage(string $id): Response
+    {
+        [$message, $error] = $this->queue->view($id);
+
+        if ($message === null && $error === 'Mail.error_queue_none') {
+            throw HttpException::notFound();
+        }
+
+        return $message === null ? new JsonResponse(['error' => 'not_found', 'message' => (string) $error], 404) : ApiResponse::item($message);
+    }
+
+    /** {action: deliver|remove|freeze|thaw|flush, ids: [..]} */
+    public function queueAct(Request $request, Identity $identity): Response
+    {
+        $ids = $request->input('ids', []);
+        $ids = \is_array($ids) ? \array_values(\array_map(static fn(mixed $v): string => \is_scalar($v) ? (string) $v : '', $ids)) : [];
+        $outcome = $this->actions->queueAction($identity, $request, (string) $request->input('action', ''), $ids);
+
+        return $this->serverReply($outcome, ['action', 'ids'], static fn(): array => $outcome->result);
+    }
+
+    /** ?account=&search=&status=&days= */
+    public function track(Request $request): Response
+    {
+        $account = (string) $request->query('account', '');
+
+        return $this->tracked($account === '' ? null : $account, $request);
+    }
+
+    private function tracked(?string $username, Request $request): Response
+    {
+        [$result, $error] = $this->queue->track($username, (string) $request->query('search', ''), (string) $request->query('status', ''), (int) $request->query('days', '7'), 1000);
+
+        return $result === null ? $this->unavailable($error) : ApiResponse::item($result);
+    }
+
+    private function unavailable(?string $error): JsonResponse
+    {
+        return new JsonResponse(['error' => 'unavailable', 'message' => $this->localization->get((string) $error)], 503);
+    }
+
+    /**
+     * @param list<string>                  $fields refusals that are invalid input
+     * @param \Closure(): array<string, mixed> $done
+     */
+    private function serverReply(MailOutcome $outcome, array $fields, \Closure $done): Response
+    {
         return match ($outcome->status) {
-            MailOutcome::REFUSED => $outcome->code === 'smarthost'
-                ? PackageApi::invalid(['smarthost' => (string) $outcome->message], $this->localization)
+            MailOutcome::REFUSED => \in_array($outcome->code, $fields, true)
+                ? PackageApi::invalid([$outcome->code => (string) $outcome->message], $this->localization)
                 : new JsonResponse(['error' => 'conflict', 'message' => $this->localization->get((string) $outcome->message)], 409),
             MailOutcome::FAILED => new JsonResponse(['error' => $outcome->code, 'message' => $this->localization->get('Mail.refused'), 'detail' => $outcome->message], 502),
-            default => ApiResponse::item(['smarthost' => $this->mail->setting('smarthost')]),
+            default => ApiResponse::item($done()),
         };
+    }
+
+    /**
+     * @param array<string, mixed> $f
+     *
+     * @return array<string, mixed>
+     */
+    private static function filter(array $f): array
+    {
+        return ['id' => (int) $f['id'], 'field' => (string) $f['field'], 'test' => (string) $f['test'], 'value' => (string) $f['value'], 'action' => (string) $f['action'], 'target' => $f['target'], 'stop' => (bool) $f['stop']];
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     *
+     * @return array<string, mixed>
+     */
+    private function presentSpam(array $account): array
+    {
+        $s = $this->mail->spam((int) $account['id']);
+
+        return ['junk' => $s['junk'] / 10, 'delete' => $s['delete'] / 10, 'allow' => $s['allow'], 'block' => $s['block'], 'filtering' => $this->mail->setting('spam', 'off') === 'on'];
     }
 
     // -------------------------------------------------------------------------
@@ -218,11 +400,29 @@ final class MailApi
                     'subject' => $b['responder']['subject'], 'body' => $b['responder']['body'], 'from_name' => $b['responder']['from_name'],
                     'days' => (int) $b['responder']['days'], 'start' => $b['responder']['starts_on'], 'end' => $b['responder']['ends_on'],
                 ],
+                'filters' => \array_map(self::filter(...), $b['filters']),
                 'created_at' => $b['created_at'],
             ], $this->mail->mailboxes($id)),
             'forwarders' => \array_map(static fn(array $f): array => ['id' => (int) $f['id'], 'address' => (string) $f['address'], 'to' => (string) $f['destination']], $this->mail->forwarders($id)),
             'state' => $state === null ? null : ['state' => $state['state'], 'error' => $state['error'], 'applied_at' => $state['applied_at']],
         ];
+    }
+
+    /**
+     * Like respond(), with the body done() gives.
+     *
+     * @param \Closure(): array<string, mixed> $done
+     */
+    private function respondWith(MailOutcome $outcome, \Closure $done, int $status = 200): Response
+    {
+        return match ($outcome->status) {
+            MailOutcome::REFUSED => \in_array($outcome->message, ['Mail.error_unreachable', 'Mail.error_limit'], true)
+                ? new JsonResponse(['error' => 'conflict', 'message' => $this->localization->get((string) $outcome->message)], 409)
+                : PackageApi::invalid([($outcome->code ?: 'input') => (string) $outcome->message], $this->localization),
+            MailOutcome::FAILED => new JsonResponse(['error' => $outcome->code, 'message' => $this->localization->get('Mail.refused'), 'detail' => $outcome->message], 502),
+            MailOutcome::PENDING => ApiResponse::accepted($done()),
+            default => ApiResponse::item($done(), $status),
+        };
     }
 
     /** @param array<string, mixed> $account */

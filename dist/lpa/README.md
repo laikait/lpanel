@@ -106,11 +106,16 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `dns.remove` | change | `{username, zone}`: delete a zone of that account (also run by `account.terminate` for every zone of it) |
 | `dns.info` | read-only | PowerDNS's version and state |
 | `dns.lookup` | read-only | `{hosts, zones}`: what the world's DNS says: each host's addresses and whether one is this server's (glue), each zone's nameservers at its registry |
-| `mail.apply` | change | `{username, suspended, domains}`: an account's whole mail state (see below); answers each domain's DKIM public key |
+| `mail.apply` | change | `{username, suspended, domains, limit, spam}`: an account's whole mail state (see below); answers each domain's DKIM public key |
 | `mail.purge` | change | `{username, domain, local}`: delete a mailbox's mail (or, with `local` empty, a domain's) once it is no longer set up |
-| `mail.settings` | change | `{smarthost}`: the relay host for outgoing mail (`host:port`, empty for none) |
+| `mail.settings` | change | `{smarthost, user, password, keep_password}`: the relay host for outgoing mail (`host:port`, empty for none) and its login (PLAIN over TLS only) |
+| `mail.filtering` | change | `{spam, virus, reject}`: Rspamd and ClamAV on or off (virus needs spam), the score in tenths at which mail from outside is refused |
+| `mail.queue_act` | change | `{action, ids}`: deliver (in the background), remove, freeze or thaw queued messages; `flush` tries them all |
 | `mail.usage` | read-only | `{username}`: the bytes each mailbox holds |
-| `mail.info` | read-only | Exim's and Dovecot's state and versions, the queue, the number of mail domains |
+| `mail.info` | read-only | Exim's, Dovecot's, Rspamd's and ClamAV's state and versions, filtering, the queue, the number of mail domains |
+| `mail.queue` | read-only | `{search, limit}`: the messages in Exim's queue, oldest first |
+| `mail.queue_view` | read-only | `{id}`: one queued message (up to 256 KB) and Exim's log of it |
+| `mail.track` | read-only | `{username, search, status, days, limit}`: what became of each message, from Exim's log; with a username, only mail from or to its domains |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -369,3 +374,13 @@ go test ./internal/protocol -update   # after changing the signing rule; then ru
 
 The end-to-end test, with the real agent and the real PHP client in an
 AlmaLinux 9 container, is `tests/e2e/agent.sh` in the panel's repository.
+
+M6b adds to each account's state a sending limit (`limit`, recipients an
+hour; written to `/etc/exim/lpanel/accounts/<account>`, which Exim's
+ratelimit reads) and its spam settings (`spam`: `junk` and `delete` scores
+in tenths, `allow` and `block` senders), and to each mailbox its `filters`
+(`field` from/to/subject, `match` contains/is/begins/ends, `value`, `action`
+folder/forward/discard, `target`, `stop`). A mailbox's Sieve script holds,
+in order: blocked senders (discarded), spam filing by `X-LPanel-Spam-Score`
+(unless the sender is allowed), its filters, its autoresponder. No script is
+written for a mailbox with nothing to do.

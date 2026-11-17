@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -20,6 +21,12 @@ const (
 	MaxBody           = 10000
 	MaxFromName       = 100
 	MaxResponderDays  = 30
+	MaxFilters        = 50        // filters of one mailbox
+	MaxFilterValue    = 200       // characters a filter looks for
+	MaxFolder         = 64        // characters of a folder's name
+	MaxSenders        = 500       // allowed, and blocked, senders of an account
+	MaxLimit          = 1_000_000 // recipients an hour
+	MaxScore          = 1000      // spam scores, ×10
 	maxLocal          = 64
 	maxDomain         = 253
 	maxForeignAddress = 254
@@ -114,6 +121,12 @@ func (a *ApplyArgs) check() error {
 	if len(a.Domains) > MaxDomains {
 		return badArgs("an account has at most %d mail domains", MaxDomains)
 	}
+	if a.Limit < 0 || a.Limit > MaxLimit {
+		return badArgs("the sending limit must be 0 to %d recipients an hour", MaxLimit)
+	}
+	if err := a.Spam.check(); err != nil {
+		return err
+	}
 	seen := map[string]bool{}
 	for i := range a.Domains {
 		d := &a.Domains[i]
@@ -162,6 +175,18 @@ func (d *Domain) check() error {
 		}
 		if r := b.Autoresponder; r != nil {
 			if err := r.check(); err != nil {
+				return err
+			}
+		}
+		if len(b.Filters) > MaxFilters {
+			return badArgs("%s@%s has more than %d filters", b.Local, d.Name, MaxFilters)
+		}
+		for j := range b.Filters {
+			if err := b.Filters[j].check(); err != nil {
+				var pe *protocol.Error
+				if errors.As(err, &pe) {
+					return badArgs("a filter of %s@%s: %s", b.Local, d.Name, pe.Message)
+				}
 				return err
 			}
 		}
@@ -218,6 +243,109 @@ func (r *Autoresponder) check() error {
 	}
 	if r.Start != "" && r.End != "" && r.End < r.Start {
 		return badArgs("an autoresponder cannot end before it starts")
+	}
+	return nil
+}
+
+// check validates how the account files spam, and puts its senders in their
+// one form: an address, or "@domain" for a whole domain.
+func (s *Spam) check() error {
+	if s.Junk < 0 || s.Junk > MaxScore || s.Delete < 0 || s.Delete > MaxScore {
+		return badArgs("spam scores must be 0 to %d (tenths)", MaxScore)
+	}
+	if s.Junk > 0 && s.Delete > 0 && s.Delete <= s.Junk {
+		return badArgs("the score that deletes spam must be above the one that files it in Junk")
+	}
+	for _, list := range []*[]string{&s.Allow, &s.Block} {
+		if len(*list) > MaxSenders {
+			return badArgs("an account lists at most %d allowed, and %d blocked, senders", MaxSenders, MaxSenders)
+		}
+		seen := map[string]bool{}
+		for i, sender := range *list {
+			clean, err := checkSender(sender)
+			if err != nil {
+				return err
+			}
+			if seen[clean] {
+				return badArgs("%s is listed twice", clean)
+			}
+			seen[clean] = true
+			(*list)[i] = clean
+		}
+	}
+	return nil
+}
+
+// checkSender accepts an address, or "@domain" for every address of a
+// domain, in lowercase.
+func checkSender(s string) (string, error) {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if domain, ok := strings.CutPrefix(s, "@"); ok {
+		if err := checkDomain(domain); err != nil {
+			return "", badArgs("%q is not an address or @domain", s)
+		}
+		return s, nil
+	}
+	addr, err := checkAddress(s)
+	if err != nil {
+		return "", badArgs("%q is not an address or @domain", s)
+	}
+	return strings.ToLower(addr), nil
+}
+
+// Filter fields, tests and actions.
+var (
+	filterFields  = map[string]bool{"from": true, "to": true, "subject": true}
+	filterMatches = map[string]bool{"contains": true, "is": true, "begins": true, "ends": true}
+)
+
+// Filter actions.
+const (
+	FilterFolder  = "folder"  // file the message in a folder (made when missing)
+	FilterForward = "forward" // send a copy to an address
+	FilterDiscard = "discard" // throw the message away
+)
+
+func (f *Filter) check() error {
+	if !filterFields[f.Field] {
+		return badArgs("%q is not a field a filter looks at (from, to, subject)", f.Field)
+	}
+	if !filterMatches[f.Match] {
+		return badArgs("%q is not a test (contains, is, begins, ends)", f.Match)
+	}
+	if err := checkText("what it looks for", f.Value, MaxFilterValue, false); err != nil {
+		return err
+	}
+	if strings.TrimSpace(f.Value) == "" {
+		return badArgs("a filter needs something to look for")
+	}
+	switch f.Action {
+	case FilterFolder:
+		return checkFolder(f.Target)
+	case FilterForward:
+		addr, err := checkAddress(f.Target)
+		if err != nil {
+			return err
+		}
+		f.Target = addr
+	case FilterDiscard:
+		f.Target = ""
+	default:
+		return badArgs("%q is not an action (folder, forward, discard)", f.Action)
+	}
+	return nil
+}
+
+// checkFolder accepts a folder's name: printable text, no path characters
+// or IMAP wildcards, "." only between names (Work.Clients is Clients inside
+// Work).
+func checkFolder(name string) error {
+	if err := checkText("the folder", name, MaxFolder, false); err != nil {
+		return err
+	}
+	if name == "" || strings.TrimSpace(name) != name || strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") ||
+		strings.Contains(name, "..") || strings.ContainsAny(name, `/\"*%~`+"\t") {
+		return badArgs("%q is not a folder name", name)
 	}
 	return nil
 }

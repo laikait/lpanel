@@ -11,6 +11,8 @@ check() { # name, command...
         pass=$((pass + 1)); echo "  ok    $name"
     else
         fail=$((fail + 1)); echo "  FAIL  $name"; sed 's/^/        /' /tmp/out | tail -25
+        # A mail check that fails shows what Exim did last.
+        case "$1" in t_mail_*) echo "        --- exim"; grep -vE 'Start queue|End queue' /var/log/exim/main.log 2>/dev/null | tail -12 | cut -c1-300 | sed 's/^/        /' ;; esac
     fi
 }
 status() { curl -ks -o /dev/null -w '%{http_code}' "$1"; }
@@ -690,7 +692,7 @@ import socket, os
 s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", 2526)); s.listen(5)
 n = 0
 while True:
-    c, _ = s.accept(); f = c.makefile("rwb")
+    c, _ = s.accept(); f = c.makefile("rwb"); sender = ""; rcpts = []
     def out(x): f.write(x.encode() + b"\r\n"); f.flush()
     out("220 catcher")
     while True:
@@ -698,13 +700,15 @@ while True:
         if not line: break
         u = line.decode(errors="replace").strip().upper()
         if u.startswith("EHLO") or u.startswith("HELO"): out("250 catcher")
+        elif u.startswith("MAIL FROM:"): sender = line.decode(errors="replace").strip()[10:]; rcpts = []; out("250 OK")
+        elif u.startswith("RCPT TO:"): rcpts.append(line.decode(errors="replace").strip()[8:]); out("250 OK")
         elif u == "DATA":
             out("354 go"); buf = b""
             while True:
                 l = f.readline()
                 if l in (b".\r\n", b".\n", b""): break
                 buf += l[1:] if l.startswith(b"..") else l
-            n += 1; open("/tmp/caught/%03d.eml" % n, "wb").write(buf); out("250 OK")
+            n += 1; open("/tmp/caught/%03d.eml" % n, "wb").write(b"X-Envelope-From: " + sender.encode() + b"\r\nX-Envelope-To: " + " ".join(rcpts).encode() + b"\r\n" + buf); out("250 OK")
         elif u == "QUIT": out("221 bye"); break
         else: out("250 OK")
     c.close()
@@ -737,6 +741,7 @@ PY
 sw() { swaks --helo e2e-client.test --timeout 20 "$@" > /tmp/swaks.out 2>&1; local c=$?; grep -E '^ *<[~*-]* *[0-9]{3}[ -]' /tmp/swaks.out | tail -4 >&2; return $c; }
 refused() { ! sw "$@" && grep -qE "^ *<[~*]* *$WANT" /tmp/swaks.out; }   # WANT: the refusal's code and words
 caught() { grep -l "$1" /tmp/caught/*.eml 2>/dev/null | tail -1; }
+caught_to() { grep -l "$1" /tmp/caught/*.eml 2>/dev/null | xargs -r grep -l "^X-Envelope-To: .*<$2>" | tail -1; }   # a message, and who it went to
 waitfor() { for _ in $(seq 120); do eval "$1" && return 0; sleep 0.5; done; eval "$1"; }
 maildir() { echo "/home/$1/mail/$2/$3/Maildir"; }
 count_new() { find "$(maildir "$1" "$2" "$3")"/new "$(maildir "$1" "$2" "$3")"/cur -type f 2>/dev/null | wc -l; }
@@ -744,7 +749,7 @@ lpanel packages:create Mailer --disk=50 >/dev/null
 echo "Owner-Pass-Word-9" | lpanel accounts:create shop9 nine.example.test Mailer >/dev/null
 lpanel mail:settings --smarthost 127.0.0.1:2526 >/dev/null
 export MIP MPW WANT
-export -f sw refused caught waitfor maildir count_new
+export -f sw refused caught caught_to waitfor maildir count_new
 
 t_mail_up()     { systemctl is-active --quiet exim dovecot && for p in 25 465 587 143 993 110 995; do ss -ltn | grep -qE "[:.]$p " || { echo "nothing on $p"; return 1; }; done \
                   && lpanel mail:info > /tmp/mi.out && grep -qE 'Exim +running 4\.' /tmp/mi.out && grep -qE 'Dovecot +running 2\.' /tmp/mi.out; }
@@ -802,7 +807,7 @@ t_mail_reply()  { printf 'Back on Monday.\nInfo' | lpanel mail:responder shop9 i
                   && waitfor 'grep -rlq "Away now" "$(maildir shop3 three.example.test sender)"' \
                   && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "still there" && sleep 3 \
                   && [ "$(grep -l "Away now" "$(maildir shop3 three.example.test sender)"/new/* "$(maildir shop3 three.example.test sender)"/cur/* 2>/dev/null | wc -l)" = 1 ] && lpanel mail:responder shop9 info@nine.example.test --off >/dev/null \
-                  && [ ! -e /etc/dovecot/lpanel/sieve/nine.example.test ]; }
+                  && ! grep -qs 'vacation :days' /etc/dovecot/lpanel/sieve/nine.example.test/info.sieve; }
 t_mail_full()   { local before; before=$(count_new shop9 nine.example.test info); head -c 1500000 /dev/urandom | base64 > /tmp/big.txt \
                   && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --attach @/tmp/big.txt --h-Subject "too big" \
                   && waitfor 'grep -q "info@nine.example.test.*Quota exceeded\|info@nine.example.test.*Mailbox is full\|info@nine.example.test.*quota" /var/log/exim/main.log' \
@@ -815,6 +820,135 @@ t_mail_suspend() { lpanel accounts:suspend shop9 >/dev/null && grep -qx 'suspend
                   && sw -s "$MIP" -p 25 --from sender@three.example.test --to bob@nine.example.test --h-Subject "while away" && waitfor 'grep -rq "while away" "$(maildir shop9 nine.example.test bob)"' \
                   && lpanel accounts:unsuspend shop9 >/dev/null && sleep 1.2 && python3 /tmp/imap.py imaps 127.0.0.1 info@nine.example.test "$MPW" >/dev/null
                   local r=$?; lpanel accounts:unsuspend shop9 >/dev/null 2>&1; return $r; }
+# --- M6b: filtering, filters, limits, SRS, the relay host's login, the queue, tracking
+# An e2e-only Rspamd rule makes "e2e-spammy" in a subject score 8: above the
+# Junk score (6) and below the refusal score (15), whatever else it scores.
+printf '%s\n' 'E2E_SPAMMY { type = "header"; header = "Subject"; regexp = true; map = "/etc/rspamd/e2e-spammy.map"; score = 8.0; }' > /etc/rspamd/local.d/multimap.conf
+printf '%s\n' '/e2e-spammy/i' > /etc/rspamd/e2e-spammy.map
+systemctl restart rspamd
+GTUBE='XJS*C4JDBQADN1.NSBN3*2IDNEN*GTUBE-STANDARD-ANTI-UBE-TEST-EMAIL*C.34X'
+EICAR='X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
+export GTUBE EICAR
+junk() { echo "$(maildir shop9 nine.example.test info)/.Junk"; }
+export -f junk
+# A relay host that wants TLS and a login, and records the login it got.
+openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=relay.test -keyout /tmp/relay.key -out /tmp/relay.crt -days 2 2>/dev/null
+mkdir -p /tmp/caught2
+cat > /tmp/relay.py <<'PY'
+import socket, ssl, base64
+ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); ctx.load_cert_chain("/tmp/relay.crt", "/tmp/relay.key")
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", 2527)); s.listen(5)
+n = 0
+while True:
+    c, _ = s.accept(); st = {"c": c, "f": c.makefile("rwb"), "tls": False, "auth": ""}
+    def out(x): st["f"].write(x.encode() + b"\r\n"); st["f"].flush()
+    out("220 relay")
+    while True:
+        line = st["f"].readline()
+        if not line: break
+        u = line.decode(errors="replace").strip(); U = u.upper()
+        if U.startswith("EHLO"):
+            st["f"].write(b"250-relay\r\n" + (b"250-AUTH PLAIN\r\n" if st["tls"] else b"250-STARTTLS\r\n")); out("250 SIZE 100000000")
+        elif U == "STARTTLS":
+            out("220 go"); st["c"] = ctx.wrap_socket(st["c"], server_side=True); st["f"] = st["c"].makefile("rwb"); st["tls"] = True
+        elif U.startswith("AUTH PLAIN"):
+            parts = u.split(" ")
+            if len(parts) < 3:
+                out("334 "); parts.append(st["f"].readline().decode().strip())
+            st["auth"] = base64.b64decode(parts[2]).decode(errors="replace").replace("\0", "|"); out("235 ok")
+        elif U.startswith("MAIL FROM"):
+            out("250 ok" if st["auth"] and st["tls"] else "530 log in first")
+        elif U == "DATA":
+            out("354 go"); buf = b""
+            while True:
+                l = st["f"].readline()
+                if l in (b".\r\n", b".\n", b""): break
+                buf += l
+            n += 1; open("/tmp/caught2/%03d.eml" % n, "wb").write(b"X-Relay-Login: " + st["auth"].encode() + b"\r\n" + buf); out("250 OK")
+        elif U == "QUIT": out("221 bye"); break
+        else: out("250 OK")
+    st["c"].close()
+PY
+nohup python3 /tmp/relay.py >/tmp/relay.log 2>&1 &
+
+t_mail_filtering() { lpanel mail:filtering > /tmp/mf.out && grep -qE 'Spam filtering +on' /tmp/mf.out && systemctl is-active --quiet rspamd && ss -ltn | grep -q '127.0.0.1:11333 ' \
+                  && [ -e /etc/exim/lpanel/filter ] && lpanel mail:info | grep -qE 'Rspamd +running' && ! ss -ltn | grep -qE ':1133[24] '; }
+t_mail_scored() { sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "scored mail" --h-X-LPanel-Spam-Score 999 \
+                  && waitfor 'grep -rlq "scored mail" "$(maildir shop9 nine.example.test info)/new"' \
+                  && f=$(grep -rl "scored mail" "$(maildir shop9 nine.example.test info)/new" | head -1) && grep -c '^X-LPanel-Spam-Score:' "$f" | grep -qx 1 && ! grep -q '^X-LPanel-Spam-Score: 999' "$f"; }
+t_mail_gtube()  { WANT='550 This message was refused as spam' refused -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "gtube" --body "$GTUBE" \
+                  && grep -q 'rejected after DATA: refused as spam.*for info@nine.example.test' /var/log/exim/main.log; }
+t_mail_junk()   { sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "e2e-spammy offer" \
+                  && waitfor 'grep -rq "e2e-spammy offer" "$(junk)"' && ! grep -rq "e2e-spammy offer" "$(maildir shop9 nine.example.test info)/new"; }
+t_mail_allow()  { lpanel mail:spam shop9 --allow=sender@three.example.test >/dev/null && grep -q 'sender@three.example.test' /etc/dovecot/lpanel/sieve/nine.example.test/info.sieve \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "e2e-spammy but allowed" \
+                  && waitfor 'grep -rq "e2e-spammy but allowed" "$(maildir shop9 nine.example.test info)/new"' && lpanel mail:spam shop9 --allow=none >/dev/null; }
+t_mail_block()  { lpanel mail:spam shop9 --block=@three.example.test >/dev/null && local before; before=$(count_new shop9 nine.example.test info) \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "from a blocked sender" && sleep 3 \
+                  && ! grep -rq "from a blocked sender" "$(maildir shop9 nine.example.test info)" && [ "$(count_new shop9 nine.example.test info)" = "$before" ] \
+                  && lpanel mail:spam shop9 --block=none >/dev/null; }
+t_mail_filter() { lpanel mail:filter shop9 info@nine.example.test --field=subject --test=contains --value="Invoice" --action=folder --target=Billing --stop >/dev/null \
+                  && lpanel mail:filter shop9 info@nine.example.test --field=from --test=is --value=sender@three.example.test --action=forward --target=copies@example.net >/dev/null \
+                  && lpanel mail:filter shop9 info@nine.example.test > /tmp/mfl.out && grep -q 'Billing' /tmp/mfl.out && [ -s /etc/dovecot/lpanel/sieve/nine.example.test/info.svbin ] \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "Invoice 42" \
+                  && waitfor 'grep -rq "Invoice 42" "$(maildir shop9 nine.example.test info)/.Billing"' \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "please copy me" \
+                  && waitfor 'caught_to "please copy me" copies@example.net | grep -q .' && grep -q '^X-Envelope-From: <info@nine.example.test>' "$(caught_to 'please copy me' copies@example.net)" \
+                  && waitfor 'grep -rq "please copy me" "$(maildir shop9 nine.example.test info)/new"'
+                  local id; lpanel mail:filter shop9 info@nine.example.test > /tmp/mfl.out; for id in $(awk 'NR > 1 {print $1}' /tmp/mfl.out); do lpanel mail:filter shop9 info@nine.example.test --remove="$id" >/dev/null; done
+                  [ ! -e /etc/dovecot/lpanel/sieve/nine.example.test/info.sieve ] || ! grep -q Billing /etc/dovecot/lpanel/sieve/nine.example.test/info.sieve; }
+t_mail_srs()    { lpanel mail:forward shop9 info@nine.example.test boss@example.net >/dev/null 2>&1; sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "forward with srs" \
+                  && waitfor 'caught_to "forward with srs" boss@example.net | grep -q .' && local env; env=$(grep -m1 '^X-Envelope-From:' "$(caught_to 'forward with srs' boss@example.net)" | sed 's/^X-Envelope-From: <\(.*\)>.*/\1/'); echo "envelope: $env" \
+                  && [[ "$env" == SRS0=*=three.example.test=sender@nine.example.test ]] \
+                  && sw -s "$MIP" -p 25 --from '<>' --to "$env" --h-Subject "bounce back to sender" \
+                  && waitfor 'grep -rq "bounce back to sender" "$(maildir shop3 three.example.test sender)"' \
+                  && WANT='550' refused -s "$MIP" -p 25 --from '<>' --to "SRS0=abcd=xx=three.example.test=sender@nine.example.test"
+                  local r=$?; lpanel mail:unforward shop9 info@nine.example.test boss@example.net >/dev/null 2>&1; return $r; }
+t_mail_limit()  { lpanel packages:create Limited --disk=50 --mail-per-hour=3 >/dev/null && echo "Owner-Pass-Word-8" | lpanel accounts:create shop8 eight.example.test Limited >/dev/null \
+                  && echo "$MPW" | lpanel mail:create shop8 info@eight.example.test >/dev/null && grep -qx 'limit: 3' /etc/exim/lpanel/accounts/shop8 \
+                  && for i in 1 2 3; do sw -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@eight.example.test --auth-password "$MPW" --from info@eight.example.test --to "n$i@example.net" --h-Subject "limit $i" || return 1; done \
+                  && WANT='451 Your account has sent to its limit of 3' refused -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@eight.example.test --auth-password "$MPW" --from info@eight.example.test --to n4@example.net \
+                  && ! su -s /bin/bash shop8 -c 'printf "From: info@eight.example.test\nTo: n5@example.net\nSubject: site over the limit\n\nhi\n" | /usr/sbin/sendmail -t' 2>/dev/null \
+                  && grep -q 'lpanel-limit: shop8 reached 3' /var/log/exim/main.log \
+                  && sw -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@nine.example.test --auth-password "$MPW" --from info@nine.example.test --to someone@example.net --h-Subject "others are not limited"; }
+t_mail_relaylogin() { relay_steps; local r=$?; lpanel mail:settings --smarthost 127.0.0.1:2526 --relay-user none >/dev/null 2>&1; return $r; }
+relay_steps() {
+    printf 'Relay:Pass^word "1"' | lpanel mail:settings --smarthost 127.0.0.1:2527 --relay-user relayuser >/dev/null || { echo "settings failed"; return 1; }
+    [ "$(stat -c '%a %U %G' /etc/exim/lpanel/smarthost_auth)" = "640 root exim" ] || { echo "smarthost_auth: $(stat -c '%a %U %G' /etc/exim/lpanel/smarthost_auth)"; return 1; }
+    sw -s "$MIP" -p 587 -tls --auth PLAIN --auth-user info@nine.example.test --auth-password "$MPW" --from info@nine.example.test --to someone@example.net --h-Subject "through the login" || { echo "not accepted"; return 1; }
+    waitfor 'grep -rlq "through the login" /tmp/caught2' || { echo "the relay got nothing"; cat /tmp/relay.log; return 1; }
+    local got; got=$(grep -h '^X-Relay-Login:' $(grep -rl 'through the login' /tmp/caught2) | tr -d '\r'); echo "$got"
+    [ "$got" = 'X-Relay-Login: |relayuser|Relay:Pass^word "1"' ] || { echo "wrong login"; return 1; }
+    ! mariadb -uroot -N lpanel -e "select value from mail_settings union all select details from audit_log" | grep -q 'Pass^word' || { echo "the password is in the database"; return 1; }
+    lpanel mail:settings --smarthost 127.0.0.1:2526 --relay-user none >/dev/null && [ ! -e /etc/exim/lpanel/smarthost_auth ]
+}
+export -f relay_steps
+t_mail_queue()  { printf 'Subject: queued e2e\n\nwaiting\n' | /usr/sbin/sendmail -odq -f root@e2e-panel.test queued-e2e@example.net \
+                  && printf 'Subject: deliver me e2e\n\nwaiting\n' | /usr/sbin/sendmail -odq -f root@e2e-panel.test deliver-e2e@example.net \
+                  && lpanel mail:queue list --search=e2e@example.net > /tmp/mq.out && cat /tmp/mq.out >&2 \
+                  && local q d; q=$(awk '/queued-e2e/ {print $1}' /tmp/mq.out) && d=$(awk '/deliver-e2e/ {print $1}' /tmp/mq.out) && [ -n "$q" ] && [ -n "$d" ] \
+                  && lpanel mail:queue show "$q" | grep -q 'Subject: queued e2e' \
+                  && lpanel mail:queue freeze "$q" >/dev/null && exim -bp | grep "$q" | grep -q frozen \
+                  && lpanel mail:queue thaw "$q" >/dev/null && ! exim -bp | grep "$q" | grep -q frozen \
+                  && ! lpanel mail:queue remove "$q" >/dev/null 2>&1 && lpanel mail:queue remove "$q" --yes >/dev/null && ! exim -bp | grep -q "$q" \
+                  && lpanel mail:queue deliver "$d" >/dev/null && waitfor 'caught "deliver me e2e" | grep -q .' && waitfor '! exim -bp | grep -q "$d"'; }
+t_mail_track()  { lpanel mail:track --account=shop9 --search=someone@example.net > /tmp/mt.out && grep -qE 'delivered +info@nine.example.test +someone@example.net' /tmp/mt.out \
+                  && lpanel mail:track --account=shop9 --status=rejected > /tmp/mt2.out && grep -q 'refused as spam' /tmp/mt2.out \
+                  && lpanel mail:track --account=shop9 > /tmp/mt3.out && ! grep -q 'n1@example.net' /tmp/mt3.out \
+                  && lpanel mail:track --account=shop8 > /tmp/mt4.out && grep -q 'n1@example.net' /tmp/mt4.out \
+                  && lpanel mail:track > /tmp/mt5.out && grep -q 'n1@example.net' /tmp/mt5.out; }
+t_mail_virus()  { mkdir -p /etc/systemd/system/clamav-freshclam.service.d && printf '[Service]\nExecStart=\nExecStart=/usr/bin/sleep infinity\n' > /etc/systemd/system/clamav-freshclam.service.d/e2e.conf \
+                  && systemctl daemon-reload && printf '%s' "$EICAR" > /tmp/eicar.com \
+                  && echo "$(md5sum < /tmp/eicar.com | cut -d' ' -f1):$(stat -c %s /tmp/eicar.com):E2E.EICAR" > /var/lib/clamav/e2e.hdb && chmod 0644 /var/lib/clamav/e2e.hdb \
+                  && lpanel mail:filtering --virus=on >/dev/null && grep -q 'clamav {' /etc/rspamd/local.d/antivirus.conf \
+                  && waitfor '[ -S /run/clamd.scan/clamd.sock ]' && id -nG _rspamd | grep -qw virusgroup \
+                  && WANT='550 This message carries a virus' refused -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "a virus" --attach @/tmp/eicar.com \
+                  && sw -s "$MIP" -p 25 --from sender@three.example.test --to info@nine.example.test --h-Subject "clean attachment" --attach @/etc/hostname \
+                  && lpanel mail:filtering --virus=off >/dev/null && ! systemctl is-active --quiet clamd@scan; local r=$?; lpanel mail:filtering --virus=off >/dev/null 2>&1; return $r; }
+t_mail_m6b_api() { [ "$(api -o /tmp/mspam.json -w '%{http_code}' -X PUT -H 'Content-Type: application/json' -d '{"junk": 7}' https://127.0.0.1:7443/admin/api/v1/accounts/shop9/email/spam)" = 200 ] \
+                  && grep -q '"junk":7' /tmp/mspam.json && [ "$(api -o /tmp/mq.json -w '%{http_code}' https://127.0.0.1:7443/admin/api/v1/email/queue)" = 200 ] && grep -q '"total"' /tmp/mq.json \
+                  && [ "$(api -o /tmp/mtr.json -w '%{http_code}' 'https://127.0.0.1:7443/admin/api/v1/accounts/shop9/email/track?days=1')" = 200 ] && grep -q '"deliveries"' /tmp/mtr.json; }
+
 t_mail_panel()  { [ "$(signin_as 7444 /panel shop9 Owner-Pass-Word-9)" = "303 https://127.0.0.1:7444/panel" ] \
                   && curl -ks -b /tmp/jar2 -c /tmp/jar2 https://127.0.0.1:7444/panel/email -o /tmp/email.html && grep -q 'info@nine.example.test' /tmp/email.html && grep -q 'e2e-panel.test' /tmp/email.html \
                   && local did; did=$(mariadb -uroot -N lpanel -e "select id from mail_domains where name='nine.example.test'") \
@@ -830,7 +964,8 @@ t_mail_gone()   { lpanel accounts:terminate shop9 --yes >/dev/null \
                   && lpanel accounts:settle >/dev/null && [ ! -e /etc/exim/lpanel/owners/nine.example.test ] && [ ! -e /etc/dovecot/lpanel/passwd.d/nine.example.test ] \
                   && [ ! -e /etc/exim/lpanel/dkim/nine.example.test ] && [ "$(mariadb -uroot -N lpanel -e "select count(*) from mail_domains where name = 'nine.example.test'")" = 0 ]; }
 t_mail_audit()  { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'mail.%'" | tr '\n' ' '); echo "$got" >&2
-                  for want in mail.mailbox_create:ok mail.mailbox_delete:ok mail.forwarder_add:ok mail.forwarder_remove:ok mail.responder_on:ok mail.responder_off:ok mail.domain_settings:ok mail.settings:ok; do
+                  for want in mail.mailbox_create:ok mail.mailbox_delete:ok mail.forwarder_add:ok mail.forwarder_remove:ok mail.responder_on:ok mail.responder_off:ok mail.domain_settings:ok mail.settings:ok \
+                              mail.spam:ok mail.filter_add:ok mail.filter_remove:ok mail.filtering:ok mail.queue:ok; do
                       grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
                   done; }
 check "Exim and Dovecot run, on every mail port" t_mail_up
@@ -853,6 +988,20 @@ check "an autoresponder answers once per sender, and goes away" t_mail_reply
 check "a full mailbox refuses mail" t_mail_full
 check "lpanel mail:usage measures each mailbox" t_mail_usage
 check "a suspended account receives mail but cannot log in or send" t_mail_suspend
+check "spam filtering is on after the install; Rspamd answers only on 127.0.0.1:11333" t_mail_filtering
+check "mail from outside gets its score; a sender's own score header is dropped" t_mail_scored
+check "obvious spam (GTUBE) is refused while the sender is connected, and logged for its recipient" t_mail_gtube
+check "spam goes to the Junk folder" t_mail_junk
+check "an allowed sender's spam stays in the inbox" t_mail_allow
+check "a blocked sender's mail is thrown away" t_mail_block
+check "a mailbox's filters file mail in a folder and forward a copy" t_mail_filter
+check "forwarded mail leaves with an SRS sender; a bounce to it goes back" t_mail_srs
+check "the package's sending limit holds for mailboxes and sites, per account" t_mail_limit
+check "the relay host gets its login, over TLS; the password is kept nowhere else" t_mail_relaylogin
+check "lpanel mail:queue lists, shows, freezes, thaws, removes and delivers" t_mail_queue
+check "lpanel mail:track: an account sees its own mail, refusals included" t_mail_track
+check "ClamAV refuses a virus (a local test signature)" t_mail_virus
+check "the API sets spam settings and reads the queue and tracking" t_mail_m6b_api
 check "the owner sees the mailboxes and makes one in the User panel" t_mail_panel
 check "the API lists and deletes mailboxes" t_mail_api
 check "a deleted mailbox's mail is deleted" t_mail_delete

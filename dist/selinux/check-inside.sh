@@ -113,6 +113,15 @@ check "Dovecot reads cert_t"                     allowed -s dovecot_t -t cert_t 
 check "accounts' PHP runs Exim as system_mail_t" bash -c 'sesearch -T -s httpd_t -t exim_exec_t -c process | grep -q system_mail_t'
 check "which becomes exim_t"                     bash -c 'sesearch -T -s system_mail_t -t exim_exec_t -c process | grep -q exim_t'
 check "autoresponders (Dovecot) send through it" bash -c 'sesearch -T -s dovecot_t -t exim_exec_t -c process | grep -q sendmail_t'
+check "Exim reads sending limits and the SRS key" bash -c 't=$(matchpathcon -n /etc/exim/lpanel/accounts/shop1 | cut -d: -f3); u=$(matchpathcon -n /etc/exim/lpanel/srs_secret | cut -d: -f3); sesearch -A -s exim_t -t "$t" -c file -p read | grep -q . && sesearch -A -s exim_t -t "$u" -c file -p read | grep -q .'
+
+echo "== spam and virus filtering (Rspamd, ClamAV)"
+check "Rspamd's worker port is spamd_port_t"     bash -c 'semanage port -l | grep -E "^spamd_port_t" | grep -qw 11333'
+check "Exim connects to it"                      allowed -s exim_t -t spamd_port_t -c tcp_socket -p name_connect
+check "Rspamd runs unconfined, started by systemd" trans init_t bin_t unconfined_service_t
+check "ClamAV's socket"                          label /run/clamd.scan/clamd.sock antivirus_var_run_t
+check "its signatures"                           label /var/lib/clamav/main.cvd antivirus_db_t
+check "Rspamd reaches ClamAV's socket"           allowed -s unconfined_service_t -t antivirus_t -c unix_stream_socket -p connectto
 
 echo "== what the panel (httpd_t) is not given"
 check "no other unconfined service"              refused -s httpd_t -t unconfined_service_t -c unix_stream_socket -p connectto

@@ -75,7 +75,7 @@ return static function (ModuleContext $module): void {
             return 0;
         })->describe('List every hosting package.');
 
-        $create = $commands->add('packages:create', static function (Output $output, Packages $packages, PanelUsers $users, AuditLog $audit, Localization $localization, string $name, ?string $owner = null, ?string $features = null, ?string $disk = null, ?string $inodes = null, ?string $bandwidth = null, ?string $domains = null, ?string $subdomains = null, ?string $mailboxes = null, ?string $databases = null, ?string $ftp = null, ?string $bandwidthAction = null): int {
+        $create = $commands->add('packages:create', static function (Output $output, Packages $packages, PanelUsers $users, AuditLog $audit, Localization $localization, string $name, ?string $owner = null, ?string $features = null, ?string $disk = null, ?string $inodes = null, ?string $bandwidth = null, ?string $domains = null, ?string $subdomains = null, ?string $mailboxes = null, ?string $databases = null, ?string $ftp = null, ?string $bandwidthAction = null, ?string $mailPerHour = null): int {
             $ownerId = null;
 
             if ($owner !== null) {
@@ -92,7 +92,7 @@ return static function (ModuleContext $module): void {
 
             $input = [
                 'name' => $name, 'disk_mb' => $disk, 'inodes' => $inodes, 'bandwidth_mb' => $bandwidth, 'domains' => $domains,
-                'subdomains' => $subdomains, 'mailboxes' => $mailboxes, 'databases' => $databases, 'ftp_accounts' => $ftp,
+                'subdomains' => $subdomains, 'mailboxes' => $mailboxes, 'databases' => $databases, 'ftp_accounts' => $ftp, 'mail_per_hour' => $mailPerHour,
                 'bandwidth_action' => $bandwidthAction,
                 'features' => $features === null ? Packages::DEFAULT_FEATURES : array_filter(array_map('trim', explode(',', $features))),
             ];
@@ -117,7 +117,7 @@ return static function (ModuleContext $module): void {
             ->option('features', 'Comma-separated: ' . implode(',', Packages::FEATURES) . ' (default: all but ssh).')
             ->option('bandwidth-action', 'When the month\'s bandwidth is used: block (the sites stop until next month; default) or warn.');
 
-        foreach (['disk' => 'Disk space in MB.', 'inodes' => 'Files and folders.', 'bandwidth' => 'Monthly bandwidth in MB.', 'domains' => 'Domains.', 'subdomains' => 'Subdomains.', 'mailboxes' => 'Mailboxes.', 'databases' => 'Databases.', 'ftp' => 'FTP accounts.'] as $option => $text) {
+        foreach (['disk' => 'Disk space in MB.', 'inodes' => 'Files and folders.', 'bandwidth' => 'Monthly bandwidth in MB.', 'domains' => 'Domains.', 'subdomains' => 'Subdomains.', 'mailboxes' => 'Mailboxes.', 'databases' => 'Databases.', 'ftp' => 'FTP accounts.', 'mail-per-hour' => 'Email recipients an hour, from its mailboxes and sites together.'] as $option => $text) {
             $create->option($option, $text);
         }
     });

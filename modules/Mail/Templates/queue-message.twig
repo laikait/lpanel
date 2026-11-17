@@ -1,0 +1,37 @@
+{% extends "@Panel/shell.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <a class="back-link" href="{{ back_url }}">{{ icon('chevron') }}{{ 'Mail.queue_back'|local }}</a>
+        <h1 class="mono queue-title">{{ id }}</h1>
+        <p>{{ 'Mail.queue_message_lead'|local }}</p>
+    </div>
+    {% if message %}
+    <form class="page-actions" method="post" action="{{ act_url }}">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <input type="hidden" name="ids[]" value="{{ id }}">
+        <button class="btn" type="submit" name="action" value="deliver">{{ icon('play') }}{{ 'Mail.queue_deliver'|local }}</button>
+        <button class="btn" type="submit" name="action" value="freeze">{{ icon('pause') }}<span class="hide-sm">{{ 'Mail.queue_freeze'|local }}</span></button>
+        <button class="btn" type="submit" name="action" value="thaw">{{ icon('refresh') }}<span class="hide-sm">{{ 'Mail.queue_thaw'|local }}</span></button>
+        <button class="btn btn-danger" type="submit" name="action" value="remove" data-confirm="{{ 'Mail.queue_confirm_remove_one'|local }}">{{ icon('trash') }}<span class="hide-sm">{{ 'Mail.queue_remove'|local }}</span></button>
+    </form>
+    {% endif %}
+</div>
+{% include '@Mail/tabs.twig' %}
+
+{% if not message %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ error|local }}</p></div>
+{% else %}
+<div class="stack">
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Mail.queue_attempts'|local }}</h2><p>{{ 'Mail.queue_attempts_lead'|local }}</p></div></div>
+        <pre class="code-view">{{ message.log ?: 'Mail.queue_no_attempts'|local }}</pre>
+    </section>
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Mail.queue_source'|local }}</h2><p>{{ message.truncated ? 'Mail.queue_source_cut'|local : 'Mail.queue_source_lead'|local }}</p></div></div>
+        <pre class="code-view code-view-tall">{{ message.message }}</pre>
+    </section>
+</div>
+{% endif %}
+{% endblock %}

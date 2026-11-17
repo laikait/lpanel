@@ -22,6 +22,11 @@ for port in 7443 7444 8080; do
         || semanage port "${noreload[@]}" -m -t http_port_t -p tcp "$port"
 done
 
+# Rspamd's worker, which Exim asks about mail from outside, is a spam
+# checker's port: EL's policy lets Exim connect to those.
+semanage port "${noreload[@]}" -a -t spamd_port_t -p tcp 11333 2>/dev/null \
+    || semanage port "${noreload[@]}" -m -t spamd_port_t -p tcp 11333
+
 # Releases before the module labelled the panel's code with local rules; the
 # module's own rules replace them.
 semanage fcontext "${noreload[@]}" -d "$panel(/.*)?" 2>/dev/null || true

@@ -115,7 +115,7 @@ func TestApplyWritesEveryFile(t *testing.T) {
 		t.Error("an active account's mailboxes must log in")
 	}
 	script := f.read(t, f.m.DovecotDir, "sieve", "example.com", "bob.smith.sieve")
-	for _, want := range []string{`require ["vacation", "date", "relational"];`, `currentdate :value "ge" "date" "2026-11-01"`, `:days 1 :subject "Away" :from "\"Bob\" <bob.smith@example.com>" :addresses ["bob.smith@example.com"]`} {
+	for _, want := range []string{`"vacation", "date"];`, `currentdate :value "ge" "date" "2026-11-01"`, `:days 1 :subject "Away" :from "\"Bob\" <bob.smith@example.com>" :addresses ["bob.smith@example.com"]`} {
 		if !strings.Contains(script, want) {
 			t.Errorf("sieve lacks %q:\n%s", want, script)
 		}
@@ -315,7 +315,7 @@ func TestAutoresponderTextStaysInsideItsStrings(t *testing.T) {
 	m := Mailbox{Local: "info", Autoresponder: &Autoresponder{
 		Subject: `Out "now" \ ok`, Body: "Bye\";\nredirect \"evil@example.net\";\r\n", FromName: `Evil" <x@y.z>`, Days: 3,
 	}}
-	script := string(sieveScript(d, m))
+	script := string(sieveScript(d, m, Spam{}))
 	if !strings.Contains(script, `:subject "Out \"now\" \\ ok"`) {
 		t.Errorf("subject not escaped:\n%s", script)
 	}

@@ -142,9 +142,9 @@ packages in a fresh container.
 ```bash
 dist/lpa/build.sh            # lpa, cross-compiled (no cgo)
 dist/authd/test/run.sh       # lpanel-authd: tests against real PAM, then builds in AlmaLinux 9 (cgo)
-dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (71 checks)
+dist/selinux/build.sh        # the SELinux module, built and checked against EL9's policy (78 checks)
 dist/installer/bundle.sh     # dist/build/lpanel-<version>/ and .tar.gz
-tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 216–221 checks per stack
+tests/e2e/install.sh         # installs the bundle on a fresh systemd AlmaLinux 9 container; 230–235 checks per stack
 KEEP=1 tests/e2e/install.sh  # the same, and leaves the container running to look inside
 WEB=nginx tests/e2e/install.sh   # the same on another web stack (nginx or hybrid); each run also
                                  # switches to another stack at the end and checks every site moved

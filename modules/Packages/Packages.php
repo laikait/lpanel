@@ -26,7 +26,7 @@ use App\Engine\Hook\HookEngine;
 final class Packages
 {
     /** Numeric limits; 0 means unlimited. */
-    public const LIMITS = ['disk_mb', 'inodes', 'bandwidth_mb', 'domains', 'subdomains', 'mailboxes', 'databases', 'ftp_accounts'];
+    public const LIMITS = ['disk_mb', 'inodes', 'bandwidth_mb', 'domains', 'subdomains', 'mailboxes', 'databases', 'ftp_accounts', 'mail_per_hour'];
 
     /**
      * What happens when an account has used its bandwidth for the month:

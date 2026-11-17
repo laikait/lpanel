@@ -15,6 +15,7 @@
         <p>{{ 'Mail.lead'|local }}</p>
     </div>
 </div>
+{% include '@Mail/tabs.twig' %}
 
 {% if state and state.state == 'failed' %}
     <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Mail.last_failed'|local }}</strong><br><span class="mono">{{ state.error }}</span></p></div>
@@ -59,6 +60,7 @@
                     <div class="mail-row-main">
                         <strong class="mono mail-address">{{ b.address }}</strong>
                         {% if b.responder %}<span class="badge info mail-badge">{{ 'Mail.responder_on_badge'|local }}</span>{% endif %}
+                        {% if b.filters %}<span class="badge plain mail-badge">{{ 'Mail.filters_badge'|local({n: b.filters|length}) }}</span>{% endif %}
                     </div>
                     <div class="mail-row-usage">
                         <div class="usage">{{ b.used_bytes|bytes }} {% if b.quota_mb > 0 %}{{ 'Mail.of'|local }} {{ (b.quota_mb * 1048576)|bytes }}{% else %}· {{ 'Mail.no_cap'|local }}{% endif %}</div>
@@ -133,6 +135,80 @@
                                             <button class="btn btn-sm btn-primary" type="submit">{{ b.responder ? 'Mail.save_responder'|local : 'Mail.turn_on'|local }}</button>
                                             {% if b.responder %}<button class="btn btn-sm" type="submit" formaction="{{ b.responder_off_url }}" formnovalidate>{{ 'Mail.turn_off'|local }}</button>{% endif %}
                                         </div>
+                                    </form>
+                                </div>
+                            </details>
+                            {% set fopen = filter_id == b.id %}
+                            {% set fo = fopen ? filter_old : {} %}
+                            <details class="mail-more"{% if fopen %} open{% endif %}>
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Mail.filters_for'|local({name: b.address}) }}">{{ icon('list') }}<span class="hide-sm">{{ 'Mail.filters'|local }}</span></summary>
+                                <div class="db-panel mail-filters">
+                                    <p class="muted mail-panel-lead">{{ 'Mail.filters_lead'|local }}</p>
+                                    {% if b.filters %}
+                                    <ol class="filter-list">
+                                        {% for f in b.filters %}
+                                            <li class="filter-item">
+                                                <span class="filter-n" aria-hidden="true">{{ loop.index }}</span>
+                                                <div class="filter-rule">
+                                                    <span class="muted">{{ 'Mail.filter_if'|local }}</span>
+                                                    <strong>{{ ('Mail.filter_field_' ~ f.field)|local }}</strong>
+                                                    <span class="muted">{{ ('Mail.filter_test_' ~ f.test)|local }}</span>
+                                                    <span class="mono filter-value">“{{ f.value }}”</span>
+                                                    <span class="filter-then">
+                                                        <span class="mail-arrow" aria-hidden="true">→</span>
+                                                        {{ ('Mail.filter_action_' ~ f.action)|local }}{% if f.target %} <span class="mono">{{ f.target }}</span>{% endif %}
+                                                        {% if f.stop and f.action != 'discard' %}<span class="badge plain">{{ 'Mail.filter_stop_badge'|local }}</span>{% endif %}
+                                                    </span>
+                                                </div>
+                                                <div class="filter-tools">
+                                                    {% if not loop.first %}
+                                                    <form class="inline-form" method="post" action="{{ f.move_url }}"><input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="direction" value="up"><button class="btn btn-sm btn-ghost btn-icon" type="submit" aria-label="{{ 'Mail.filter_up'|local({n: loop.index}) }}"><span class="flip-up">{{ icon('down') }}</span></button></form>
+                                                    {% else %}<span class="btn-icon-gap" aria-hidden="true"></span>{% endif %}
+                                                    {% if not loop.last %}
+                                                    <form class="inline-form" method="post" action="{{ f.move_url }}"><input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="direction" value="down"><button class="btn btn-sm btn-ghost btn-icon" type="submit" aria-label="{{ 'Mail.filter_down'|local({n: loop.index}) }}">{{ icon('down') }}</button></form>
+                                                    {% else %}<span class="btn-icon-gap" aria-hidden="true"></span>{% endif %}
+                                                    <form class="inline-form" method="post" action="{{ f.delete_url }}" data-confirm="{{ 'Mail.filter_confirm_remove'|local }}"><input type="hidden" name="_token" value="{{ lp.token }}"><button class="btn btn-sm btn-ghost btn-icon" type="submit" aria-label="{{ 'Mail.filter_remove'|local({n: loop.index}) }}">{{ icon('trash') }}</button></form>
+                                                </div>
+                                            </li>
+                                        {% endfor %}
+                                    </ol>
+                                    {% endif %}
+                                    <form class="filter-add" method="post" action="{{ b.filter_url }}" data-show-from="action">
+                                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                                        <div class="filter-add-head">{{ b.filters ? 'Mail.filter_add_another'|local : 'Mail.filter_add_first'|local }}</div>
+                                        <div class="form-row form-row-3">
+                                            <div class="field">
+                                                <label for="ff-{{ b.id }}">{{ 'Mail.filter_when'|local }}</label>
+                                                <select class="input" id="ff-{{ b.id }}" name="field">{% for v in filter_fields %}<option value="{{ v }}"{% if fo.field|default('subject') == v %} selected{% endif %}>{{ ('Mail.filter_field_' ~ v)|local }}</option>{% endfor %}</select>
+                                            </div>
+                                            <div class="field">
+                                                <label for="ft-{{ b.id }}">{{ 'Mail.filter_test'|local }}</label>
+                                                <select class="input" id="ft-{{ b.id }}" name="test">{% for v in filter_tests %}<option value="{{ v }}"{% if fo.test|default('contains') == v %} selected{% endif %}>{{ ('Mail.filter_test_' ~ v)|local }}</option>{% endfor %}</select>
+                                            </div>
+                                            <div class="field">
+                                                <label for="fv-{{ b.id }}">{{ 'Mail.filter_value'|local }}</label>
+                                                <input class="input{% if fopen and filter_errors.value is defined %} is-invalid{% endif %}" id="fv-{{ b.id }}" name="value" maxlength="200" value="{{ fo.value|default('') }}" placeholder="{{ 'Mail.filter_value_placeholder'|local }}" required>
+                                            </div>
+                                        </div>
+                                        {% if fopen %}{{ _self.err(filter_errors, 'value') }}{% endif %}
+                                        <div class="form-row">
+                                            <div class="field">
+                                                <label for="fa-{{ b.id }}">{{ 'Mail.filter_then'|local }}</label>
+                                                <select class="input" id="fa-{{ b.id }}" name="action">{% for v in filter_actions %}<option value="{{ v }}"{% if fo.action|default('folder') == v %} selected{% endif %}>{{ ('Mail.filter_action_' ~ v)|local }}</option>{% endfor %}</select>
+                                            </div>
+                                            <div class="field" data-show-for="folder">
+                                                <label for="fg-{{ b.id }}">{{ 'Mail.filter_folder'|local }}</label>
+                                                <input class="input{% if fopen and filter_errors.target is defined %} is-invalid{% endif %}" id="fg-{{ b.id }}" name="target" maxlength="64" value="{{ fo.action|default('folder') == 'folder' ? fo.target|default('') : '' }}" placeholder="{{ 'Mail.filter_folder_placeholder'|local }}" required>
+                                                {% if fopen and fo.action|default('') == 'folder' %}{{ _self.err(filter_errors, 'target') }}{% endif %}
+                                            </div>
+                                            <div class="field" data-show-for="forward">
+                                                <label for="fw-{{ b.id }}">{{ 'Mail.filter_forward_to'|local }}</label>
+                                                <input class="input mono{% if fopen and filter_errors.target is defined %} is-invalid{% endif %}" type="email" id="fw-{{ b.id }}" name="target" maxlength="254" value="{{ fo.action|default('') == 'forward' ? fo.target|default('') : '' }}" placeholder="someone@example.net" required>
+                                                {% if fopen and fo.action|default('') == 'forward' %}{{ _self.err(filter_errors, 'target') }}{% endif %}
+                                            </div>
+                                        </div>
+                                        <label class="check" data-show-for="folder forward"><input type="checkbox" name="stop" value="1"{% if fo.stop|default('') == '1' %} checked{% endif %}> {{ 'Mail.filter_stop'|local }}</label>
+                                        <div class="mail-buttons filter-add-foot"><button class="btn btn-sm btn-primary" type="submit"{% if b.filters|length >= 50 %} disabled{% endif %}>{{ icon('plus') }}{{ 'Mail.filter_add'|local }}</button></div>
                                     </form>
                                 </div>
                             </details>

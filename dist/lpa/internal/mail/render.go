@@ -3,6 +3,7 @@ package mail
 import (
 	"fmt"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -82,14 +83,132 @@ func mailboxHome(home, domain, local string) string {
 	return path.Join(home, "mail", domain, local)
 }
 
-// sieveScript is a mailbox's autoresponder as a Sieve script, run before
-// any script of the owner's own. Every string is quoted here.
-func sieveScript(d Domain, m Mailbox) []byte {
-	r := m.Autoresponder
+// SpamHeader carries the spam filter's score in tenths, never below 0 (Exim
+// adds it to mail from outside, and removes any copy the sender wrote).
+const SpamHeader = "X-LPanel-Spam-Score"
+
+// sieveScript is what a mailbox does with mail on arrival, as a Sieve script
+// run before any script of the owner's own, in this order: the account's
+// blocked senders are thrown away; spam is deleted or filed in Junk (unless
+// its sender is allowed); then the mailbox's own filters; then its
+// autoresponder. It is nil when there is nothing to do. Every string is
+// quoted here.
+func sieveScript(d Domain, m Mailbox, spam Spam) []byte {
+	if !spam.any() && len(m.Filters) == 0 && m.Autoresponder == nil {
+		return nil
+	}
 	addr := m.Local + "@" + d.Name
 	var b strings.Builder
-	b.WriteString("# The autoresponder of " + addr + ". Written by lpa; changes here are replaced.\n")
-	b.WriteString(`require ["vacation", "date", "relational"];` + "\n")
+	b.WriteString("# What " + addr + " does with mail on arrival. Written by lpa; changes here are replaced.\n")
+	b.WriteString(`require ["fileinto", "mailbox", "copy", "relational", "comparator-i;ascii-numeric", "vacation", "date"];` + "\n")
+	if t := senderTest(spam.Block); t != "" {
+		b.WriteString("\n# Blocked senders.\nif " + t + " {\n    discard;\n    stop;\n}\n")
+	}
+	if spam.Junk > 0 || spam.Delete > 0 {
+		b.WriteString("\n# Spam.\n")
+		indent := ""
+		if t := senderTest(spam.Allow); t != "" {
+			b.WriteString("if not " + t + " {\n")
+			indent = "    "
+		}
+		score := func(min int, then string) {
+			fmt.Fprintf(&b, "%sif header :value \"ge\" :comparator \"i;ascii-numeric\" %s %s {\n%s    %s\n%s    stop;\n%s}\n",
+				indent, sieveString(SpamHeader), sieveString(strconv.Itoa(min)), indent, then, indent, indent)
+		}
+		if spam.Delete > 0 {
+			score(spam.Delete, "discard;")
+		}
+		if spam.Junk > 0 {
+			score(spam.Junk, `fileinto :create "Junk";`)
+		}
+		if indent != "" {
+			b.WriteString("}\n")
+		}
+	}
+	if len(m.Filters) > 0 {
+		b.WriteString("\n# The mailbox's filters.\n")
+		for _, f := range m.Filters {
+			b.WriteString("if " + filterTest(f) + " {\n")
+			switch f.Action {
+			case FilterFolder:
+				b.WriteString("    fileinto :create " + sieveString(f.Target) + ";\n")
+			case FilterForward:
+				b.WriteString("    redirect :copy " + sieveString(f.Target) + ";\n")
+			case FilterDiscard:
+				b.WriteString("    discard;\n")
+			}
+			if f.Stop {
+				b.WriteString("    stop;\n")
+			}
+			b.WriteString("}\n")
+		}
+	}
+	if m.Autoresponder != nil {
+		b.WriteString("\n# The autoresponder.\n")
+		b.WriteString(vacation(addr, m.Autoresponder))
+	}
+	return []byte(b.String())
+}
+
+// senderTest matches mail from any of the senders (addresses, or "@domain"),
+// or is "" when there are none.
+func senderTest(senders []string) string {
+	var addrs, domains []string
+	for _, s := range senders {
+		if d, ok := strings.CutPrefix(s, "@"); ok {
+			domains = append(domains, sieveString(d))
+		} else {
+			addrs = append(addrs, sieveString(s))
+		}
+	}
+	var tests []string
+	if len(addrs) > 0 {
+		tests = append(tests, `address :all :is ["from", "sender"] [`+strings.Join(addrs, ", ")+`]`)
+	}
+	if len(domains) > 0 {
+		tests = append(tests, `address :domain :is ["from", "sender"] [`+strings.Join(domains, ", ")+`]`)
+	}
+	switch len(tests) {
+	case 0:
+		return ""
+	case 1:
+		return tests[0]
+	}
+	return "anyof (" + strings.Join(tests, ", ") + ")"
+}
+
+// filterTest is a filter's test. "is" compares whole addresses (or the whole
+// subject); the others look inside the header as written, display names
+// included. Matching ignores case.
+func filterTest(f Filter) string {
+	headers := map[string]string{"from": `"from"`, "to": `["to", "cc"]`, "subject": `"subject"`}[f.Field]
+	if f.Match == "is" {
+		if f.Field == "subject" {
+			return "header :is " + headers + " " + sieveString(f.Value)
+		}
+		return "address :all :is " + headers + " " + sieveString(f.Value)
+	}
+	switch f.Match {
+	case "begins":
+		return "header :matches " + headers + " " + sieveString(wildcardQuote(f.Value)+"*")
+	case "ends":
+		return "header :matches " + headers + " " + sieveString("*"+wildcardQuote(f.Value))
+	}
+	return "header :contains " + headers + " " + sieveString(f.Value)
+}
+
+// wildcardQuote keeps * and ? in what a filter looks for from being read as
+// wildcards by :matches.
+func wildcardQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `*`, `\*`)
+	return strings.ReplaceAll(s, `?`, `\?`)
+}
+
+// vacation is an autoresponder's Sieve: once per sender in r.Days days,
+// between its dates when it has them.
+func vacation(addr string, r *Autoresponder) string {
+	var b strings.Builder
 	var when []string
 	if r.Start != "" {
 		when = append(when, `currentdate :value "ge" "date" `+sieveString(r.Start))
@@ -111,7 +230,12 @@ func sieveScript(d Domain, m Mailbox) []byte {
 	if len(when) > 0 {
 		b.WriteString("}\n")
 	}
-	return []byte(b.String())
+	return b.String()
+}
+
+// accountFile is the account's own settings for Exim: its sending limit.
+func accountFile(username string, limit int) []byte {
+	return []byte(fmt.Sprintf("# The mail settings of %s. Written by lpa; changes here are replaced.\nlimit: %d\n", username, limit))
 }
 
 // sieveString quotes s as a Sieve string: backslash and double quote are

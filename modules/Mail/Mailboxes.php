@@ -11,7 +11,8 @@ use App\Modules\Packages\Packages;
 
 /**
  * Each account's mail as the panel keeps it: its mail domains, mailboxes,
- * forwarders and autoresponders; and the rules their values follow.
+ * forwarders, autoresponders, filters and spam settings; and the rules their
+ * values follow.
  *
  * The agent checks every value again and never trusts these checks; they
  * are here so a mistake is explained beside the field that holds it.
@@ -27,6 +28,19 @@ final class Mailboxes
     public const MAX_BODY = 10000;
     public const MAX_FROM_NAME = 100;
     public const MAX_DAYS = 30;
+    public const MAX_FILTERS = 50;
+    public const MAX_FILTER_VALUE = 200;
+    public const MAX_FOLDER = 64;
+    public const MAX_SENDERS = 500;
+    /** Spam scores are kept in tenths (60 is 6.0); this is the highest. */
+    public const MAX_SCORE = 1000;
+
+    public const FILTER_FIELDS = ['from', 'to', 'subject'];
+    public const FILTER_TESTS = ['contains', 'is', 'begins', 'ends'];
+    public const FILTER_ACTIONS = ['folder', 'forward', 'discard'];
+
+    /** An account's spam settings until it changes them: Junk at 6.0, nothing deleted. */
+    public const SPAM_DEFAULTS = ['junk' => 60, 'delete' => 0];
 
     /** Catch-all: what becomes of mail to an address the domain does not have. */
     public const REFUSE = '';
@@ -92,6 +106,7 @@ final class Mailboxes
     {
         $names = $this->domainNames($accountId);
         $responders = [];
+        $filters = [];
 
         foreach ($this->table('mail_boxes')->where('account_id', $accountId)->get() as $box) {
             $responders[(int) $box['id']] = null;
@@ -103,6 +118,10 @@ final class Mailboxes
             }
         }
 
+        foreach ($this->table('mail_filters')->where('account_id', $accountId)->orderBy('position')->orderBy('id')->get() as $f) {
+            $filters[(int) $f['mailbox_id']][] = $f;
+        }
+
         $rows = [];
 
         foreach ($this->table('mail_boxes')->where('account_id', $accountId)->get() as $box) {
@@ -112,7 +131,7 @@ final class Mailboxes
                 continue;
             }
 
-            $rows[] = $box + ['domain' => $domain, 'address' => $box['local'] . '@' . $domain, 'responder' => $responders[(int) $box['id']] ?? null];
+            $rows[] = $box + ['domain' => $domain, 'address' => $box['local'] . '@' . $domain, 'responder' => $responders[(int) $box['id']] ?? null, 'filters' => $filters[(int) $box['id']] ?? []];
         }
 
         \usort($rows, static fn(array $a, array $b): int => [$a['domain'], $a['local']] <=> [$b['domain'], $b['local']]);
@@ -205,7 +224,10 @@ final class Mailboxes
                 $boxes[(int) $box['mail_domain_id']][] = ['local' => (string) $box['local'], 'hash' => (string) $box['hash'], 'quota_mb' => (int) $box['quota_mb']] + ($r === null ? [] : ['autoresponder' => [
                     'subject' => (string) $r['subject'], 'body' => (string) $r['body'], 'from_name' => (string) ($r['from_name'] ?? ''),
                     'days' => (int) $r['days'], 'start' => (string) ($r['starts_on'] ?? ''), 'end' => (string) ($r['ends_on'] ?? ''),
-                ]]);
+                ]]) + ($box['filters'] === [] ? [] : ['filters' => \array_map(static fn(array $f): array => [
+                    'field' => (string) $f['field'], 'match' => (string) $f['test'], 'value' => (string) $f['value'],
+                    'action' => (string) $f['action'], 'target' => (string) ($f['target'] ?? ''), 'stop' => (bool) $f['stop'],
+                ], $box['filters'])]);
             }
 
             foreach ($this->forwarders($id) as $f) {
@@ -224,11 +246,105 @@ final class Mailboxes
             }
         }
 
+        $spam = $this->spam($id);
+
         return [
             'username' => (string) $account['username'],
             'suspended' => $account['status'] === Accounts::SUSPENDED,
             'domains' => $domains,
+            // The package's sending limit: recipients an hour (0: none).
+            'limit' => (int) ($package['mail_per_hour'] ?? 0),
+            'spam' => ['junk' => $spam['junk'], 'delete' => $spam['delete'], 'allow' => $spam['allow'], 'block' => $spam['block']],
         ];
+    }
+
+    /**
+     * How the account's mailboxes file spam: Junk and Delete scores in
+     * tenths (0 is off), and its allowed and blocked senders.
+     *
+     * @return array{junk: int, delete: int, allow: list<string>, block: list<string>, saved: bool}
+     */
+    public function spam(int $accountId): array
+    {
+        $row = $this->table('mail_spam')->where('account_id', $accountId)->first();
+
+        if ($row === null) {
+            return self::SPAM_DEFAULTS + ['allow' => [], 'block' => [], 'saved' => false];
+        }
+
+        $list = static function (mixed $json): array {
+            $v = \is_string($json) ? \json_decode($json, true) : null;
+
+            return \is_array($v) ? \array_values(\array_filter($v, 'is_string')) : [];
+        };
+
+        return ['junk' => (int) $row['junk_score'], 'delete' => (int) $row['delete_score'], 'allow' => $list($row['allow']), 'block' => $list($row['block']), 'saved' => true];
+    }
+
+    /** @param array{junk: int, delete: int, allow: list<string>, block: list<string>} $spam */
+    public function setSpam(int $accountId, array $spam): void
+    {
+        $values = [
+            'junk_score' => $spam['junk'], 'delete_score' => $spam['delete'],
+            'allow' => \json_encode(\array_values($spam['allow']), \JSON_UNESCAPED_SLASHES), 'block' => \json_encode(\array_values($spam['block']), \JSON_UNESCAPED_SLASHES),
+            'updated_at' => Accounts::now(),
+        ];
+
+        if ($this->table('mail_spam')->where('account_id', $accountId)->first() === null) {
+            $this->table('mail_spam')->insert(['account_id' => $accountId] + $values);
+        } else {
+            $this->table('mail_spam')->where('account_id', $accountId)->update($values);
+        }
+    }
+
+    /** @return array<string, mixed>|null a filter of the account's, with its mailbox's address */
+    public function filter(int $accountId, int $id): ?array
+    {
+        foreach ($this->mailboxes($accountId) as $box) {
+            foreach ($box['filters'] as $f) {
+                if ((int) $f['id'] === $id) {
+                    return $f + ['address' => $box['address']];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array{field: string, test: string, value: string, action: string, target: ?string, stop: bool} $filter */
+    public function addFilter(int $accountId, int $mailboxId, array $filter, ?int $position = null): int
+    {
+        if ($position === null) {
+            $position = 0;
+
+            foreach ($this->table('mail_filters')->where('mailbox_id', $mailboxId)->get() as $f) {
+                $position = \max($position, (int) $f['position'] + 1);
+            }
+        }
+
+        return (int) $this->table('mail_filters')->insert([
+            'account_id' => $accountId, 'mailbox_id' => $mailboxId, 'position' => $position,
+            'field' => $filter['field'], 'test' => $filter['test'], 'value' => $filter['value'], 'action' => $filter['action'],
+            'target' => $filter['target'], 'stop' => $filter['stop'], 'created_at' => Accounts::now(),
+        ], 'id');
+    }
+
+    public function deleteFilter(int $id): void
+    {
+        $this->table('mail_filters')->where('id', $id)->delete();
+    }
+
+    /**
+     * Put a mailbox's filters in this order (ids not listed keep their place
+     * after these).
+     *
+     * @param list<int> $ids
+     */
+    public function orderFilters(int $mailboxId, array $ids): void
+    {
+        foreach (\array_values($ids) as $position => $id) {
+            $this->table('mail_filters')->where('mailbox_id', $mailboxId)->where('id', $id)->update(['position' => $position]);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -405,6 +521,143 @@ final class Mailboxes
         };
     }
 
+    /**
+     * A filter from a form or the API.
+     *
+     * @param array<string, mixed> $input field, test, value, action, target, stop
+     *
+     * @return array{0: array{field: string, test: string, value: string, action: string, target: ?string, stop: bool}, 1: array<string, string>} [clean, errors by field]
+     */
+    public static function checkFilter(array $input): array
+    {
+        $text = static fn(string $key): string => \is_scalar($input[$key] ?? null) ? \trim((string) $input[$key]) : '';
+        $field = $text('field');
+        $test = $text('test');
+        $value = $text('value');
+        $action = $text('action');
+        $target = $text('target');
+        $stop = \in_array($input['stop'] ?? false, [true, 1, '1', 'on', 'yes', 'true'], true);
+        $errors = [];
+
+        if (!\in_array($field, self::FILTER_FIELDS, true)) {
+            $errors['field'] = 'Mail.error_filter_field';
+        }
+
+        if (!\in_array($test, self::FILTER_TESTS, true)) {
+            $errors['test'] = 'Mail.error_filter_test';
+        }
+
+        if ($value === '' || \mb_strlen($value) > self::MAX_FILTER_VALUE || !\mb_check_encoding($value, 'UTF-8') || \preg_match('/[\x00-\x1f\x7f]/u', $value) === 1) {
+            $errors['value'] = 'Mail.error_filter_value';
+        }
+
+        switch ($action) {
+            case 'folder':
+                if (!self::isFolder($target)) {
+                    $errors['target'] = 'Mail.error_folder';
+                }
+
+                break;
+
+            case 'forward':
+                [$target, $why] = self::checkAddress($target);
+
+                if ($why !== null) {
+                    $errors['target'] = $why;
+                }
+
+                break;
+
+            case 'discard':
+                $target = '';
+                $stop = true;
+
+                break;
+
+            default:
+                $errors['action'] = 'Mail.error_filter_action';
+        }
+
+        return [['field' => $field, 'test' => $test, 'value' => $value, 'action' => $action, 'target' => $target === '' ? null : $target, 'stop' => $stop], $errors];
+    }
+
+    /** A folder's name: printable, no path characters or IMAP wildcards, "." only between names. */
+    public static function isFolder(string $name): bool
+    {
+        return $name !== '' && \mb_strlen($name) <= self::MAX_FOLDER && \mb_check_encoding($name, 'UTF-8')
+            && \trim($name) === $name && !\str_starts_with($name, '.') && !\str_ends_with($name, '.') && !\str_contains($name, '..')
+            && \preg_match('/[\x00-\x1f\x7f\/\\\\"*%~]/u', $name) !== 1;
+    }
+
+    /**
+     * Spam settings from a form or the API. Scores are typed as 6 or 6.5;
+     * an empty or 0 score turns that step off. Senders are one a line (or
+     * a list): addresses, or @domain.
+     *
+     * @param array<string, mixed> $input junk, delete, allow, block
+     *
+     * @return array{0: array{junk: int, delete: int, allow: list<string>, block: list<string>}, 1: array<string, string>} [clean, errors by field]
+     */
+    public static function checkSpam(array $input): array
+    {
+        $errors = [];
+        $scores = [];
+
+        foreach (['junk', 'delete'] as $key) {
+            $v = $input[$key] ?? '';
+            $t = \is_scalar($v) ? \trim((string) $v) : '';
+            $tenths = 0;
+
+            if ($t !== '' && \preg_match('/^\d{1,3}(\.\d)?$/', $t) !== 1) {
+                $errors[$key] = 'Mail.error_score';
+            } elseif ($t !== '') {
+                $tenths = (int) \round((float) $t * 10);
+
+                if ($tenths > self::MAX_SCORE) {
+                    $errors[$key] = 'Mail.error_score';
+                }
+            }
+
+            $scores[$key] = $tenths;
+        }
+
+        if (!isset($errors['junk'], $errors['delete']) && $scores['junk'] > 0 && $scores['delete'] > 0 && $scores['delete'] <= $scores['junk']) {
+            $errors['delete'] = 'Mail.error_score_order';
+        }
+
+        $lists = [];
+
+        foreach (['allow', 'block'] as $key) {
+            $v = $input[$key] ?? [];
+            $items = \is_array($v) ? $v : \preg_split('/[\s,;]+/', \is_scalar($v) ? (string) $v : '');
+            $clean = [];
+
+            foreach ($items ?: [] as $item) {
+                $item = \strtolower(\trim(\is_scalar($item) ? (string) $item : ''));
+
+                if ($item === '') {
+                    continue;
+                }
+
+                if (\str_starts_with($item, '@') ? !self::isDomain(\substr($item, 1)) : self::checkAddress($item)[1] !== null) {
+                    $errors[$key] ??= 'Mail.error_sender';
+
+                    continue;
+                }
+
+                $clean[$item] = true;
+            }
+
+            if (\count($clean) > self::MAX_SENDERS) {
+                $errors[$key] = 'Mail.error_senders_many';
+            }
+
+            $lists[$key] = \array_keys($clean);
+        }
+
+        return [['junk' => $scores['junk'], 'delete' => $scores['delete'], 'allow' => $lists['allow'], 'block' => $lists['block']], $errors];
+    }
+
     // -------------------------------------------------------------------------
     // Writing
 
@@ -424,6 +677,7 @@ final class Mailboxes
     {
         foreach ($this->table('mail_boxes')->where('mail_domain_id', $id)->get() as $box) {
             $this->table('mail_responders')->where('mailbox_id', (int) $box['id'])->delete();
+            $this->table('mail_filters')->where('mailbox_id', (int) $box['id'])->delete();
         }
 
         $this->table('mail_boxes')->where('mail_domain_id', $id)->delete();
@@ -450,6 +704,7 @@ final class Mailboxes
     public function deleteMailbox(int $id): void
     {
         $this->table('mail_responders')->where('mailbox_id', $id)->delete();
+        $this->table('mail_filters')->where('mailbox_id', $id)->delete();
         $this->table('mail_boxes')->where('id', $id)->delete();
     }
 
@@ -467,6 +722,10 @@ final class Mailboxes
 
         if (\is_array($box['responder'] ?? null)) {
             $this->setResponder($id, $box['responder']);
+        }
+
+        foreach (\is_array($box['filters'] ?? null) ? $box['filters'] : [] as $f) {
+            $this->addFilter((int) $box['account_id'], $id, ['field' => (string) $f['field'], 'test' => (string) $f['test'], 'value' => (string) $f['value'], 'action' => (string) $f['action'], 'target' => $f['target'] ?? null, 'stop' => (bool) $f['stop']], (int) $f['position']);
         }
 
         return $id;
@@ -525,6 +784,8 @@ final class Mailboxes
         }
 
         $this->table('mail_purges')->where('account_id', $accountId)->delete();
+        $this->table('mail_filters')->where('account_id', $accountId)->delete();
+        $this->table('mail_spam')->where('account_id', $accountId)->delete();
     }
 
     // -------------------------------------------------------------------------

@@ -1,0 +1,82 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro age(s) %}{% if s < 3600 %}{{ (s / 60)|round(0, 'floor') }}m{% elseif s < 172800 %}{{ (s / 3600)|round(0, 'floor') }}h{% else %}{{ (s / 86400)|round(0, 'floor') }}d{% endif %}{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Mail.title'|local }}</h1>
+        <p>{{ 'Mail.queue_lead'|local }}</p>
+    </div>
+    {% if list and list.total > 0 %}
+    <div class="page-actions">
+        <form method="post" action="{{ act_url }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <button class="btn" type="submit" name="action" value="flush">{{ icon('play') }}{{ 'Mail.queue_flush'|local }}</button>
+        </form>
+    </div>
+    {% endif %}
+</div>
+{% include '@Mail/tabs.twig' %}
+
+{% if error %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ error|local }}</p></div>
+{% else %}
+
+<div class="grid grid-3 stats-row" style="margin-bottom:20px">
+    <div class="card stat"><span class="stat-icon">{{ icon('clock') }}</span><div><div class="stat-label">{{ 'Mail.queue_waiting'|local }}</div><div class="stat-value">{{ list.total }}</div></div></div>
+    <div class="card stat"><span class="stat-icon">{{ icon('pause') }}</span><div><div class="stat-label">{{ 'Mail.queue_frozen'|local }}</div><div class="stat-value">{{ list.frozen }}</div><div class="stat-sub">{{ 'Mail.queue_frozen_hint'|local }}</div></div></div>
+    <div class="card stat"><span class="stat-icon">{{ icon('list') }}</span><div><div class="stat-label">{{ 'Mail.queue_shown'|local }}</div><div class="stat-value">{{ list.messages|length }}</div></div></div>
+</div>
+
+<form class="card filter-bar" method="get" action="{{ tabs[1].url }}" role="search">
+    <div class="field filter-bar-search">
+        <label for="q-q">{{ 'Mail.queue_search'|local }}</label>
+        <div class="input-icon">{{ icon('search') }}<input class="input" type="search" id="q-q" name="q" value="{{ search }}" maxlength="254" placeholder="{{ 'Mail.track_search_placeholder'|local }}" autocapitalize="none" spellcheck="false"></div>
+    </div>
+    <button class="btn btn-primary" type="submit">{{ icon('search') }}{{ 'Mail.queue_search_button'|local }}</button>
+</form>
+
+{% if list.messages is empty %}
+    <div class="card"><div class="empty">{{ icon('check') }}<h3>{{ search ? 'Mail.queue_none_found'|local : 'Mail.queue_empty'|local }}</h3><p>{{ search ? 'Mail.track_none_filtered'|local : 'Mail.queue_empty_hint'|local }}</p></div></div>
+{% else %}
+<form class="card" method="post" action="{{ act_url }}">
+    <input type="hidden" name="_token" value="{{ lp.token }}">
+    <div class="bulk-bar">
+        <label class="check"><input type="checkbox" data-check-all="ids[]"> {{ 'Mail.queue_select_all'|local }}</label>
+        <div class="bulk-actions">
+            <button class="btn btn-sm" type="submit" name="action" value="deliver">{{ icon('play') }}<span>{{ 'Mail.queue_deliver'|local }}</span></button>
+            <button class="btn btn-sm" type="submit" name="action" value="freeze">{{ icon('pause') }}<span class="hide-sm">{{ 'Mail.queue_freeze'|local }}</span></button>
+            <button class="btn btn-sm" type="submit" name="action" value="thaw">{{ icon('refresh') }}<span class="hide-sm">{{ 'Mail.queue_thaw'|local }}</span></button>
+            <button class="btn btn-sm btn-danger" type="submit" name="action" value="remove" data-confirm="{{ 'Mail.queue_confirm_remove'|local }}">{{ icon('trash') }}<span class="hide-sm">{{ 'Mail.queue_remove'|local }}</span></button>
+        </div>
+    </div>
+    <div class="table-wrap"><table class="table queue-table">
+        <thead><tr>
+            <th class="col-check"><span class="sr-only">{{ 'Mail.queue_select'|local }}</span></th>
+            <th>{{ 'Mail.queue_message'|local }}</th>
+            <th class="hide-sm">{{ 'Mail.queue_age'|local }}</th>
+            <th class="hide-sm">{{ 'Mail.queue_size'|local }}</th>
+        </tr></thead>
+        <tbody>
+        {% for m in list.messages %}
+            <tr>
+                <td class="col-check"><input type="checkbox" name="ids[]" value="{{ m.id }}" aria-label="{{ 'Mail.queue_select_one'|local({id: m.id}) }}"></td>
+                <td class="queue-msg">
+                    <a class="mono queue-id" href="{{ view_base }}/{{ m.id }}">{{ m.id }}</a>
+                    {% if m.frozen %}<span class="badge warn">{{ 'Mail.queue_is_frozen'|local }}</span>{% endif %}
+                    <div class="mono track-addr"><span class="muted track-label">{{ 'Mail.track_from'|local }}</span> {{ m.sender ?: '<>' }}</div>
+                    <div class="mono track-addr"><span class="muted track-label">{{ 'Mail.track_to'|local }}</span> {{ m.recipients|join(', ') }}{% if m.done %} <span class="muted">({{ 'Mail.queue_done_n'|local({n: m.done}) }})</span>{% endif %}</div>
+                    <div class="domain-sub show-sm">{{ _self.age(m.age) }} · {{ m.size|bytes }}</div>
+                </td>
+                <td class="hide-sm mono">{{ _self.age(m.age) }}</td>
+                <td class="hide-sm mono">{{ m.size|bytes }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% if list.messages|length < list.total and not search %}<div class="card-foot"><p class="hint" style="margin:0">{{ 'Mail.queue_more'|local({n: list.total}) }}</p></div>{% endif %}
+</form>
+{% endif %}
+{% endif %}
+{% endblock %}

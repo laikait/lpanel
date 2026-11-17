@@ -13,25 +13,28 @@ use App\Engine\Scheduler\ScheduleCollector;
 use App\Modules\Mail\Commands\MailCommands;
 use App\Modules\Mail\Http\MailApi;
 use App\Modules\Mail\Http\MailPages;
+use App\Modules\Mail\Http\MailToolPages;
 use App\Modules\Mail\MailActions;
 use App\Modules\Mail\Mailboxes;
 use App\Modules\Mail\MailDomains;
 use App\Modules\Mail\MailListeners;
+use App\Modules\Mail\MailQueue;
 use App\Modules\Mail\MailSync;
 use App\Modules\Mail\MailUsage;
 
 /**
  * Mail: each account's domains receive and send mail. Mailboxes (IMAP,
- * POP3, SMTP with TLS), forwarders, catch-alls and autoresponders; DKIM
- * keys made on the server and published with DMARC in the account's zones;
- * the server's relay host. Exim and Dovecot do the work; the agent writes
- * their data.
+ * POP3, SMTP with TLS), forwarders, catch-alls, autoresponders and filters;
+ * spam settings and a sending limit for each account; DKIM keys made on the
+ * server and published with DMARC in the account's zones; spam and virus
+ * filtering, the relay host, the queue and delivery tracking. Exim, Dovecot,
+ * Rspamd and ClamAV do the work; the agent writes their data.
  */
 return static function (ModuleContext $module): void {
     $module
         ->name('Mail')
-        ->version('0.1.0')
-        ->description('Mailboxes, forwarders, catch-alls, autoresponders and DKIM for each account\'s domains.');
+        ->version('0.2.0')
+        ->description('Mailboxes, forwarders, catch-alls, autoresponders, filters, spam filtering and DKIM for each account\'s domains.');
 
     $module->requires('Panel', '^0.1')
         ->requires('Audit', '^0.1')
@@ -50,13 +53,15 @@ return static function (ModuleContext $module): void {
         $services->singleton(MailActions::class);
         $services->singleton(MailUsage::class);
         $services->singleton(MailListeners::class);
+        $services->singleton(MailQueue::class);
         $services->bind(MailPages::class);
+        $services->bind(MailToolPages::class);
         $services->bind(MailApi::class);
         $services->bind(MailCommands::class);
     });
 
     $module->access(static function (AccessCollector $access): void {
-        $access->capability('server.mail', 'See Exim\'s and Dovecot\'s state and every account\'s mail domains, and set the relay host for outgoing mail.');
+        $access->capability('server.mail', 'See the mail servers\' state and every account\'s mail domains; set spam and virus filtering and the relay host; manage the queue and track every message.');
     });
 
     $module->routes(static function (RouteCollector $routes): void {
@@ -73,16 +78,32 @@ return static function (ModuleContext $module): void {
             $routes->post('/forwarders', [MailPages::class, 'forward'])->name('.forward');
             $routes->post('/forwarders/{id}/delete', [MailPages::class, 'unforward'])->name('.unforward')->where('id', $id);
             $routes->post('/domains/{id}', [MailPages::class, 'domain'])->name('.domain')->where('id', $id);
+            $routes->post('/mailboxes/{id}/filters', [MailPages::class, 'filter'])->name('.filter')->where('id', $id);
+            $routes->post('/filters/{id}/delete', [MailPages::class, 'unfilter'])->name('.filter.delete')->where('id', $id);
+            $routes->post('/filters/{id}/move', [MailPages::class, 'moveFilter'])->name('.filter.move')->where('id', $id);
+            $routes->get('/spam', [MailToolPages::class, 'spam'])->name('.spam');
+            $routes->post('/spam', [MailToolPages::class, 'saveSpam'])->name('.spam.save');
+            $routes->get('/track', [MailToolPages::class, 'track'])->name('.track');
         }, name: 'user.mail', meta: ['can' => 'feature.email']);
 
         $routes->group('/admin/email', static function (RouteCollector $routes): void {
             $routes->get('', [MailPages::class, 'admin'])->name('');
             $routes->post('/settings', [MailPages::class, 'settings'])->name('.settings');
+            $routes->post('/filtering', [MailPages::class, 'filtering'])->name('.filtering');
+            $routes->get('/queue', [MailToolPages::class, 'queuePage'])->name('.queue');
+            $routes->post('/queue', [MailToolPages::class, 'queueAct'])->name('.queue.act');
+            $routes->get('/queue/{id}', [MailToolPages::class, 'queueMessage'])->name('.queue.view')->where('id', '[0-9A-Za-z-]{16,23}');
+            $routes->get('/track', [MailToolPages::class, 'adminTrack'])->name('.track');
         }, name: 'admin.mail', meta: ['can' => 'server.mail']);
 
         $routes->group('/admin/api/v1/email', static function (RouteCollector $routes): void {
             $routes->get('', [MailApi::class, 'server'])->name('');
             $routes->put('/settings', [MailApi::class, 'settings'])->name('.settings');
+            $routes->put('/filtering', [MailApi::class, 'filtering'])->name('.filtering');
+            $routes->get('/queue', [MailApi::class, 'queue'])->name('.queue');
+            $routes->post('/queue', [MailApi::class, 'queueAct'])->name('.queue.act');
+            $routes->get('/queue/{id}', [MailApi::class, 'queueMessage'])->name('.queue.view')->where('id', '[0-9A-Za-z-]{16,23}');
+            $routes->get('/track', [MailApi::class, 'track'])->name('.track');
         }, name: 'api.mail', meta: ['can' => 'server.mail', 'csrf' => false, 'rate_limit' => '60/1m']);
 
         // Changing an account's mail is changing the account.
@@ -100,6 +121,12 @@ return static function (ModuleContext $module): void {
             $routes->post('/forwarders', [MailApi::class, 'forward'])->name('.forward')->where('username', $user)->meta($modify);
             $routes->delete('/forwarders/{id}', [MailApi::class, 'unforward'])->name('.unforward')->where('username', $user)->where('id', $id)->meta($modify);
             $routes->put('/domains/{domain}', [MailApi::class, 'domain'])->name('.domain')->where('username', $user)->where('domain', $domain)->meta($modify);
+            $routes->get('/mailboxes/{address}/filters', [MailApi::class, 'filters'])->name('.filters')->where('username', $user)->where('address', $address);
+            $routes->post('/mailboxes/{address}/filters', [MailApi::class, 'addFilter'])->name('.filters.store')->where('username', $user)->where('address', $address)->meta($modify);
+            $routes->delete('/filters/{id}', [MailApi::class, 'removeFilter'])->name('.filters.destroy')->where('username', $user)->where('id', $id)->meta($modify);
+            $routes->get('/spam', [MailApi::class, 'spam'])->name('.spam')->where('username', $user);
+            $routes->put('/spam', [MailApi::class, 'setSpam'])->name('.spam.update')->where('username', $user)->meta($modify);
+            $routes->get('/track', [MailApi::class, 'accountTrack'])->name('.track')->where('username', $user);
         }, name: 'api.account_mail', meta: ['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '120/1m']);
     });
 
@@ -153,10 +180,46 @@ return static function (ModuleContext $module): void {
             ->option('catchall', 'refuse, discard, or an address to forward unknown addresses to.')
             ->option('local', 'yes (mail is delivered here) or no (its MX is another server).');
         $commands->add('mail:settings', [MailCommands::class, 'settings'])
-            ->describe('Show or set the server\'s relay host for outgoing mail.')
-            ->option('smarthost', 'host or host:port; "none" sends straight to each domain\'s mail server.');
+            ->describe('Show or set the server\'s relay host for outgoing mail, and the login to it.')
+            ->option('smarthost', 'host or host:port; "none" sends straight to each domain\'s mail server.')
+            ->option('relay-user', 'The user to log in to the relay host with ("none": no login). The password is read from standard input.');
+        $commands->add('mail:filtering', [MailCommands::class, 'filtering'])
+            ->describe('Show or set spam filtering (Rspamd), virus scanning (ClamAV) and the score that refuses mail.')
+            ->option('spam', 'on or off.')
+            ->option('virus', 'on or off (needs spam filtering).')
+            ->option('reject', 'The score at which mail from outside is refused (5–100). Default 15.');
+        $commands->add('mail:spam', [MailCommands::class, 'spam'])
+            ->describe('Show or set how an account\'s mailboxes file spam, and its allowed and blocked senders.')
+            ->argument('username', 'The account.')
+            ->option('junk', 'File spam in Junk from this score (such as 6 or 6.5); "off" files none.')
+            ->option('delete', 'Delete spam from this score; "off" deletes none.')
+            ->option('allow', 'Senders never filed as spam: addresses or @domains, comma-separated ("none" empties it).')
+            ->option('block', 'Senders whose mail is thrown away, the same way.');
+        $commands->add('mail:filter', [MailCommands::class, 'filter'])
+            ->describe('List a mailbox\'s filters, add one, or remove one with --remove.')
+            ->argument('username', 'The account.')
+            ->argument('address', 'The mailbox.')
+            ->option('field', 'from, to or subject.')
+            ->option('test', 'contains, is, begins or ends.')
+            ->option('value', 'What it looks for.')
+            ->option('action', 'folder, forward or discard.')
+            ->option('target', 'The folder, or the address to forward a copy to.')
+            ->option('remove', 'The id of a filter to remove.')
+            ->flag('stop', 'Later filters do not run on what this one matches.');
+        $commands->add('mail:queue', [MailCommands::class, 'queue'])
+            ->describe('List Exim\'s queue, show a message, or deliver, remove, freeze or thaw messages (or flush them all).')
+            ->argument('action', 'list (default), show, deliver, remove, freeze, thaw or flush.', required: false)
+            ->argument('ids', 'Message ids, comma-separated.', required: false)
+            ->option('search', 'Part of a sender, recipient or id.')
+            ->flag('yes', 'Do not ask before removing.');
+        $commands->add('mail:track', [MailCommands::class, 'track'])
+            ->describe('Show what became of each message, from Exim\'s log.')
+            ->option('account', 'Only this account\'s mail.')
+            ->option('search', 'Part of an address or message id.')
+            ->option('status', 'delivered, deferred, failed, rejected or pending.')
+            ->option('days', 'Look back this many days (1, 3, 7, 14 or 30). Default 7.');
         $commands->add('mail:info', [MailCommands::class, 'info'])
-            ->describe('Show Exim\'s and Dovecot\'s state and the queue.');
+            ->describe('Show the mail servers\' state, filtering and the queue.');
         $commands->add('mail:usage', [MailCommands::class, 'usage'])
             ->describe('Measure how much mail each mailbox holds.');
         $commands->add('mail:settle', [MailCommands::class, 'settle'])

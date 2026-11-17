@@ -26,12 +26,14 @@ use App\Modules\Web\AutoSsl;
 /**
  * "Email" in both panels.
  *
- * User panel: the account's mailboxes (with their quotas and
+ * User panel: the account's mailboxes (with their quotas, filters and
  * autoresponders), forwarders, each domain's catch-all and DNS records, and
- * what to type into a mail client.
+ * what to type into a mail client. Spam settings and delivery tracking are
+ * MailToolPages'.
  *
- * Admin panel: Exim's and Dovecot's state, the queue, the relay host for
- * outgoing mail, and every account's mail domains.
+ * Admin panel: Exim's, Dovecot's, Rspamd's and ClamAV's state, filtering,
+ * the relay host for outgoing mail, and every account's mail domains. The
+ * queue and delivery tracking are MailToolPages'.
  */
 final class MailPages
 {
@@ -107,6 +109,52 @@ final class MailPages
         [$outcome] = $this->actions->setResponder($identity, $request, $account, $this->mailbox($account, $id), null);
 
         return $this->after($request, $session, $identity, $outcome, 'Mail.responder_off');
+    }
+
+    public function filter(Request $request, Session $session, Identity $identity, string $id): Response
+    {
+        $account = $this->account($identity);
+        $box = $this->mailbox($account, $id);
+        $input = [];
+
+        foreach (['field', 'test', 'value', 'action', 'target', 'stop'] as $key) {
+            $input[$key] = (string) $request->input($key, '');
+        }
+
+        [$outcome, $errors] = $this->actions->addFilter($identity, $request, $account, $box, $input);
+
+        if ($errors !== []) {
+            return $this->user($request, $session, $identity, ['filter_id' => (int) $box['id'], 'filter_errors' => $errors, 'filter_old' => $input], 422);
+        }
+
+        return $this->after($request, $session, $identity, $outcome, 'Mail.filter_added');
+    }
+
+    public function unfilter(Request $request, Session $session, Identity $identity, string $id): Response
+    {
+        $account = $this->account($identity);
+
+        return $this->after($request, $session, $identity, $this->actions->removeFilter($identity, $request, $account, $this->filterOf($account, $id)), 'Mail.filter_removed');
+    }
+
+    public function moveFilter(Request $request, Session $session, Identity $identity, string $id): Response
+    {
+        $account = $this->account($identity);
+        $filter = $this->filterOf($account, $id);
+        $box = $this->mailbox($account, (string) $filter['mailbox_id']);
+        $outcome = $this->actions->moveFilter($identity, $request, $account, $box, (int) $filter['id'], $request->input('direction') === 'up' ? 'up' : 'down');
+
+        return $this->after($request, $session, $identity, $outcome, 'Mail.filter_moved');
+    }
+
+    /**
+     * @param array<string, mixed> $account
+     *
+     * @return array<string, mixed>
+     */
+    private function filterOf(array $account, string $id): array
+    {
+        return (\ctype_digit($id) ? $this->mail->filter((int) $account['id'], (int) $id) : null) ?? throw HttpException::notFound();
     }
 
     public function delete(Request $request, Session $session, Identity $identity, string $id): Response
@@ -223,6 +271,11 @@ final class MailPages
             'responder_url' => $this->router->url('user.mail.responder', ['id' => $b['id']]),
             'responder_off_url' => $this->router->url('user.mail.responder.delete', ['id' => $b['id']]),
             'delete_url' => $this->router->url('user.mail.delete', ['id' => $b['id']]),
+            'filter_url' => $this->router->url('user.mail.filter', ['id' => $b['id']]),
+            'filters' => \array_map(fn(array $f): array => $f + [
+                'delete_url' => $this->router->url('user.mail.filter.delete', ['id' => $f['id']]),
+                'move_url' => $this->router->url('user.mail.filter.move', ['id' => $f['id']]),
+            ], $b['filters']),
             'percent' => (int) $b['quota_mb'] > 0 ? \min(100, (int) \round((int) $b['used_bytes'] * 100 / ((int) $b['quota_mb'] * 1048576))) : null,
         ], $this->mail->mailboxes($id));
 
@@ -258,6 +311,14 @@ final class MailPages
             'domain_id' => 0,
             'domain_error' => null,
             'domain_old' => [],
+            'filter_id' => 0,
+            'filter_errors' => [],
+            'filter_old' => [],
+            'filter_fields' => Mailboxes::FILTER_FIELDS,
+            'filter_tests' => Mailboxes::FILTER_TESTS,
+            'filter_actions' => Mailboxes::FILTER_ACTIONS,
+            'tabs' => MailToolPages::userTabs($this->router),
+            'tab' => 'mailboxes',
             'store_url' => $this->router->url('user.mail.store'),
             'forward_url' => $this->router->url('user.mail.forward'),
         ], title: 'Mail.title', active: 'mail', status: $status);
@@ -315,27 +376,59 @@ final class MailPages
             'domains' => $all,
             'mailboxes' => \array_sum(\array_map(static fn(array $d): int => (int) $d['mailboxes'], $all)),
             'smarthost' => $this->mail->setting('smarthost'),
+            'relay_user' => $this->mail->setting('smarthost_user'),
+            'filtering' => [
+                'spam' => $this->mail->setting('spam', 'off') === 'on',
+                'virus' => $this->mail->setting('virus', 'off') === 'on',
+                'reject' => (int) $this->mail->setting('reject', '150') / 10,
+            ],
             'hostname' => $this->ssl->hostname(),
             'failed' => $this->sync->rowsIn(MailSync::FAILED),
             'error' => null,
+            'error_field' => null,
             'old_smarthost' => null,
+            'old_relay_user' => null,
+            'filtering_error' => null,
+            'old_reject' => null,
+            'tabs' => MailToolPages::adminTabs($this->router),
+            'tab' => 'overview',
             'settings_url' => $this->router->url('admin.mail.settings'),
+            'filtering_url' => $this->router->url('admin.mail.filtering'),
         ], title: 'Mail.title', active: 'mail', status: $status);
     }
 
     public function settings(Request $request, Session $session, Identity $identity): Response
     {
         $input = (string) $request->input('smarthost', '');
-        $outcome = $this->actions->setSmarthost($identity, $request, $input);
+        $user = (string) $request->input('relay_user', '');
+        $outcome = $this->actions->setSmarthost($identity, $request, $input, $user, (string) $request->input('relay_password', ''));
 
-        if ($outcome->status === MailOutcome::REFUSED && $outcome->code === 'smarthost') {
-            return $this->adminPage($request, $session, $identity, ['error' => (string) $outcome->message, 'old_smarthost' => $input], 422);
+        if ($outcome->status === MailOutcome::REFUSED && \in_array($outcome->code, ['smarthost', 'relay_user', 'relay_password'], true)) {
+            return $this->adminPage($request, $session, $identity, ['error' => (string) $outcome->message, 'error_field' => $outcome->code, 'old_smarthost' => $input, 'old_relay_user' => $user], 422);
         }
 
         match ($outcome->status) {
             MailOutcome::REFUSED => PanelPage::notice($session, 'error', (string) $outcome->message),
             MailOutcome::FAILED => PanelPage::notice($session, 'error', 'Mail.refused'),
             default => PanelPage::notice($session, 'success', 'Mail.settings_saved'),
+        };
+
+        return new RedirectResponse($this->router->url('admin.mail'), 303);
+    }
+
+    public function filtering(Request $request, Session $session, Identity $identity): Response
+    {
+        $reject = (string) $request->input('reject', '15');
+        $outcome = $this->actions->setFiltering($identity, $request, $request->input('spam') === '1', $request->input('virus') === '1', $reject);
+
+        if ($outcome->status === MailOutcome::REFUSED && \in_array($outcome->code, ['reject', 'virus'], true)) {
+            return $this->adminPage($request, $session, $identity, ['filtering_error' => (string) $outcome->message, 'old_reject' => $reject], 422);
+        }
+
+        match ($outcome->status) {
+            MailOutcome::REFUSED => PanelPage::notice($session, 'error', (string) $outcome->message),
+            MailOutcome::FAILED => PanelPage::notice($session, 'error', 'Mail.refused'),
+            default => PanelPage::notice($session, 'success', 'Mail.filtering_saved'),
         };
 
         return new RedirectResponse($this->router->url('admin.mail'), 303);

@@ -38,6 +38,7 @@ return [
     'limit_mailboxes' => 'Mailboxes',
     'limit_databases' => 'Databases',
     'limit_ftp_accounts' => 'FTP accounts',
+    'limit_mail_per_hour' => 'Email recipients an hour',
     'bandwidth_action' => 'When the month\'s bandwidth is used up',
     'bandwidth_action_block' => 'Stop the sites until next month',
     'bandwidth_action_warn' => 'Keep the sites running and show a warning',

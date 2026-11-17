@@ -100,6 +100,21 @@ final class FakeServer
     /** The relay host mail.settings set ("" for none). */
     public string $smarthost = '';
 
+    /** @var array{user: string, password: string}|null the login to it, as mail.settings left it */
+    public ?array $relayLogin = null;
+
+    /** @var array{spam: bool, virus: bool, reject: int} what mail.filtering set */
+    public array $filtering = ['spam' => false, 'virus' => false, 'reject' => 150];
+
+    /** @var list<array<string, mixed>> Exim's queue, as mail.queue lists it */
+    public array $queue = [];
+
+    /** @var list<string> mail.queue_act calls: "action id,id" */
+    public array $queueActs = [];
+
+    /** @var list<array<string, mixed>> deliveries mail.track reads (each may carry an "account") */
+    public array $deliveries = [];
+
     /** @var array{op: string, code: string, message: string}|null the next time this op runs, it fails */
     public ?array $failNext = null;
 
@@ -112,7 +127,7 @@ final class FakeServer
     {
         $answers = [];
 
-        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove', 'mail.apply', 'mail.purge', 'mail.settings'] as $op) {
+        foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove', 'mail.apply', 'mail.purge', 'mail.settings', 'mail.filtering', 'mail.queue_act'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -145,7 +160,31 @@ final class FakeServer
         )]];
         $answers['mail.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
             'enabled' => true, 'exim' => ['running' => true, 'version' => '4.100.1'], 'dovecot' => ['running' => true, 'version' => '2.3.16'],
-            'queue' => 3, 'domains' => \count($this->mailOwners()),
+            'queue' => \count($this->queue), 'domains' => \count($this->mailOwners()), 'filtering' => $this->filtering,
+            'rspamd' => ['running' => $this->filtering['spam'], 'version' => '4.3.0'],
+            'clamav' => ['running' => $this->filtering['virus'], 'version' => '1.4.6', 'ready' => true, 'signatures' => '27000'],
+        ]];
+        $answers['mail.queue'] = fn(array $args): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'total' => \count($this->queue),
+            'frozen' => \count(\array_filter($this->queue, static fn(array $m): bool => (bool) $m['frozen'])),
+            'messages' => \array_values(\array_filter($this->queue, static fn(array $m): bool => ($args['search'] ?? '') === '' || \str_contains(\strtolower($m['sender'] . ' ' . \implode(' ', $m['recipients'])), \strtolower((string) $args['search'])))),
+        ]];
+        $answers['mail.queue_view'] = function (array $args): array {
+            foreach ($this->queue as $m) {
+                if ($m['id'] === $args['id']) {
+                    return ['status' => 'done', 'result' => ['id' => $m['id'], 'message' => "From: <{$m['sender']}>\nSubject: Queued\n\nHello", 'truncated' => false, 'log' => '== deferred']];
+                }
+            }
+
+            return ['status' => 'failed', 'error' => ['code' => 'mail_no_message', 'message' => $args['id'] . ' is not in the queue']];
+        };
+        $answers['mail.track'] = fn(array $args): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'deliveries' => \array_values(\array_map(
+                static fn(array $d): array => \array_diff_key($d, ['account' => true]),
+                \array_filter($this->deliveries, static fn(array $d): bool => (($args['username'] ?? '') === '' || ($d['account'] ?? '') === $args['username'])
+                    && (($args['status'] ?? '') === '' || $d['status'] === $args['status'])),
+            )),
+            'more' => false,
         ]];
         $answers['db.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['installed' => true, 'running' => true, 'version' => '10.5.27-MariaDB', 'uptime' => 3600, 'threads' => \count($this->dbProcesses), 'queries' => 42]];
         $answers['db.processes'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['processes' => $this->dbProcesses]];
@@ -359,14 +398,40 @@ final class FakeServer
 
         if ($op === 'mail.settings') {
             $host = (string) ($args['smarthost'] ?? '');
+            $user = (string) ($args['user'] ?? '');
 
             if ($host !== '' && \preg_match('/^[a-z0-9.-]+:\d{1,5}$/', $host) !== 1) {
                 return $fail('bad_args', $host . ' is not a host');
             }
 
-            $this->smarthost = $host;
+            if ($user !== '' && (bool) ($args['keep_password'] ?? false) && $this->relayLogin === null) {
+                return $fail('bad_args', 'there is no relay host password to keep');
+            }
 
-            return ['status' => 'done', 'result' => ['smarthost' => $host]];
+            $this->smarthost = $host;
+            $this->relayLogin = $host === '' || $user === '' ? null : ['user' => $user, 'password' => (bool) ($args['keep_password'] ?? false) ? (string) ($this->relayLogin['password'] ?? '') : (string) $args['password']];
+
+            return ['status' => 'done', 'result' => ['smarthost' => $host, 'login' => $this->relayLogin !== null]];
+        }
+
+        if ($op === 'mail.filtering') {
+            if ((bool) $args['virus'] && !(bool) $args['spam']) {
+                return $fail('bad_args', 'virus scanning needs spam filtering on');
+            }
+
+            $this->filtering = ['spam' => (bool) $args['spam'], 'virus' => (bool) $args['virus'], 'reject' => (int) $args['reject']];
+
+            return ['status' => 'done', 'result' => $this->filtering];
+        }
+
+        if ($op === 'mail.queue_act') {
+            $this->queueActs[] = $args['action'] . ' ' . \implode(',', $args['ids']);
+
+            if ($args['action'] === 'remove') {
+                $this->queue = \array_values(\array_filter($this->queue, static fn(array $m): bool => !\in_array($m['id'], $args['ids'], true)));
+            }
+
+            return ['status' => 'done', 'result' => ['action' => $args['action'], 'messages' => \count($args['ids'])]];
         }
 
         $name = (string) $args['username'];

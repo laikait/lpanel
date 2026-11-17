@@ -538,8 +538,9 @@ backoff are tested against Pebble.
 **Exit:** a mailbox sends and receives over IMAP/SMTP with TLS. DKIM-signed
 mail passes the checks of an external mail test service.
 
-M6 is in two parts: M6a (mail flow and mailboxes), M6b (filtering, webmail,
-the queue and limits).
+M6 is in three parts: M6a (mail flow and mailboxes), M6b (filtering, the
+owner's filters, sending limits, the queue and tracking), M6c (webmail,
+autoconfiguration, a certificate for each mail domain, deliverability).
 
 **M6a: mail flow and mailboxes. Built 2026-11-16.**
 - **Exim 4.100 (EPEL) and Dovecot 2.3 (AppStream)**, with configurations the
@@ -589,11 +590,76 @@ the queue and limits).
   Exim and Dovecot); `tests/e2e/install.sh` against the real servers
   (`swaks`, IMAP, POP3, DKIM verified against PowerDNS): `WEB=apache`
   216 checks, `WEB=nginx` 217, `WEB=hybrid` 221; agent e2e 37.
-- **Not yet (M6b):** Rspamd and ClamAV; Sieve filters of the owner's own;
-  Roundcube with single sign-on; autodiscover and autoconfig; per-account
-  sending limits; the queue manager and delivery tracking; SRS for
-  forwarders; relay host authentication; a certificate for each mail
-  domain (SNI); the deliverability check page.
+- **Not yet:** see M6b and M6c below.
+
+**M6b: filtering, filters, limits, the queue. Built 2026-11-17.**
+- **Spam filtering (Rspamd 4.3, its own signed repository).** Exim asks
+  Rspamd (127.0.0.1:11333) about every message from outside while
+  `/etc/exim/lpanel/filter` is there. What scores the server's rejection
+  score (15 by default) is refused while the sender is still connected; the
+  rest carries its score in `X-LPanel-Spam-Score` (tenths, never below 0;
+  any copy a sender wrote is removed). On from the first installation.
+  - Rspamd's controller answers only on a 0600 socket; the milter proxy is
+    off; it signs nothing (Exim does DKIM). No Redis yet, so no Bayes
+    learning or greylisting.
+- **Virus scanning (ClamAV, EPEL).** Off by default (it needs about 1.5 GB of
+  memory). When on, Rspamd asks clamd over its group's socket and Exim
+  refuses what carries a virus; clamd waits for freshclam's first download
+  by restarting every minute.
+- **Each account's spam settings** (User panel, Email, Spam filter): move
+  spam to Junk from a score (6 by default), delete it from a higher one,
+  allowed senders (never filed as spam) and blocked senders (thrown away),
+  as addresses or @domains.
+- **Each mailbox's filters**: From, To/Cc or Subject; contains, is, begins
+  or ends with; move to a folder (made when missing), forward a copy, or
+  delete; "then stop". In order, after the spam settings and before the
+  autoresponder: the agent writes one Sieve script a mailbox and compiles
+  it. A forwarded copy leaves with the mailbox's own address as its sender.
+- **Sending limit** (the package's "Email recipients an hour"): Exim's
+  ratelimit counts the account's recipients from its mailboxes and its
+  sites together (and what its filters and autoresponders send); over it,
+  SMTP is told to try later and the sendmail command is refused.
+- **SRS**: mail a forwarder sends on leaves with an SRS address of the
+  forwarding domain as its sender, so SPF passes at the destination; a
+  bounce to it is decoded and goes back to the original sender.
+- **Relay host login**: a user and password (PLAIN, only over TLS) for the
+  relay host. The password goes to the agent once and is kept only in
+  Exim's data, readable by root and Exim's group; never in the panel's
+  database or audit log.
+- **Queue manager** (Admin panel, Email, Queue): search; see a message and
+  Exim's log of it; deliver now, freeze, thaw, remove; try every message
+  now. Deliveries run in the background (`systemd-run`).
+- **Delivery tracking** (both panels): what became of each message
+  (delivered, retrying, bounced, refused, waiting), read from Exim's log
+  and its rotations, over 1 to 30 days. An account sees only mail from or to
+  its domains, and of mail to it only its own recipients; refusals of spam
+  name their recipients in the log for that.
+- **Where it shows:** the Email pages have tabs (User panel: Mailboxes,
+  Spam filter, Track delivery; Admin panel: Overview, Queue, Track
+  delivery); the API (`…/email/spam`, `…/mailboxes/{address}/filters`,
+  `…/filters/{id}`, `…/track`, `/admin/api/v1/email/filtering`, `…/queue`,
+  `…/queue/{id}`, `…/track`); `lpanel mail:spam|filter|filtering|queue|track`,
+  `mail:settings --relay-user` (password on standard input),
+  `packages:create --mail-per-hour`. Every change is audited (`mail.spam`,
+  `mail.filter_*`, `mail.filtering`, `mail.queue`, `mail.settings`).
+- **Tests:** Go (scripts and their quoting, refused filters and senders, the
+  limit file, the relay login's escaping, filtering's order of starting
+  services, the queue's parsing and ids, tracking's per-account view); PHP
+  134; SELinux check 78 (Rspamd's port is `spamd_port_t`, which EL's policy
+  lets Exim reach); `tests/e2e/install.sh` against the real servers (GTUBE,
+  an e2e-only Rspamd rule for Junk, an EICAR test signature for ClamAV, a
+  TLS relay host that records its login): `WEB=apache` 230 checks,
+  `WEB=nginx` 231, `WEB=hybrid` 235; `tests/e2e/agent.sh` 37.
+- **Not yet:** Bayes learning from what owners move to Junk (needs Redis);
+  greylisting; per-mailbox spam settings; filters on headers other than
+  From, To and Subject; a relay host on port 465 (TLS from the start).
+
+**M6c: webmail, autoconfiguration, certificates, deliverability. Next.**
+- Roundcube with single sign-on from the User panel (and its own login for
+  mailbox users).
+- Autodiscover and autoconfig, and a client setup page per mailbox.
+- A certificate for each mail domain (SNI in Exim and Dovecot).
+- The deliverability check page (SPF, DKIM, DMARC, PTR, blocklists).
 
 ### M7: Files and access
 - File manager, Pure-FTPd/FTPS, jailed SSH/SFTP, SSH key manager, disk usage

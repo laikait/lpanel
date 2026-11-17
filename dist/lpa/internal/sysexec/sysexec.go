@@ -40,6 +40,12 @@ var Tools = map[string]string{
 	"exim":    "/usr/sbin/exim",
 	"dovecot": "/usr/sbin/dovecot",
 	"sievec":  "/usr/bin/sievec",
+	// Rspamd's and ClamAV's versions, for the Admin panel.
+	"rspamd": "/usr/bin/rspamd",
+	"clamd":  "/usr/sbin/clamd",
+	// Starts a slow job (delivering queued mail) in the background, as a
+	// transient systemd unit.
+	"systemd-run": "/usr/bin/systemd-run",
 }
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"

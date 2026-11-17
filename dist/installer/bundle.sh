@@ -53,7 +53,7 @@ install -m 0644 "$pma" "$out/phpmyadmin.tar.gz"
 echo "$PMA_VERSION" > "$out/PHPMYADMIN_VERSION"
 
 echo "== packaging"
-cp dist/installer/packaging/* "$out/packaging/"
+cp -r dist/installer/packaging/* "$out/packaging/"
 cp dist/lpa/packaging/lpa.service dist/lpa/packaging/lpa.json "$out/packaging/"
 cp dist/authd/packaging/authd.json dist/authd/packaging/lpanel-authd.service \
    dist/authd/packaging/lpanel-authd.socket dist/authd/packaging/pam.d-lpanel.el "$out/packaging/"

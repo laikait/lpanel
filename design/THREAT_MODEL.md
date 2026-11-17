@@ -99,6 +99,11 @@ limited by these:
 | T61 | Logging in to mail without TLS, as a system user, or while suspended; relaying | Dovecot's configuration replaces the system's whole: only `passwd.d` mailboxes log in, never PAM. Passwords are refused before TLS (away from localhost), logins offered on SMTP only after TLS, the submission ports need a login, and only localhost relays. A suspended account's mailboxes get `nologin`; Exim refuses their mail from the owner file, since Dovecot's auth does not apply `nologin` to Exim | e2e install "IMAP and POP3 over TLS; a wrong password, a system user and root are refused", "no password before TLS from outside", "no sending without a login, no relaying", "a suspended account receives mail but cannot log in or send" |
 | T62 | One account's mail data read or changed by another | Exim's and Dovecot's data are root's, readable only by their own groups; a domain is written only for the account that holds it (`mail_not_owner`); autoresponders are readable by the account's group only. Mail lives in the account's home, as the account | Go `TestADomainIsOnlyItsOwnAccounts`, `TestRemoveForTakesOnlyTheAccountsDomains`, e2e install "their data is root's, readable by each server's group" |
 | T63 | An autoresponder's text closing its Sieve string and adding commands (redirecting mail away) | The agent quotes every string itself (backslash and quote escaped) and strips quotes and angle brackets from the sender's name; Pigeonhole compiles the script before it is used | Go `TestAutoresponderTextStaysInsideItsStrings` |
+| T65 | Spam or viruses reaching mailboxes; a sender faking its own spam score | Rspamd scores mail from outside and Exim refuses it at the server's score, or when ClamAV finds a virus. Exim removes any `X-LPanel-Spam-Score` a sender wrote before adding its own, and the score is never below 0, so a Sieve comparison cannot be fooled | e2e install "obvious spam (GTUBE) is refused", "mail from outside gets its score; a sender's own score header is dropped", "ClamAV refuses a virus" |
+| T66 | A compromised mailbox or site sending spam in bulk | The package's sending limit, counted by Exim per account across its mailboxes, its sites and what its filters send; over it, mail is refused and the log says so | e2e install "the package's sending limit holds for mailboxes and sites, per account" |
+| T67 | A filter's text or folder breaking out of its Sieve string, or a folder name reaching outside the mailbox | The agent checks every field (fixed fields, tests and actions; printable text; folder names without path characters or wildcards; forwarding addresses of a narrow alphabet) and quotes every string; `*` and `?` in "begins/ends with" are escaped | Go `TestBadFiltersAndSendersAreRefused`, `TestSpamFiltersAndResponderShareOneScript` |
+| T68 | The relay host's password leaking | It goes to the agent once and is kept only in `smarthost_auth` (0640 root:exim, as Exim sends it) and `smarthost_login` (0600 root); the panel stores the user, never the password, and the audit log neither. Exim sends it only over TLS, only to the relay host | Go `TestRelayLoginIsWrittenReadyToSend`, PHP `test_the_administrator_sets_filtering_and_the_relay_login`, e2e "the relay host gets its login, over TLS; the password is kept nowhere else" |
+| T69 | An account reading another's mail flow through delivery tracking | `mail.track` with an account returns only messages from or to its own domains (and of mail to it, only its recipients); the panel always passes the signed-in account | Go `TestTrackingShowsAnAccountOnlyItsOwnMail`, PHP `test_the_queue_and_delivery_tracking` |
 | T64 | Deleting mail outside the account's home through a link the owner made in it | Mail is deleted (`mail.purge`) through an `os.Root` at the home, which no link can lead out of, and only once the mailbox is no longer set up | Go `TestPurgeDoesNotFollowALinkOutOfTheHome`, `TestPurgeDeletesOnlyMailNoLongerSetUp` |
 | T49 | A visitor claiming HTTPS to Apache behind nginx | nginx always sets `X-Forwarded-Proto` to its own `$scheme`; Apache turns it into `HTTPS=on` and listens only on 127.0.0.1 | Go `TestHybridServesHTTPSInFront`, e2e install "PHP knows the visit came over HTTPS" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
@@ -114,12 +119,13 @@ These are tracked, not forgotten. Each names the milestone that closes it.
 - **PowerDNS has no SELinux domain of its own** on EL9: it runs as
   `unconfined_service_t`. Its own user (`pdns`) and its API key still keep
   it apart from the panel.
-- **Mail is not yet filtered for spam or viruses, nor rate limited.** Exim
-  checks senders' domains and header syntax only; Rspamd, ClamAV and
-  per-account sending limits come in M6b. A compromised site can send mail
-  as its own domains through the sendmail command until then.
-- **Forwarded mail is not rewritten (SRS)**, so a forward to a strict
-  provider may fail its SPF check (M6b).
+- **Rspamd has no SELinux domain of its own and no Redis**: it runs as
+  `unconfined_service_t` under its own user, and learns nothing from what
+  owners file as spam (no Bayes, no greylisting) until Redis comes.
+- **Virus scanning is off by default** (ClamAV needs about 1.5 GB of
+  memory); the administrator turns it on.
+- **Mail between two mailboxes of this server, and mail a mailbox sends, is
+  not scanned**; only mail from other servers is.
 - **The mail servers' SELinux rules are checked against EL's policy only**
   (dist/selinux check), not yet on an enforcing machine (the VM run).
 - **Remote database access is not limited by the firewall yet.** MariaDB

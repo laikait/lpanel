@@ -45,10 +45,26 @@ document.addEventListener('keydown', (event) => {
     }
 });
 
-// Forms that change something serious ask first.
+// Forms that change something serious ask first; so does a button of a form
+// that does several things, when its own is serious.
 document.querySelectorAll('form[data-confirm]').forEach((form) => {
     form.addEventListener('submit', (event) => {
         if (!window.confirm(form.getAttribute('data-confirm'))) event.preventDefault();
+    });
+});
+document.querySelectorAll('button[data-confirm]').forEach((button) => {
+    button.addEventListener('click', (event) => {
+        if (!window.confirm(button.getAttribute('data-confirm'))) event.preventDefault();
+    });
+});
+
+// A "select all" box (data-check-all="ids[]") ticks every box of that name
+// in its form.
+document.querySelectorAll('input[data-check-all]').forEach((all) => {
+    const name = all.getAttribute('data-check-all');
+    const boxes = () => (all.form ? all.form.querySelectorAll('input[type="checkbox"]') : []);
+    all.addEventListener('change', () => {
+        boxes().forEach((box) => { if (box.name === name) box.checked = all.checked; });
     });
 });
 

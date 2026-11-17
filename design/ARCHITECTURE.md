@@ -69,7 +69,7 @@ under `modules/`. The framework in `engine/` is not edited.
 | `Ssl` | AutoSSL, certificates |
 | `Databases` | MariaDB DBs/users, phpMyAdmin SSO |
 | `Dns` | PowerDNS zones and templates |
-| `Mail` | mail domains (every domain of an account), mailboxes, forwarders, catch-alls, autoresponders, DKIM, the relay host; later filters and the queue |
+| `Mail` | mail domains (every domain of an account), mailboxes, forwarders, catch-alls, autoresponders, filters, spam settings, DKIM; the server's filtering, relay host, queue and delivery tracking |
 | `Files` | file manager, FTP, SSH keys |
 | `Backups` | schedules, destinations, restore |
 | `Security` | firewall, brute force, ModSecurity |
@@ -153,8 +153,20 @@ reloads anything. `mail.apply` takes an account's whole mail state:
   and its DKIM private key (made by the agent when missing);
 - `/etc/dovecot/lpanel/passwd.d/<domain>`: each mailbox's bcrypt hash, the
   account's uid and gid, its home and quota;
-- `/etc/dovecot/lpanel/sieve/<domain>/<local>.sieve`: autoresponders,
-  compiled by the agent, readable by the account's group only.
+- `/etc/dovecot/lpanel/sieve/<domain>/<local>.sieve`: what the mailbox does
+  on arrival (the account's blocked senders, its spam filing, the mailbox's
+  filters, its autoresponder), compiled by the agent, readable by the
+  account's group only;
+- `/etc/exim/lpanel/accounts/<account>`: the account's sending limit, which
+  Exim's ratelimit applies to its mailboxes and its sites together.
+
+Server-wide, `mail.filtering` turns Rspamd and ClamAV on or off (the
+`filter` flag file tells Exim to ask Rspamd; the agent writes Rspamd's
+`actions.conf` and `antivirus.conf`), and `mail.settings` writes the relay
+host and its login. The queue (`mail.queue`, `mail.queue_view`,
+`mail.queue_act`) and delivery tracking (`mail.track`, which reads Exim's
+log and gives an account only its own domains' mail) are read through the
+agent too; the panel never reads Exim's spool or logs itself.
 
 Exim finds a domain's files with `dsearch`, which answers only with a name
 that is in the folder, so a name from a message never becomes part of a
@@ -261,7 +273,8 @@ user, not from SELinux.
 | `/etc/pdns/pdns.conf` | PowerDNS: the MySQL backend (database `pdns`), port 53 on every address, the API on 127.0.0.1:8081 (0640 root:pdns) |
 | `/etc/lpa/pdns.key` | PowerDNS's API key, the agent's alone (0600 root) |
 | `/etc/exim/exim.conf`, `/etc/dovecot/dovecot.conf` | the mail servers' configurations, written by the installer whole |
-| `/etc/exim/lpanel/` | accounts' mail data for Exim (lpa; 0750 root:exim): owners, local, mailboxes, forwards, dkim, smarthost |
+| `/etc/exim/lpanel/` | accounts' mail data for Exim (lpa; 0750 root:exim): owners, local, mailboxes, forwards, dkim, accounts, smarthost, smarthost_auth (the relay login as Exim sends it), filter; smarthost_login (0600 root: the plain login, to keep a password); srs_secret (the installer) |
+| `/etc/rspamd/local.d/` | Rspamd's settings: workers, no signing (the installer); actions.conf and antivirus.conf (lpa) |
 | `/etc/dovecot/lpanel/` | mailbox logins (`passwd.d`, 0750 root:dovecot) and autoresponders (`sieve/<domain>`, root:account group) |
 | `/etc/pki/lpanel-mail/` | the hostname certificate's copy for Exim and Dovecot (0640 root:exim), refreshed by lpa when it changes |
 | `/var/lib/mysql/<user>_<name>/` | each account database's files, owned by MariaDB; their size comes off the home's quota |

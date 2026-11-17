@@ -70,6 +70,39 @@ type ApplyArgs struct {
 	// in, and so cannot send.
 	Suspended bool     `json:"suspended"`
 	Domains   []Domain `json:"domains"`
+	// Limit caps how many recipients the account's mail may reach in an hour,
+	// from its mailboxes and its sites alike (0: no cap).
+	Limit int `json:"limit"`
+	// Spam is how the account's mailboxes file what the spam filter scores.
+	Spam Spam `json:"spam"`
+}
+
+// Spam is an account's spam settings. Scores are tenths, as Exim gives them
+// (60 is a score of 6.0).
+type Spam struct {
+	// Junk files mail that scores this much or more in the Junk folder;
+	// Delete throws it away (0: neither).
+	Junk   int `json:"junk"`
+	Delete int `json:"delete"`
+	// Allow lists senders never filed as spam, Block senders whose mail is
+	// thrown away on arrival: addresses, or "@domain" for a whole domain.
+	Allow []string `json:"allow"`
+	Block []string `json:"block"`
+}
+
+// any reports whether the settings ask a mailbox's Sieve script for anything.
+func (s Spam) any() bool {
+	return s.Junk > 0 || s.Delete > 0 || len(s.Block) > 0
+}
+
+// Filter is one of a mailbox's own rules, run in order on arrival.
+type Filter struct {
+	Field  string `json:"field"`  // from, to (To and Cc), subject
+	Match  string `json:"match"`  // contains, is, begins, ends
+	Value  string `json:"value"`  // what it looks for, ignoring case
+	Action string `json:"action"` // folder, forward (a copy), discard
+	Target string `json:"target"` // the folder, or the address
+	Stop   bool   `json:"stop"`   // later filters do not run
 }
 
 // Domain is one mail domain of the account.
@@ -96,6 +129,7 @@ type Mailbox struct {
 	// space still applies).
 	QuotaMB       int            `json:"quota_mb"`
 	Autoresponder *Autoresponder `json:"autoresponder,omitempty"`
+	Filters       []Filter       `json:"filters,omitempty"`
 }
 
 // Forwarder sends mail for one address on to others.
@@ -149,6 +183,9 @@ type Manager struct {
 	// EximDir and DovecotDir hold the data the agent writes; TLSDir the copy
 	// of the hostname certificate both servers use.
 	EximDir, DovecotDir, TLSDir string
+	// RspamdDir is Rspamd's local.d; ClamDB ClamAV's signatures; LogDir
+	// Exim's logs (delivery tracking reads main.log and its rotations).
+	RspamdDir, ClamDB, LogDir string
 	// HostCert and HostKey are the hostname certificate (the panel's).
 	HostCert, HostKey string
 	Run               sysexec.Runner
@@ -176,6 +213,9 @@ func (m *Manager) Defaults() {
 	set(&m.EximDir, "/etc/exim/lpanel")
 	set(&m.DovecotDir, "/etc/dovecot/lpanel")
 	set(&m.TLSDir, "/etc/pki/lpanel-mail")
+	set(&m.RspamdDir, "/etc/rspamd/local.d")
+	set(&m.ClamDB, "/var/lib/clamav")
+	set(&m.LogDir, "/var/log/exim")
 	set(&m.HostCert, "/etc/lpanel/tls/panel.crt")
 	set(&m.HostKey, "/etc/lpanel/tls/panel.key")
 	if m.Log == nil {
@@ -232,6 +272,7 @@ func (m *Manager) prepare(exim, dovecot int) error {
 	}{
 		{m.EximDir, exim}, {filepath.Join(m.EximDir, "owners"), exim}, {filepath.Join(m.EximDir, "local"), exim},
 		{filepath.Join(m.EximDir, "mailboxes"), exim}, {filepath.Join(m.EximDir, "forwards"), exim}, {filepath.Join(m.EximDir, "dkim"), exim},
+		{filepath.Join(m.EximDir, "accounts"), exim},
 		{m.DovecotDir, dovecot}, {filepath.Join(m.DovecotDir, "passwd.d"), dovecot},
 	} {
 		if err := m.dir(d.dir, 0o750, d.gid); err != nil {
@@ -381,7 +422,7 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (ApplyResult, error) {
 		if err := count(m.writeFile(m.passwdPath(d.Name), passwdFile(d, a.Username, uid, gid, home, a.Suspended), 0o640, dovecotGID)); err != nil {
 			return res, err
 		}
-		if err := m.applySieve(ctx, d, gid, &res); err != nil {
+		if err := m.applySieve(ctx, d, a.Spam, gid, &res); err != nil {
 			return res, err
 		}
 		if err := count(m.writeFile(m.eximPath("owners", d.Name), ownerFile(d, a.Username, a.Suspended), 0o640, eximGID)); err != nil {
@@ -409,6 +450,11 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (ApplyResult, error) {
 		res.DKIM[d.Name] = pub
 	}
 
+	// The account's own settings: Exim reads its sending limit from here.
+	if err := count(m.writeFile(m.eximPath("accounts", a.Username), accountFile(a.Username, a.Limit), 0o640, eximGID)); err != nil {
+		return res, err
+	}
+
 	had, err := m.domainsOf(a.Username)
 	if err != nil {
 		return res, err
@@ -434,13 +480,16 @@ func (m *Manager) Apply(ctx context.Context, a ApplyArgs) (ApplyResult, error) {
 	return res, nil
 }
 
-// applySieve writes and compiles the autoresponders of a domain's
-// mailboxes, and removes those no mailbox has any more.
-func (m *Manager) applySieve(ctx context.Context, d Domain, gid int, res *ApplyResult) error {
+// applySieve writes and compiles the Sieve scripts of a domain's mailboxes
+// (blocked senders, spam, filters, autoresponder), and removes those no
+// mailbox needs any more.
+func (m *Manager) applySieve(ctx context.Context, d Domain, spam Spam, gid int, res *ApplyResult) error {
 	dir := m.sieveDir(d.Name)
 	want := map[string]bool{}
+	scripts := map[string][]byte{}
 	for _, b := range d.Mailboxes {
-		if b.Autoresponder != nil {
+		if s := sieveScript(d, b, spam); s != nil {
+			scripts[b.Local] = s
 			want[b.Local+".sieve"] = true
 			want[b.Local+".svbin"] = true
 		}
@@ -456,12 +505,13 @@ func (m *Manager) applySieve(ctx context.Context, d Domain, gid int, res *ApplyR
 		return err
 	}
 	for _, b := range d.Mailboxes {
-		if b.Autoresponder == nil {
+		text, ok := scripts[b.Local]
+		if !ok {
 			continue
 		}
 		script := filepath.Join(dir, b.Local+".sieve")
 		binary := filepath.Join(dir, b.Local+".svbin")
-		changed, err := m.writeFile(script, sieveScript(d, b), 0o640, gid)
+		changed, err := m.writeFile(script, text, 0o640, gid)
 		if err != nil {
 			return err
 		}
@@ -472,7 +522,7 @@ func (m *Manager) applySieve(ctx context.Context, d Domain, gid int, res *ApplyR
 		code, out, err := m.Run.Run(ctx, "sievec", script, binary)
 		if err != nil || code != 0 {
 			os.Remove(script) // compiled again on the next try
-			return protocol.Fail(CodeSieve, "the autoresponder of "+b.Local+"@"+d.Name+" could not be compiled: "+strings.TrimSpace(out))
+			return protocol.Fail(CodeSieve, "the filters of "+b.Local+"@"+d.Name+" could not be compiled: "+strings.TrimSpace(out))
 		}
 		if exists(binary) {
 			if err := os.Chmod(binary, 0o640); err != nil {
@@ -691,7 +741,7 @@ func (m *Manager) RemoveFor(_ context.Context, username string) error {
 		}
 		m.Log.Info("mail domain removed", "domain", d, "username", username)
 	}
-	return nil
+	return os.RemoveAll(m.eximPath("accounts", username))
 }
 
 // Info describes the mail servers.
@@ -700,15 +750,25 @@ type Info struct {
 	Exim    ServiceInfo `json:"exim"`
 	Dovecot ServiceInfo `json:"dovecot"`
 	// Queue is how many messages wait in Exim's queue.
-	Queue   int      `json:"queue"`
-	Domains int      `json:"domains"`
-	Errors  []string `json:"errors,omitempty"`
+	Queue     int           `json:"queue"`
+	Domains   int           `json:"domains"`
+	Filtering FilteringArgs `json:"filtering"`
+	Rspamd    ServiceInfo   `json:"rspamd"`
+	ClamAV    ClamInfo      `json:"clamav"`
+	Errors    []string      `json:"errors,omitempty"`
 }
 
 // ServiceInfo is one server's state.
 type ServiceInfo struct {
 	Running bool   `json:"running"`
 	Version string `json:"version"`
+}
+
+// ClamInfo is ClamAV's state: Ready once it has signatures.
+type ClamInfo struct {
+	ServiceInfo
+	Ready      bool   `json:"ready"`
+	Signatures string `json:"signatures"`
 }
 
 // Info asks Exim and Dovecot about themselves.
@@ -747,6 +807,7 @@ func (m *Manager) Info(ctx context.Context) Info {
 			}
 		}
 	}
+	m.filteringInfo(ctx, &info)
 	return info
 }
 
@@ -803,25 +864,58 @@ type SettingsArgs struct {
 	// "host:port", port 25 by default); empty sends mail straight to each
 	// domain's MX.
 	Smarthost string `json:"smarthost"`
+	// User and Password log in to the relay host, only ever over TLS (Exim
+	// refuses to send through it otherwise). An empty User logs in to none.
+	// KeepPassword keeps the password the server has (the panel never
+	// stores it).
+	User         string `json:"user"`
+	Password     string `json:"password"`
+	KeepPassword bool   `json:"keep_password"`
 }
 
-// Settings writes the server's mail settings.
-func (m *Manager) Settings(_ context.Context, a SettingsArgs) (map[string]string, error) {
+// MaxRelayLogin is the longest relay host user name or password.
+const MaxRelayLogin = 256
+
+// Settings writes the server's mail settings: the relay host, and the login
+// to it. The login is written before the host, and removed after it, so
+// mail never goes to a relay host that wants a login without one.
+func (m *Manager) Settings(_ context.Context, a SettingsArgs) (map[string]any, error) {
 	if !m.Enabled {
 		return nil, protocol.Fail(CodeOff, "the agent is configured without mail")
 	}
 	path := filepath.Join(m.EximDir, "smarthost")
+	authPath := filepath.Join(m.EximDir, "smarthost_auth")
+	keepPath := filepath.Join(m.EximDir, "smarthost_login")
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if a.Smarthost == "" {
 		if err := os.RemoveAll(path); err != nil {
 			return nil, err
 		}
-		return map[string]string{"smarthost": ""}, nil
+		for _, p := range []string{authPath, keepPath} {
+			if err := os.RemoveAll(p); err != nil {
+				return nil, err
+			}
+		}
+		return map[string]any{"smarthost": "", "login": false}, nil
 	}
 	host, port, err := splitHostPort(a.Smarthost)
 	if err != nil {
 		return nil, err
+	}
+	if a.User != "" {
+		if a.KeepPassword {
+			old, err := readRelayLogin(keepPath)
+			if err != nil || old[1] == "" {
+				return nil, badArgs("there is no relay host password to keep")
+			}
+			a.Password = old[1]
+		}
+		for _, v := range []string{a.User, a.Password} {
+			if v == "" || len(v) > MaxRelayLogin || strings.ContainsFunc(v, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+				return nil, badArgs("the relay host's user and password must be 1 to %d printable ASCII characters", MaxRelayLogin)
+			}
+		}
 	}
 	exim, _, err := m.groups()
 	if err != nil {
@@ -830,12 +924,59 @@ func (m *Manager) Settings(_ context.Context, a SettingsArgs) (map[string]string
 	if err := m.dir(m.EximDir, 0o750, exim); err != nil {
 		return nil, err
 	}
+	if a.User != "" {
+		if _, err := m.writeFile(keepPath, relayKeepFile(a.User, a.Password), 0o600, 0); err != nil {
+			return nil, err
+		}
+		if _, err := m.writeFile(authPath, relayLoginFile(a.User, a.Password), 0o640, exim); err != nil {
+			return nil, err
+		}
+	}
 	// Exim's host list: a colon in it is doubled.
 	if _, err := m.writeFile(path, []byte(host+"::"+strconv.Itoa(port)), 0o640, exim); err != nil {
 		return nil, err
 	}
-	m.Log.Info("mail relay host set", "host", host, "port", port)
-	return map[string]string{"smarthost": host + ":" + strconv.Itoa(port)}, nil
+	if a.User == "" {
+		for _, p := range []string{authPath, keepPath} {
+			if err := os.RemoveAll(p); err != nil {
+				return nil, err
+			}
+		}
+	}
+	m.Log.Info("mail relay host set", "host", host, "port", port, "login", a.User != "")
+	return map[string]any{"smarthost": host + ":" + strconv.Itoa(port), "login": a.User != "", "user": a.User}, nil
+}
+
+// relayLoginFile is the relay host login exactly as Exim's PLAIN client
+// authenticator sends it (it reads the file whole): "^user^password", each
+// "^" in a value doubled (Exim reads a single one as the separator). Exim
+// splits client_send into its list before expanding it, so nothing else in
+// a value needs escaping.
+func relayLoginFile(user, password string) []byte {
+	esc := func(v string) string { return strings.ReplaceAll(v, "^", "^^") }
+	return []byte("^" + esc(user) + "^" + esc(password))
+}
+
+// relayKeepFile holds the plain user and password (root's alone), so a
+// later change of host can keep the password the panel never stores.
+func relayKeepFile(user, password string) []byte {
+	return []byte(strconv.Quote(user) + "\n" + strconv.Quote(password) + "\n")
+}
+
+// readRelayLogin reads back the relay host's user and password.
+func readRelayLogin(path string) ([2]string, error) {
+	var out [2]string
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out, err
+	}
+	lines := strings.SplitN(string(data), "\n", 3)
+	for i := 0; i < 2 && i < len(lines); i++ {
+		if s, err := strconv.Unquote(lines[i]); err == nil {
+			out[i] = s
+		}
+	}
+	return out, nil
 }
 
 // splitHostPort accepts a host name or IPv4 address, with an optional port.

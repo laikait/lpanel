@@ -82,16 +82,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim and Dovecot)"
+step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim, Dovecot, Rspamd and ClamAV)"
 
 rpm -q epel-release >/dev/null 2>&1 || dnf -y -q install epel-release
 rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+# Rspamd is not in EL or EPEL; its own repository is signed with its key.
+if [ ! -f /etc/yum.repos.d/rspamd.repo ]; then
+    rpm --import https://rspamd.com/rpm/rspamd.asc
+    cat > /etc/yum.repos.d/rspamd.repo <<'REPO'
+[rspamd]
+name=Rspamd stable repository
+baseurl=https://rspamd.com/rpm-stable/centos-9/$basearch
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://rspamd.com/rpm/rspamd.asc
+REPO
+fi
 dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
     php83-php-pdo php83-php-mysqlnd php83-php-process php83-php-opcache php83-php-xml \
     mariadb-server nginx httpd mod_ssl openssl policycoreutils-python-utils procps-ng iproute logrotate \
     pdns pdns-backend-mysql bind-utils \
-    exim dovecot dovecot-pigeonhole
+    exim dovecot dovecot-pigeonhole \
+    rspamd clamd clamav-update
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -413,7 +427,13 @@ install -m 0644 "$BUNDLE/packaging/exim.conf" /etc/exim/exim.conf
 sed "s/LPANEL_HOSTNAME/$HOST/" "$BUNDLE/packaging/dovecot.conf" > /etc/dovecot/dovecot.conf
 chmod 0644 /etc/dovecot/dovecot.conf
 install -d -m 0750 -o root -g exim /etc/exim/lpanel /etc/exim/lpanel/owners /etc/exim/lpanel/local \
-    /etc/exim/lpanel/mailboxes /etc/exim/lpanel/forwards /etc/exim/lpanel/dkim
+    /etc/exim/lpanel/mailboxes /etc/exim/lpanel/forwards /etc/exim/lpanel/dkim /etc/exim/lpanel/accounts
+# The key forwarded mail's senders are rewritten with (SRS); kept when the
+# installer runs again, so bounces to addresses made earlier still decode.
+if [ ! -s /etc/exim/lpanel/srs_secret ]; then
+    (umask 027; head -c 32 /dev/urandom | base64 > /etc/exim/lpanel/srs_secret)
+fi
+chown root:exim /etc/exim/lpanel/srs_secret && chmod 0640 /etc/exim/lpanel/srs_secret
 install -d -m 0750 -o root -g dovecot /etc/dovecot/lpanel /etc/dovecot/lpanel/passwd.d
 install -d -m 0755 -o root -g root /etc/dovecot/lpanel/sieve
 # The hostname certificate, readable by Exim's group (Exim reads it as its
@@ -429,6 +449,37 @@ $PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true)
     file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
 systemctl enable -q exim dovecot && systemctl restart exim dovecot
 note "$(exim -bV | head -1 | awk '{print "Exim", $3}'), Dovecot $(dovecot --version | awk '{print $1}'): SMTP 25, 465, 587; IMAP 993, 143; POP3 995, 110"
+
+# Spam filtering: Rspamd, asked by Exim on 127.0.0.1:11333. Its own
+# settings are the installer's (packaging/rspamd); the agent writes the
+# rejection score and ClamAV's, and turns both on and off (Admin panel,
+# Email). Rspamd's unit runs it as _rspamd, which its package does not make.
+if ! id _rspamd >/dev/null 2>&1; then
+    useradd -r -d /var/lib/rspamd -s /sbin/nologin -c "Rspamd" _rspamd
+fi
+install -d -m 0750 -o _rspamd -g _rspamd /var/lib/rspamd /var/log/rspamd
+chown -R _rspamd:_rspamd /var/lib/rspamd /var/log/rspamd
+install -m 0644 "$BUNDLE"/packaging/rspamd/* /etc/rspamd/local.d/
+rspamadm configtest >/dev/null || die "Rspamd refused its configuration (rspamadm configtest)"
+# ClamAV (off until the administrator turns it on: it needs about 1.5 GB of
+# memory): clamd listens on a socket only its group opens, and Rspamd joins
+# that group. clamd waits for freshclam's first download by restarting.
+sed -i -e '0,/^#LocalSocket \/run\/clamd.scan\/clamd.sock/s//LocalSocket \/run\/clamd.scan\/clamd.sock/' \
+    -e 's/^#LocalSocketGroup virusgroup/LocalSocketGroup virusgroup/' -e 's/^#LocalSocketMode 660/LocalSocketMode 660/' /etc/clamd.d/scan.conf
+usermod -aG virusgroup _rspamd
+install -d -m 0755 /etc/systemd/system/clamd@scan.service.d
+cat > /etc/systemd/system/clamd@scan.service.d/lpanel.conf <<'UNIT'
+# LPanel: clamd cannot start before freshclam has its first signatures, so
+# it tries again every minute until it can.
+[Unit]
+StartLimitIntervalSec=0
+[Service]
+Restart=always
+RestartSec=60
+UNIT
+systemctl daemon-reload
+systemctl try-restart rspamd >/dev/null 2>&1 || true
+note "$(rspamd --version 2>/dev/null | awk '{print "Rspamd", $NF}'), ClamAV $(clamd --version 2>/dev/null | awk '{print $2}' | cut -d/ -f1): installed"
 
 # ---------------------------------------------------------------------------
 step "Services"
@@ -493,6 +544,12 @@ runuser -u lpanel -- $PHP "$PANEL/laika" dns:sync >/dev/null || note "some zones
 # Mail: every account's domains (accounts made before mail came), their
 # DKIM keys and DNS records.
 runuser -u lpanel -- $PHP "$PANEL/laika" mail:sync --all >/dev/null || note "some accounts' mail is not on the server yet; mail:settle retries it every minute"
+# Spam filtering is on from the first installation; afterwards it stays as
+# the administrator left it.
+if [ -z "$(mariadb -uroot -N lpanel -e "select value from mail_settings where name = 'spam'" 2>/dev/null)" ]; then
+    runuser -u lpanel -- $PHP "$PANEL/laika" mail:filtering --spam=on >/dev/null && note "spam filtering is on (Rspamd)" \
+        || note "spam filtering could not be turned on; see Admin panel, Email"
+fi
 
 # After a switch of stack, every account's sites are written for the new one
 # (the agent also removes the old stack's files).
