@@ -141,6 +141,18 @@ final class FakeServer
     /** The panel's staging folder, which files.* reads uploads from and writes downloads into. */
     public string $staging = '';
 
+    /** @var array<string, array<string, mixed>> account => its last ftp.apply state */
+    public array $ftp = [];
+
+    /** @var array<string, mixed>|null what ftp.settings last wrote */
+    public ?array $ftpSettings = null;
+
+    /** @var list<array<string, mixed>> FTP sessions, as ftp.info lists them (each with its account) */
+    public array $ftpSessions = [];
+
+    /** @var list<int> sessions ftp.kill ended */
+    public array $ftpKilled = [];
+
     /** @var array<string, array<string, mixed>> request id => response */
     private array $journal = [];
 
@@ -153,6 +165,16 @@ final class FakeServer
         foreach (['account.create', 'account.modify', 'account.suspend', 'account.unsuspend', 'account.terminate', 'web.apply', 'web.remove', 'php.install', 'php.remove', 'php.extensions', 'ssl.issue', 'ssl.host_issue', 'ssl.install', 'ssl.csr', 'ssl.host_install', 'db.apply', 'db.drop', 'db.rename', 'db.sso', 'db.sso_revoke', 'db.kill', 'dns.apply', 'dns.remove', 'mail.apply', 'mail.purge', 'mail.settings', 'mail.filtering', 'mail.queue_act', 'mail.sso', 'mail.sso_revoke', 'mail.sso_expire'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
+
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill'] as $op) {
+            $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
+        }
+
+        $answers['ftp.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'enabled' => true, 'installed' => true, 'running' => true, 'version' => '1.0.52',
+            'logins' => \array_sum(\array_map(static fn(array $s): int => $s['suspended'] ? 0 : \count($s['users']), $this->ftp)),
+            'settings' => $this->ftpSettings ?? [], 'sessions' => $this->ftpSessions, 'sessions_known' => true,
+        ]];
 
         foreach (['files.write', 'files.upload', 'files.mkdir', 'files.create', 'files.rename', 'files.move', 'files.copy', 'files.delete', 'files.chmod', 'files.compress', 'files.extract'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
@@ -325,6 +347,10 @@ final class FakeServer
             return $this->runMail($op, $args);
         }
 
+        if (\str_starts_with($op, 'ftp.')) {
+            return $this->runFtp($op, $args);
+        }
+
         if ($op === 'account.create') {
             if (isset($this->users[$name])) {
                 return ['status' => 'failed', 'error' => ['code' => 'exists', 'message' => 'a user named ' . $name . ' already exists']];
@@ -338,7 +364,7 @@ final class FakeServer
         if ($op === 'account.terminate') {
             $existed = isset($this->users[$name]);
             // The agent removes the sites first (BeforeRemove).
-            unset($this->users[$name], $this->sites[$name], $this->dbs[$name], $this->sso[$name], $this->mail[$name]);
+            unset($this->users[$name], $this->sites[$name], $this->dbs[$name], $this->sso[$name], $this->mail[$name], $this->ftp[$name]);
             // And the account's zones.
             $this->zones = \array_filter($this->zones, static fn(array $z): bool => $z['username'] !== $name);
 
@@ -381,6 +407,72 @@ final class FakeServer
         };
 
         return ['status' => 'done', 'result' => $this->describe($name)];
+    }
+
+    /**
+     * The FTP operations, checked the way the agent checks them.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    private function runFtp(string $op, array $args): array
+    {
+        $fail = static fn(string $code, string $message): array => ['status' => 'failed', 'error' => ['code' => $code, 'message' => $message]];
+
+        if ($op === 'ftp.settings') {
+            if (!\in_array($args['tls'] ?? '', ['optional', 'required', 'strict'], true) || !\is_int($args['passive_from'] ?? null) || !\is_int($args['max_per_ip'] ?? null)) {
+                return $fail('bad_args', 'not settings');
+            }
+
+            $this->ftpSettings = $args;
+
+            return ['status' => 'done', 'result' => ['changed' => true, 'running' => true]];
+        }
+
+        if ($op === 'ftp.kill') {
+            foreach ($this->ftpSessions as $s) {
+                if ($s['pid'] === $args['pid'] && (!isset($args['username']) || $s['account'] === $args['username'])) {
+                    $this->ftpSessions = \array_values(\array_filter($this->ftpSessions, static fn(array $o): bool => $o['pid'] !== $args['pid']));
+                    $this->ftpKilled[] = (int) $args['pid'];
+
+                    return ['status' => 'done', 'result' => ['ended' => true, 'login' => $s['login']]];
+                }
+            }
+
+            return $fail('ftp_no_session', 'no such FTP session');
+        }
+
+        $name = (string) $args['username'];
+
+        if (!isset($this->users[$name])) {
+            return $fail('no_such_account', 'there is no user named ' . $name);
+        }
+
+        foreach ($args['users'] as $u) {
+            if (\preg_match('/^\$2[aby]\$\d\d\$[.\/A-Za-z0-9]{53}$/', (string) $u['hash']) !== 1) {
+                return $fail('bad_args', 'not a bcrypt hash');
+            }
+
+            if (\preg_match('/^[a-z0-9._-]+@[a-z0-9.-]+$/', (string) $u['login']) !== 1 || \str_contains((string) $u['folder'], '..') || \str_starts_with((string) $u['folder'], '/')) {
+                return $fail('bad_args', 'not a login or folder');
+            }
+
+            foreach ($this->ftp as $other => $state) {
+                if ($other !== $name && \in_array($u['login'], \array_column($state['users'], 'login'), true)) {
+                    return $fail('ftp_taken', $u['login'] . ' is another account\'s login');
+                }
+            }
+        }
+
+        // Sessions of logins that went, or of a suspended account, end.
+        $logins = $args['suspended'] ? [] : \array_column($args['users'], 'login');
+        $before = \count($this->ftpSessions);
+        $this->ftpSessions = \array_values(\array_filter($this->ftpSessions, static fn(array $s): bool => $s['account'] !== $name || \in_array($s['login'], $logins, true)));
+        $ended = $before - \count($this->ftpSessions);
+        $this->ftp[$name] = $args;
+
+        return ['status' => 'done', 'result' => ['users' => \count($logins), 'ended' => $ended]];
     }
 
     /**

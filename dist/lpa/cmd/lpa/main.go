@@ -29,6 +29,7 @@ import (
 	"lpa/internal/config"
 	"lpa/internal/dns"
 	"lpa/internal/files"
+	"lpa/internal/ftp"
 	"lpa/internal/journal"
 	"lpa/internal/mail"
 	"lpa/internal/mysql"
@@ -130,9 +131,15 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	dbs.Defaults()
 	mails := &mail.Manager{Enabled: cfg.Mail == "on", Run: sysexec.Exec{}, Owner: acc.Owner, Log: log, SELinux: acc.SELinux, Certs: store.Files, Resolver: cfg.DNS.Resolver}
 	mails.Defaults()
-	tls.AfterHost = mails.HostTLS
-	// A terminated account's sites, then its databases, its zones and its
-	// mail, go before its user.
+	ftps := &ftp.Manager{Enabled: cfg.FTP == "on", Run: sysexec.Exec{}, Owner: acc.Owner, Log: log}
+	ftps.Defaults()
+	// The hostname certificate serves mail and FTP too; each server on its
+	// own, so one that cannot take it does not keep the other from it.
+	tls.AfterHost = func(ctx context.Context) error {
+		return errors.Join(mails.HostTLS(ctx), ftps.HostTLS(ctx))
+	}
+	// A terminated account's sites, then its databases, its zones, its
+	// mail and its FTP logins, go before its user.
 	acc.BeforeRemove = func(ctx context.Context, username string) error {
 		if err := sites.RemoveFor(ctx, username); err != nil {
 			return err
@@ -143,7 +150,10 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 		if err := zones.RemoveFor(ctx, username); err != nil {
 			return err
 		}
-		return mails.RemoveFor(ctx, username)
+		if err := mails.RemoveFor(ctx, username); err != nil {
+			return err
+		}
+		return ftps.RemoveFor(ctx, username)
 	}
 	ops.Accounts(reg, acc)
 	ops.Web(reg, sites)
@@ -151,6 +161,7 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	ops.DB(reg, dbs)
 	ops.DNS(reg, zones)
 	ops.Mail(reg, mails)
+	ops.FTP(reg, ftps)
 	self, err := os.Executable()
 	if err != nil {
 		self = "/usr/local/lpa/bin/lpa"
@@ -163,6 +174,9 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 		// stopped, or before mail was installed.
 		if err := mails.HostTLS(context.Background()); err != nil {
 			log.Warn("the mail servers did not take the hostname certificate", "err", err)
+		}
+		if err := ftps.HostTLS(context.Background()); err != nil {
+			log.Warn("Pure-FTPd did not take the hostname certificate", "err", err)
 		}
 	}
 	return reg

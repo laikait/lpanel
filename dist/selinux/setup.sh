@@ -54,3 +54,4 @@ done
 mail="$homes/[^/]+/mail(/.*)?"
 semanage fcontext "${noreload[@]}" -a -t mail_home_rw_t "$mail" 2>/dev/null \
     || semanage fcontext "${noreload[@]}" -m -t mail_home_rw_t "$mail"
+

@@ -810,3 +810,20 @@ a.du-name:hover { color: var(--accent-text); text-decoration: underline; }
 }
 .fm[data-drop-upload] { position: relative; }
 .fm.is-dropping::after { content: attr(data-drop-text); position: absolute; inset: 0; z-index: 30; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: var(--radius); background: color-mix(in srgb, var(--accent-soft) 85%, transparent); color: var(--accent-text); font-weight: 600; font-size: 15px; pointer-events: none; }
+
+/* FTP (Files module): a login is a name, "@", and one of the account's domains. */
+.ftp-login-row { display: flex; align-items: center; gap: 6px; }
+.ftp-login-row .input:first-child { flex: 1 1 40%; min-width: 0; }
+.ftp-login-row select { flex: 1 1 60%; min-width: 0; }
+.ftp-at { color: var(--text-3); font-weight: 600; }
+.ftp-login { overflow-wrap: break-word; }
+.ftp-file { max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ftp-range { display: flex; align-items: center; gap: 8px; }
+.ftp-range .input { flex: 1; min-width: 0; }
+.ftp-limits { gap: 0 14px; }
+@media (max-width: 560px) {
+    .ftp-login-row { flex-wrap: wrap; }
+    .ftp-login-row .input:first-child { flex-basis: calc(100% - 26px); }
+    .ftp-login-row select { flex-basis: 100%; }
+    .ftp-file { max-width: 160px; }
+}

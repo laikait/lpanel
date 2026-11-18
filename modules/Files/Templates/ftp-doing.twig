@@ -1,0 +1,9 @@
+{# What a session is doing: s is one of ftp.info's sessions. #}
+{% set minutes = (s.seconds // 60) %}
+{% if s.state == 'DL' or s.state == 'UL' %}
+    <span class="badge info">{{ (s.state == 'DL' ? 'Files.ftp_state_dl' : 'Files.ftp_state_ul')|local }}{% if s.percent > 0 %} · {{ s.percent }}%{% endif %}</span>
+    {% if s.file %}<div class="domain-sub mono ftp-file">{{ s.file }}</div>{% endif %}
+{% else %}
+    <span class="badge plain">{{ 'Files.ftp_state_idle'|local }}</span>
+{% endif %}
+<div class="domain-sub">{{ minutes > 0 ? 'Files.ftp_for_minutes'|local({n: minutes}) : 'Files.ftp_for_seconds'|local({n: s.seconds}) }}</div>

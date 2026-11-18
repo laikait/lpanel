@@ -105,7 +105,8 @@ dnf -y -q install \
     mariadb-server nginx httpd mod_ssl openssl policycoreutils-python-utils procps-ng iproute logrotate \
     pdns pdns-backend-mysql bind-utils \
     exim dovecot dovecot-pigeonhole \
-    rspamd clamd clamav-update
+    rspamd clamd clamav-update \
+    pure-ftpd
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -541,6 +542,24 @@ fi
 note "served on the User panel's port at /webmail/ (mailbox users sign in with their address)"
 
 # ---------------------------------------------------------------------------
+step "FTP (Pure-FTPd)"
+# Port 21 is Pure-FTPd's; another FTP server would hold it.
+for ftpd in vsftpd proftpd; do
+    if systemctl is-enabled --quiet "$ftpd" 2>/dev/null || systemctl is-active --quiet "$ftpd" 2>/dev/null; then
+        systemctl disable -q --now "$ftpd" && note "$ftpd stopped: Pure-FTPd serves FTP now"
+    fi
+done
+# Accounts' FTP logins are data the agent writes here (users.d/<account>,
+# joined and indexed for Pure-FTPd); pure-ftpd.conf is the agent's too, so
+# it is written once the agent runs (ftp:settings --apply, below).
+install -d -m 0700 -o root -g root /etc/pure-ftpd/lpanel /etc/pure-ftpd/lpanel/users.d /etc/pki/pure-ftpd
+$PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
+    $c["ftp"] = "on";
+    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+systemctl enable -q pure-ftpd
+note "Pure-FTPd $(rpm -q --qf '%{VERSION}' pure-ftpd): port 21 and passive ports 30000-30100, logins over TLS"
+
+# ---------------------------------------------------------------------------
 step "Services"
 
 for unit in lpa.service lpanel-authd.service lpanel-authd.socket lpanel-php-fpm.service \
@@ -555,7 +574,7 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     # booleans customers' sites need. Installed in permissive mode too, so
     # switching to enforcing later needs nothing more.
     bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
-    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma /usr/local/lpanel-webmail /var/lib/lpanel-webmail /etc/exim /etc/dovecot /etc/pki/lpanel-mail
+    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma /usr/local/lpanel-webmail /var/lib/lpanel-webmail /etc/exim /etc/dovecot /etc/pki/lpanel-mail /etc/pure-ftpd /etc/pki/pure-ftpd
     install -d -m 0755 /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
     for d in /etc/nginx/lpanel /var/log/nginx/lpanel /etc/nginx/nginx.conf; do
         if [ -e "$d" ]; then restorecon -R "$d"; fi
@@ -572,9 +591,10 @@ fi
 if systemctl is-active --quiet firewalld; then
     firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-service=http --add-service=https --add-service=dns \
         --add-service=smtp --add-service=smtps --add-service=smtp-submission \
-        --add-service=imap --add-service=imaps --add-service=pop3 --add-service=pop3s
+        --add-service=imap --add-service=imaps --add-service=pop3 --add-service=pop3s \
+        --add-service=ftp --add-port=30000-30100/tcp
     firewall-cmd -q --reload
-    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS), mail (25, 465, 587, 143, 993, 110, 995) open"
+    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS), mail (25, 465, 587, 143, 993, 110, 995), FTP (21, 30000-30100) open"
 fi
 
 step "Database tables"
@@ -603,6 +623,11 @@ runuser -u lpanel -- $PHP "$PANEL/laika" dns:sync >/dev/null || note "some zones
 # Mail: every account's domains (accounts made before mail came), their
 # DKIM keys and DNS records.
 runuser -u lpanel -- $PHP "$PANEL/laika" mail:sync --all >/dev/null || note "some accounts' mail is not on the server yet; mail:settle retries it every minute"
+# FTP: pure-ftpd.conf as the panel's settings say (the defaults the first
+# time), the hostname certificate, then every account's logins again.
+runuser -u lpanel -- $PHP "$PANEL/laika" ftp:settings --apply >/dev/null && note "Pure-FTPd runs with LPanel's settings" \
+    || note "FAILED: Pure-FTPd did not start; see Admin panel, FTP, and journalctl -u pure-ftpd"
+runuser -u lpanel -- $PHP "$PANEL/laika" ftp:sync --all >/dev/null || note "some accounts' FTP logins are not on the server yet; ftp:settle retries them every minute"
 # Sites whose state changed with this release (such as mail clients' setup
 # and webmail names) are written again; the rest are left alone.
 runuser -u lpanel -- $PHP "$PANEL/laika" web:sync --all --changed >/dev/null || note "some sites are not up to date yet; web:settle retries them every minute"

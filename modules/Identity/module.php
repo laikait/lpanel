@@ -93,7 +93,8 @@ return static function (ModuleContext $module): void {
         $access->capability('api.tokens', 'Make API tokens that act as this login.');
 
         // Capabilities named here are declared by the modules that check them
-        // (Audit, Agent, Packages, Accounts, Resellers, Subusers). "*.all" sees
+        // (Audit, Agent, Packages, Accounts, Resellers, Subusers, and the
+        // server.* of Web, Databases, Dns, Mail and Files). "*.all" sees
         // every reseller's things; without it a login sees only what it owns.
         // Narrowed further by filters on authorization.decision: a reseller's
         // ACL (Resellers), a package's features and a sub-user's grants
@@ -101,7 +102,7 @@ return static function (ModuleContext $module): void {
         $hosting = ['accounts.manage', 'accounts.create', 'accounts.modify', 'accounts.suspend', 'accounts.terminate', 'accounts.login_as', 'packages.manage'];
         $access->role('root', ['*']);
         $access->role('admin', [
-            'admin.panel', 'account.self', 'api.tokens', 'audit.view', 'audit.own', 'system.view', 'server.php', 'server.ssl', 'server.databases', 'server.dns', 'dns.own', 'server.mail',
+            'admin.panel', 'account.self', 'api.tokens', 'audit.view', 'audit.own', 'system.view', 'server.php', 'server.ssl', 'server.databases', 'server.dns', 'dns.own', 'server.mail', 'server.ftp',
             ...$hosting, 'packages.all', 'accounts.all', 'resellers.manage', 'resellers.login_as',
         ]);
         $access->role('reseller', ['admin.panel', 'account.self', 'api.tokens', 'audit.own', 'dns.own', ...$hosting]);

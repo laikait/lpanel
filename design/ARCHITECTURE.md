@@ -207,6 +207,16 @@ and journalled): the panel stages uploads and saved files in
 (no links, one hard link, not root's) and passes the worker the open
 descriptor. Downloads come back the same way into a file the panel made.
 
+FTP (M7b) is Pure-FTPd with virtual users only: each login (`name@domain`)
+works as its account's Unix user, shut in a folder of the account's home, so
+the same permissions and quota hold as for its PHP and file manager. The
+panel sends an account's whole list of logins (`ftp.apply`, bcrypt hashes
+only); the agent keeps a file per account, joins them and has `pure-pw`
+index them, and Pure-FTPd reads that index at each login, so nothing is
+reloaded. `pure-ftpd.conf` is written whole by the agent from the Admin
+panel's settings (TLS for logins by default, passive ports, client limits),
+and Pure-FTPd serves the hostname certificate, copied whenever it changes.
+
 Exim finds a domain's files with `dsearch`, which answers only with a name
 that is in the folder, so a name from a message never becomes part of a
 path. Exim hands local mail to Dovecot over LMTP and checks logins through
@@ -322,6 +332,9 @@ user, not from SELinux.
 | `/etc/lpanel/nginx/` | the panel's own nginx (`lpanel-nginx.service`, ports 7443 and 7444, and 127.0.0.1:7449 for mail clients' setup) |
 | `/etc/lpanel/authd.json`, `/etc/pam.d/lpanel` | root sign-in: who may be checked, and the PAM stack used |
 | `/var/lib/lpanel/`, `/var/log/lpanel/` | panel data and logs |
+| `/etc/pure-ftpd/pure-ftpd.conf` | Pure-FTPd's configuration, written whole by lpa (`ftp.settings`) |
+| `/etc/pure-ftpd/lpanel/` | FTP logins (lpa; 0700 root): `users.d/<account>` (login, bcrypt hash, uid, folder), the joined `passwd`, its index `pureftpd.pdb`, `settings.json` |
+| `/etc/pki/pure-ftpd/pure-ftpd.pem` | the hostname's key and certificate for FTPS (0600 root), refreshed by lpa when it changes |
 | `/var/lib/lpanel/files/` | the file manager's staging folder (0700 lpanel): uploads (also PHP's upload folder), saved files and downloads on their way to and from the agent, under 64 hex digits; `files:sweep` removes what nobody collected |
 | `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs (`lpanel_agent_exec_t`, `lpanel_authd_exec_t`) |
 | `/etc/lpa/lpa.json`, `/etc/lpa/panel.pub` | agent config, and the panel's public key |

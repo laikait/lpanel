@@ -2,27 +2,40 @@
 
 declare(strict_types=1);
 
+use App\Engine\Auth\AccessCollector;
 use App\Engine\Cli\CommandCollector;
 use App\Engine\Config\Env;
 use App\Engine\Container\ServiceRegistrar;
+use App\Engine\Filter\FilterEngine;
+use App\Engine\Hook\HookEngine;
 use App\Engine\Module\ModuleContext;
 use App\Engine\Routing\RouteCollector;
 use App\Engine\Scheduler\ScheduleCollector;
 use App\Modules\Files\Commands\FileCommands;
+use App\Modules\Files\Commands\FtpCommands;
 use App\Modules\Files\FileManager;
+use App\Modules\Files\Ftp\FtpActions;
+use App\Modules\Files\Ftp\FtpListeners;
+use App\Modules\Files\Ftp\FtpSettings;
+use App\Modules\Files\Ftp\FtpSync;
+use App\Modules\Files\Ftp\FtpUsers;
 use App\Modules\Files\Http\FileApi;
 use App\Modules\Files\Http\FilePages;
+use App\Modules\Files\Http\FtpApi;
+use App\Modules\Files\Http\FtpPages;
 
 /**
  * Files: the file manager for each account's home (browse, edit, upload,
- * download, move, copy, delete, permissions, archives) and the disk usage
- * explorer. The agent does every operation as the account's own user.
+ * download, move, copy, delete, permissions, archives), the disk usage
+ * explorer, and FTP logins on Pure-FTPd, each shut in a folder of the home.
+ * The agent does every file operation as the account's own user, and FTP
+ * logins work as it too.
  */
 return static function (ModuleContext $module): void {
     $module
         ->name('Files')
         ->version('0.1.0')
-        ->description('The file manager and disk usage explorer for each account.');
+        ->description('The file manager, disk usage explorer and FTP logins for each account.');
 
     $module->requires('Panel', '^0.1')
         ->requires('Audit', '^0.1')
@@ -30,7 +43,8 @@ return static function (ModuleContext $module): void {
         ->requires('Agent', '^0.1')
         ->requires('Packages', '^0.1')
         ->requires('Accounts', '^0.1')
-        ->requires('Subusers', '^0.1');
+        ->requires('Subusers', '^0.1')
+        ->requires('Web', '^0.1');
 
     $module->config([
         // Uploads, saved files and downloads on their way to and from the
@@ -43,6 +57,18 @@ return static function (ModuleContext $module): void {
         $services->bind(FilePages::class);
         $services->bind(FileApi::class);
         $services->bind(FileCommands::class);
+        $services->singleton(FtpUsers::class);
+        $services->singleton(FtpSync::class);
+        $services->singleton(FtpSettings::class);
+        $services->singleton(FtpActions::class);
+        $services->singleton(FtpListeners::class);
+        $services->bind(FtpPages::class);
+        $services->bind(FtpApi::class);
+        $services->bind(FtpCommands::class);
+    });
+
+    $module->access(static function (AccessCollector $access): void {
+        $access->capability('server.ftp', 'See Pure-FTPd\'s state and every FTP session, end sessions, and change the server\'s FTP settings.');
     });
 
     $module->routes(static function (RouteCollector $routes): void {
@@ -78,6 +104,42 @@ return static function (ModuleContext $module): void {
                 $routes->post('/' . $action, [FileApi::class, $action])->name('.' . $action)->where('username', $user)->meta($modify);
             }
         }, name: 'api.account_files', meta: ['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '240/1m']);
+
+        $id = '\d+';
+
+        $routes->group('/panel/ftp', static function (RouteCollector $routes) use ($id): void {
+            $routes->get('', [FtpPages::class, 'index'])->name('');
+            $routes->post('', [FtpPages::class, 'store'])->name('.store');
+            $routes->post('/{id}/password', [FtpPages::class, 'password'])->name('.password')->where('id', $id);
+            $routes->post('/{id}/folder', [FtpPages::class, 'folder'])->name('.folder')->where('id', $id);
+            $routes->post('/{id}/delete', [FtpPages::class, 'delete'])->name('.delete')->where('id', $id);
+            $routes->post('/sessions/{pid}/kill', [FtpPages::class, 'kill'])->name('.kill')->where('pid', $id);
+        }, name: 'user.ftp', meta: ['can' => 'feature.ftp']);
+
+        $routes->group('/admin/ftp', static function (RouteCollector $routes) use ($id): void {
+            $routes->get('', [FtpPages::class, 'admin'])->name('');
+            $routes->post('/settings', [FtpPages::class, 'saveSettings'])->name('.settings');
+            $routes->post('/sessions/{pid}/kill', [FtpPages::class, 'adminKill'])->name('.kill')->where('pid', $id);
+        }, name: 'admin.ftp', meta: ['can' => 'server.ftp']);
+
+        $routes->group('/admin/api/v1/ftp', static function (RouteCollector $routes) use ($id): void {
+            $routes->get('', [FtpApi::class, 'server'])->name('');
+            $routes->put('/settings', [FtpApi::class, 'saveSettings'])->name('.settings');
+            $routes->delete('/sessions/{pid}', [FtpApi::class, 'serverKill'])->name('.kill')->where('pid', $id);
+        }, name: 'api.ftp', meta: ['can' => 'server.ftp', 'csrf' => false, 'rate_limit' => '60/1m']);
+
+        // Changing an account's FTP logins is changing the account.
+        $routes->group('/admin/api/v1/accounts/{username}/ftp', static function (RouteCollector $routes) use ($id): void {
+            $user = '[a-z][a-z0-9]{1,15}';
+            $login = '[a-z0-9._%@-]{3,120}';
+            $modify = ['can' => 'accounts.modify'];
+            $routes->get('', [FtpApi::class, 'index'])->name('')->where('username', $user);
+            $routes->post('', [FtpApi::class, 'store'])->name('.store')->where('username', $user)->meta($modify);
+            $routes->get('/sessions', [FtpApi::class, 'sessions'])->name('.sessions')->where('username', $user);
+            $routes->delete('/sessions/{pid}', [FtpApi::class, 'kill'])->name('.kill')->where('username', $user)->where('pid', $id)->meta($modify);
+            $routes->put('/{login}', [FtpApi::class, 'update'])->name('.update')->where('username', $user)->where('login', $login)->meta($modify);
+            $routes->delete('/{login}', [FtpApi::class, 'destroy'])->name('.destroy')->where('username', $user)->where('login', $login)->meta($modify);
+        }, name: 'api.account_ftp', meta: ['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '120/1m']);
     });
 
     $module->commands(static function (CommandCollector $commands): void {
@@ -152,15 +214,66 @@ return static function (ModuleContext $module): void {
             ->argument('path', 'The folder, from the home (default: the home).', required: false, default: '');
         $commands->add('files:sweep', [FileCommands::class, 'sweep'])
             ->describe('Remove staged uploads and downloads nobody collected.');
+
+        $commands->add('ftp:list', [FtpCommands::class, 'list'])
+            ->describe('List an account\'s FTP logins and their folders.')
+            ->argument('username', $account);
+        $commands->add('ftp:create', [FtpCommands::class, 'create'])
+            ->describe('Make an FTP login; its password is read from standard input.')
+            ->argument('username', $account)
+            ->argument('login', 'A name and one of the account\'s domains, such as bob@example.com.')
+            ->option('folder', 'The folder it is shut in, from the home (default: public_html; / for the whole home).');
+        $commands->add('ftp:password', [FtpCommands::class, 'password'])
+            ->describe('Change an FTP login\'s password, read from standard input.')
+            ->argument('username', $account)
+            ->argument('login', 'The login.');
+        $commands->add('ftp:folder', [FtpCommands::class, 'folder'])
+            ->describe('Change the folder an FTP login is shut in (made when missing).')
+            ->argument('username', $account)
+            ->argument('login', 'The login.')
+            ->argument('folder', 'From the home; / for the whole home.');
+        $commands->add('ftp:delete', [FtpCommands::class, 'delete'])
+            ->describe('Remove an FTP login (its files stay).')
+            ->argument('username', $account)
+            ->argument('login', 'The login.');
+        $commands->add('ftp:sessions', [FtpCommands::class, 'sessions'])
+            ->describe('List the FTP sessions open now.')
+            ->argument('username', 'Only this account\'s.', required: false);
+        $commands->add('ftp:kill', [FtpCommands::class, 'kill'])
+            ->describe('End an FTP session.')
+            ->argument('pid', 'Its process id (ftp:sessions lists them).');
+        $commands->add('ftp:settings', [FtpCommands::class, 'settings'])
+            ->describe('Show the server\'s FTP settings, or change them (Pure-FTPd restarts).')
+            ->option('tls', 'optional (plain FTP too), required (logins over TLS) or strict (logins and transfers over TLS).')
+            ->option('passive-from', 'First passive port.')
+            ->option('passive-to', 'Last passive port.')
+            ->option('passive-ip', 'The address given out for passive transfers behind NAT ("" for none).')
+            ->option('max-clients', 'Clients at once.')
+            ->option('max-per-ip', 'Clients at once from one address.')
+            ->flag('apply', 'Send the settings to the server again, as the panel has them.');
+        $commands->add('ftp:settle', [FtpCommands::class, 'settle'])
+            ->describe('Send FTP changes the agent has not answered yet.');
+        $commands->add('ftp:sync', [FtpCommands::class, 'sync'])
+            ->describe('Send an account\'s FTP logins to the server again, as the panel has them.')
+            ->argument('username', $account, required: false)
+            ->flag('all', 'Every account.');
     });
 
     $module->schedules(static function (ScheduleCollector $schedules): void {
         $schedules->command('files:sweep')->hourly()->withoutOverlapping(600);
+        $schedules->command('ftp:settle')->everyMinute()->withoutOverlapping(600);
     });
 
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'files', 'label' => 'Files.title', 'icon' => 'folder', 'route' => 'user.files', 'can' => 'feature.file_manager', 'order' => 18];
+        $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'ftp', 'label' => 'Files.ftp_title', 'icon' => 'upload', 'route' => 'user.ftp', 'can' => 'feature.ftp', 'order' => 19];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'ftp', 'label' => 'Files.ftp_title', 'icon' => 'upload', 'route' => 'admin.ftp', 'can' => 'server.ftp', 'order' => 47];
 
         return $items;
+    });
+
+    $module->onBoot(static function (FtpListeners $listeners, HookEngine $hooks, FilterEngine $filters): void {
+        $hooks->add('accounts.changed', [$listeners, 'accountChanged'], 20, 'Files', 2);
+        $filters->add('accounts.show', [$listeners, 'accountShow'], 25, 'Files', 3);
     });
 };

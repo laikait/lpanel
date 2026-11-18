@@ -65,6 +65,7 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `internal/web` | accounts' sites: an Apache file and PHP-FPM pools per account, through the staged pipeline below |
 | `internal/certs` | certificates: the store, checks of key and chain, the ACME client (`golang.org/x/crypto/acme`) and the hostname's certificate |
 | `internal/files` | the file manager: a worker as the account's user, inside its home (`os.Root`), and the staging folder |
+| `internal/ftp` | FTP logins on Pure-FTPd (PureDB), its configuration, its certificate and its sessions |
 | `internal/sysexec` | runs `useradd`, `usermod`, `userdel`, `pkill`, `restorecon`, `httpd`, `systemctl` and Remi's `php-fpm` by absolute path, no shell, fixed environment |
 | `packaging/` | the systemd unit and the default configuration |
 
@@ -134,6 +135,10 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `files.chmod` | change | `{username, paths, mode}`: the nine permission bits, not recursively |
 | `files.compress` | change | `{username, paths, to}`: paths in one folder into a new `.zip`, `.tar.gz` or `.tar` |
 | `files.extract` | change | `{username, path, to}`: an archive into a folder; what is there already, links, and names that would climb out are left out |
+| `ftp.apply` | change | `{username, users, suspended}`: an account's whole list of FTP logins (`login` name@domain, bcrypt `hash`, `folder` from the home); sessions of logins that went or changed end |
+| `ftp.settings` | change | `{tls, passive_from, passive_to, passive_ip, max_clients, max_per_ip}`: `pure-ftpd.conf`, whole; Pure-FTPd restarts, and the old file comes back if it will not start |
+| `ftp.info` | read-only | Pure-FTPd's state and version, the logins, the settings applied and every session with its account |
+| `ftp.kill` | change | `{pid, username?}`: end one session listed by `pure-ftpwho` (with `username`, only one of that account's) |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -446,3 +451,31 @@ what is moved into one of those folders is relabelled. The error codes are
 `files_outside`, `files_type`, `files_too_big`, `files_binary`,
 `files_changed`, `files_protected`, `files_archive`, `files_staged` and
 `files_into`.
+
+### FTP (`ftp.*`)
+
+M7b's FTP logins are Pure-FTPd virtual users (`lpa.json` `"ftp": "on"`,
+which the installer writes). Each works as its account's Unix user, shut in
+a folder of the home (`/./` in Pure-FTPd's file), so the account's
+permissions and disk quota hold as for its PHP. The agent keeps one file
+per account in `/etc/pure-ftpd/lpanel/users.d/<account>` (0600 root: the
+logins, their bcrypt hashes and folders), joins them into
+`/etc/pure-ftpd/lpanel/passwd` and has `pure-pw mkdb` index it into
+`pureftpd.pdb`, which Pure-FTPd reads at each login: nothing reloads, and
+sessions of other logins go on. A login named in another account's file is
+refused (`ftp_taken`); a folder is made when missing, as the account's,
+through an `os.Root` at the home (a link out is refused). A suspended
+account's file is empty. The sessions of logins that went, or whose password
+or folder changed, end at once; `RemoveFor` (the last of the terminate
+chain) removes the file and ends the account's sessions.
+
+`pure-ftpd.conf` is the agent's (`ftp.settings`): everyone shut in their
+folder, PureDB's logins alone (no anonymous, no PAM, no system users), uid
+1000 and up, files 644 and folders 755, the passive ports (and the address
+given out behind NAT), the client limits, and TLS: `optional` (1),
+`required` (2: logins only over TLS) or `strict` (3). The hostname
+certificate is copied, key first, into `/etc/pki/pure-ftpd/pure-ftpd.pem`
+(0600) whenever it changes (`certs.Manager.AfterHost`), and Pure-FTPd
+restarts, since it reads it at start. Sessions come from `pure-ftpwho -s`;
+`ftp.kill` signals only a process in that list. The error codes are
+`ftp_off`, `ftp_taken` and `ftp_no_session`.

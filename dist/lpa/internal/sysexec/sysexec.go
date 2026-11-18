@@ -46,6 +46,10 @@ var Tools = map[string]string{
 	// Starts a slow job (delivering queued mail) in the background, as a
 	// transient systemd unit.
 	"systemd-run": "/usr/bin/systemd-run",
+	// Pure-FTPd: builds its indexed users file from the one the agent
+	// writes, and lists the sessions open now.
+	"pure-pw":     "/usr/bin/pure-pw",
+	"pure-ftpwho": "/usr/sbin/pure-ftpwho",
 }
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"

@@ -111,6 +111,11 @@ limited by these:
 | T74 | A staged file used to make the agent read a file it should not (a link or hard link to `/etc/shadow` put in the staging folder) | The staging folder is the panel's alone; the agent opens a staged file by its 64-hex name only, without following a link, and takes only a plain file with one link that root does not own. The worker gets the open descriptor, never the folder | Go `TestStagedFilesAreTakenOnlyAsThePanelMadeThem` |
 | T75 | An archive writing outside its folder (zip-slip, a link in a tar followed by a file through it), filling the disk, or carrying setuid files | Entry names with `..` are left out; links and devices are never made, so nothing can lead through them; unpacking stops at 8 GB and 200,000 entries, and the account's quota holds anyway; no entry keeps setuid, setgid or sticky bits | Go `TestArchivesCannotWriteOutsideTheirFolder`, e2e "a zip-slip entry is left out" |
 | T76 | A save over someone else's change, or a half-written file after a crash | A save names the SHA-256 the file had when opened and is refused if it changed; it writes a temporary file beside the target and renames it over | Go `TestListingReadingAndSaving`, PHP `test_the_editor_saves_through_staging_and_refuses_a_stale_save` |
+| T77 | An FTP login used to reach another account's or the system's files, or to log in as a system user or anonymously | Every login is a Pure-FTPd virtual user that works as its own account's uid (1000 and up), shut in a folder of that account's home; PAM, system users and anonymous logins are off in the configuration the agent writes whole. The agent refuses a login another account has (`ftp_taken`) and makes a missing folder through an `os.Root` at the home | Go `TestApplyWritesLoginsShutInTheirFolders`, `TestALoginOfAnotherAccountIsRefused`, `TestAFolderThroughALinkOutOfTheHomeIsRefused`; e2e "a login sees only its folder", "system users and anonymous are refused" |
+| T78 | FTP passwords read on the wire, or kept where they could be read | TLS is required for logins by default (FTPS with the hostname's certificate); `strict` requires it for transfers too. Only a bcrypt hash is kept, in the panel's table and in root's 0600 files; passwords come over HTTPS or standard input, never in arguments or the audit log | PHP `test_the_owner_makes_a_login_shut_in_a_folder`, e2e "plain FTP … refused", "never a password" |
+| T79 | A login that was removed, re-passworded or moved to another folder, or a suspended account, still working through an open session | A change ends that login's sessions at once (and every session of a suspended account); a suspended account's logins are taken out of Pure-FTPd's file | Go `TestChangesAndSuspensionEndSessions`, e2e "a suspended account's logins are shut out" |
+| T80 | Ending a process that is not an FTP session, or another account's session, through the panel | `ftp.kill` signals only a pid that `pure-ftpwho` lists, and with an account only one of that account's logins | Go `TestKillOnlyEndsAListedSessionOfTheAccount`, PHP `test_sessions_are_listed_and_ended_per_account` |
+| T81 | Text in a login, hash or folder breaking Pure-FTPd's file (a colon or newline adding a field or a user) | The panel and the agent take only a fixed login pattern, bcrypt hashes and folders without colons, backslashes, control characters or `..` | Go `TestApplyRefusesBadInput`, PHP `test_the_owner_makes_a_login_shut_in_a_folder` |
 | T64 | Deleting mail outside the account's home through a link the owner made in it | Mail is deleted (`mail.purge`) through an `os.Root` at the home, which no link can lead out of, and only once the mailbox is no longer set up | Go `TestPurgeDoesNotFollowALinkOutOfTheHome`, `TestPurgeDeletesOnlyMailNoLongerSetUp` |
 | T49 | A visitor claiming HTTPS to Apache behind nginx | nginx always sets `X-Forwarded-Proto` to its own `$scheme`; Apache turns it into `HTTPS=on` and listens only on 127.0.0.1 | Go `TestHybridServesHTTPSInFront`, e2e install "PHP knows the visit came over HTTPS" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
@@ -162,10 +167,23 @@ These are tracked, not forgotten. Each names the milestone that closes it.
   so AutoSSL leaves wildcard aliases out. DNS-01 through the local PowerDNS
   adds them (M5).
 
-- **Mail and FTP do not use the hostname certificate yet.** It is kept where
-  they will read it (`/etc/lpanel/tls/`) and serves the panel's ports now.
-  Exim, Dovecot and Pure-FTPd take it, with a certificate per mail domain by
-  SNI, when they arrive (M6, M7).
+- **An FTP login's folder is not a hard boundary within its own account.**
+  EL's Pure-FTPd is built with a virtual chroot, which follows a link out of
+  the folder: a link the account itself made (from its PHP or the file
+  manager) can lead a folder-limited login to the rest of the home, or to
+  what the account's uid may read elsewhere. It never gives more than the
+  account's own uid has; FTP itself cannot make links. Kernel-level link
+  protection for homes comes with account isolation hardening (M9).
+- **Pure-FTPd runs unconfined.** EL's SELinux policy has no rule for it
+  (its binary is `bin_t`), so systemd starts it as `unconfined_service_t`,
+  as it does Rspamd. Sessions still drop to the account's uid (privilege
+  separation), and the kernel's permissions keep accounts apart. A confined
+  domain needs testing on an enforcing machine (`tests/vm/run.sh`).
+- **No FTP brute-force blocking yet**, and transfers in the default
+  `required` mode may be plain (logins are always encrypted). Blocking comes
+  with M9; administrators can choose `strict`.
+- **FTP transfers do not count towards bandwidth yet.** Pure-FTPd logs them
+  (`/var/log/pureftpd.log`); metering them with web traffic is M10's.
 
 - **The panel's nginx and the sites' nginx share the `nginx` user.** With
   nginx serving sites (alone, or in front of Apache as a member of its

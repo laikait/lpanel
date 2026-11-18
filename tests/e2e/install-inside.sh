@@ -458,7 +458,9 @@ t_left_out()  { lpanel ssl:list shop1 > /tmp/ssl.list && grep -q "left out shop-
 t_backoff()   { lpanel ssl:list shop3 > /tmp/ssl.list && cat /tmp/ssl.list >&2 && grep -q "failed, next try" /tmp/ssl.list && local n; n=$(mariadb -uroot -N lpanel -e "select count(*) from ssl_orders o join domains d on d.id = o.domain_id where d.name = 'three.example.test'") \
                 && lpanel ssl:autossl --wait >/dev/null && [ "$(mariadb -uroot -N lpanel -e "select count(*) from ssl_orders o join domains d on d.id = o.domain_id where d.name = 'three.example.test'")" = "$n" ] \
                 && [ "$(ssl_row three.example.test failures)" = 1 ]; }
-t_hostname()  { issuer e2e-panel.test 7443 | grep -q "Pebble Intermediate" && lpanel ssl:hostname > /tmp/ssl.host && grep -q "names     e2e-panel.test" /tmp/ssl.host; }
+t_hostname()  { issuer e2e-panel.test 7443 | grep -q "Pebble Intermediate" && lpanel ssl:hostname > /tmp/ssl.host && grep -q "names     e2e-panel.test" /tmp/ssl.host && return
+                # Diagnostics for a rare failure: why the hostname's issue failed.
+                cat /tmp/ssl.host >&2; mariadb -uroot -N lpanel -e "select concat(action, ':', outcome, ' ', coalesce(details, '')) from audit_log where action like 'ssl.host%' order by id" >&2; return 1; }
 t_default443() { case "$WEB" in
                      apache) [ "$(sget nobody.example.test /)" = "404 " ] && issuer nobody.example.test | grep -q "Pebble Intermediate" ;;
                      *) ! curl -sk -o /dev/null --resolve nobody.example.test:443:127.0.0.1 https://nobody.example.test/ ;;
@@ -1165,6 +1167,79 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     check "a file moved into public_html gets the web's label" t_files_label
 fi
 check "file changes are in the audit log, never their contents" t_files_audit
+
+echo "== FTP (Pure-FTPd)"
+FTPU=dev@seven.example.test
+# FTPS (explicit TLS): curl's --ssl-reqd; the panel's certificate is Pebble's, so -k.
+ftps() { curl -s --ssl-reqd -k --max-time 20 "$@"; }
+fp()   { echo | openssl s_client ${2:-} -connect "127.0.0.1:$1" 2>/dev/null | openssl x509 -noout -fingerprint -sha256; }
+t_ftp_running()  { systemctl is-active --quiet pure-ftpd && ss -ltn | grep -q ':21 ' \
+                   && grep -Eq '^TLS +2$' /etc/pure-ftpd/pure-ftpd.conf && grep -Eq '^NoAnonymous +yes$' /etc/pure-ftpd/pure-ftpd.conf \
+                   && [ "$(stat -c '%a %U' /etc/pure-ftpd/lpanel)" = "700 root" ] && [ "$(stat -c '%a %U' /etc/pki/pure-ftpd/pure-ftpd.pem)" = "600 root" ]; }
+t_ftp_cert()     { local a b; a=$(fp 21 '-starttls ftp'); b=$(fp 7443); echo "$a / $b" >&2; [ -n "$a" ] && [ "$a" = "$b" ]; }
+t_ftp_cli()      { echo Ftp-Pass-Word-1 | lpanel ftp:create shop7 $FTPU --folder=public_html/ftp >/dev/null \
+                   && [ "$(stat -c '%U %a' $F/public_html/ftp)" = "shop7 755" ] && lpanel ftp:list shop7 | grep "^$FTPU *\/public_html\/ftp" >/dev/null \
+                   && grep -qF "$FTPU:"'$2y$' /etc/pure-ftpd/lpanel/users.d/shop7 && [ "$(stat -c '%a %U' /etc/pure-ftpd/lpanel/users.d/shop7)" = "600 root" ]; }
+t_ftp_upload()   { echo "sent over FTPS" > /tmp/ftpup.txt && ftps -T /tmp/ftpup.txt ftp://127.0.0.1/ftpup.txt -u "$FTPU:Ftp-Pass-Word-1" \
+                   && [ "$(cat $F/public_html/ftp/ftpup.txt)" = "sent over FTPS" ] && [ "$(stat -c '%U %G %a' $F/public_html/ftp/ftpup.txt)" = "shop7 shop7 644" ] \
+                   && ftps ftp://127.0.0.1/ -Q 'MKD made' -u "$FTPU:Ftp-Pass-Word-1" >/dev/null && [ "$(stat -c '%U %a' $F/public_html/ftp/made)" = "shop7 755" ] \
+                   && [ "$(ftps "ftp://127.0.0.1/ftpup.txt" -u "$FTPU:Ftp-Pass-Word-1")" = "sent over FTPS" ]; }
+t_ftp_jail()     { ftps --list-only ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-1" > /tmp/ftpls; ftps --path-as-is --list-only ftp://127.0.0.1/../../ -u "$FTPU:Ftp-Pass-Word-1" >> /tmp/ftpls; cat /tmp/ftpls >&2
+                   grep -qx ftpup.txt /tmp/ftpls && ! grep -Eqx 'app|public_html|mail|shop7|passwd' /tmp/ftpls \
+                   && ! ftps --path-as-is "ftp://127.0.0.1/../app/home.html" -u "$FTPU:Ftp-Pass-Word-1" -o /dev/null; }
+t_ftp_refused()  { ! curl -s --max-time 20 ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-1" -o /dev/null \
+                   && ! ftps ftp://127.0.0.1/ -u "$FTPU:wrong-password" -o /dev/null && ! ftps ftp://127.0.0.1/ -u "shop7:Owner-Pass-Word-7" -o /dev/null \
+                   && ! ftps ftp://127.0.0.1/ -u "anonymous:x" -o /dev/null && ! ftps ftp://127.0.0.1/ -u "root:x" -o /dev/null; }
+t_ftp_password() { echo Ftp-Pass-Word-2 | lpanel ftp:password shop7 $FTPU >/dev/null \
+                   && ! ftps ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-1" -o /dev/null && ftps ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-2" -o /dev/null; }
+t_ftp_folder()   { lpanel ftp:folder shop7 $FTPU public_html >/dev/null && ftps --list-only ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-2" > /tmp/ftpls \
+                   && grep -qx ftp /tmp/ftpls && grep -qx app /tmp/ftpls; }
+t_ftp_quota()    { head -c 30000000 /dev/urandom > /tmp/ftpbig.bin; ! ftps -T /tmp/ftpbig.bin ftp://127.0.0.1/big.bin -u "$FTPU:Ftp-Pass-Word-2"; local r=$?
+                   rm -f $F/public_html/big.bin; return $r; }
+t_ftp_session()  { python3 -c '
+import ftplib, ssl, time
+c = ssl.create_default_context(); c.check_hostname = False; c.verify_mode = ssl.CERT_NONE
+f = ftplib.FTP_TLS(context=c, timeout=20); f.connect("127.0.0.1", 21); f.login("'"$FTPU"'", "Ftp-Pass-Word-2"); f.prot_p()
+time.sleep(40)' & local py=$! pid=""
+                   for _ in $(seq 20); do pid=$(lpanel ftp:sessions shop7 | awk -v u="$FTPU" '$2 == u {print $1; exit}'); [ -n "$pid" ] && break; sleep 0.5; done
+                   [ -n "$pid" ] || { echo "no session listed"; kill $py; return 1; }
+                   lpanel ftp:sessions | grep -q "shop7" && lpanel ftp:kill "$pid" >/dev/null || { kill $py; return 1; }
+                   sleep 1; ! lpanel ftp:sessions shop7 | grep -q "$FTPU"; local r=$?; kill $py 2>/dev/null; wait $py 2>/dev/null; return $r; }
+t_ftp_suspend()  { lpanel accounts:suspend shop7 >/dev/null && ! ftps ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-2" -o /dev/null \
+                   && [ ! -s /etc/pure-ftpd/lpanel/users.d/shop7 ] \
+                   && lpanel accounts:unsuspend shop7 >/dev/null && ftps ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-2" -o /dev/null; }
+t_ftp_settings() { ! lpanel ftp:settings --passive-from=80 >/dev/null 2>&1 \
+                   && lpanel ftp:settings --tls=optional >/dev/null && curl -s --max-time 20 ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-2" -o /dev/null \
+                   && lpanel ftp:settings --tls=required >/dev/null && ! curl -s --max-time 20 ftp://127.0.0.1/ -u "$FTPU:Ftp-Pass-Word-2" -o /dev/null \
+                   && grep -Eq '^TLS +2$' /etc/pure-ftpd/pure-ftpd.conf; }
+t_ftp_panel()    { [ "$(signin_as 7444 /panel shop7 Owner-Pass-Word-7)" = "303 https://127.0.0.1:7444/panel" ]                    && curl -ks -b /tmp/jar2 -c /tmp/jar2 https://127.0.0.1:7444/panel/ftp -o /tmp/ftp.html && grep -q "dev<wbr>@seven.example.test" /tmp/ftp.html \
+                   && curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null --data-urlencode "_token=$(token /tmp/ftp.html)" -d name=web -d domain=seven.example.test \
+                        -d password=Ftp-Pass-Word-3 -d folder=public_html/app https://127.0.0.1:7444/panel/ftp \
+                   && ftps --list-only ftp://127.0.0.1/ -u "web@seven.example.test:Ftp-Pass-Word-3" | grep -qx home.html; }
+t_ftp_api()      { [ "$(api -o /tmp/ftpapi.json -w '%{http_code}' https://127.0.0.1:7443/admin/api/v1/ftp)" = 200 ] \
+                   && grep -q '"running":true' /tmp/ftpapi.json && grep -q "\"login\":\"$FTPU\"" /tmp/ftpapi.json \
+                   && [ "$(api -o /dev/null -w '%{http_code}' -X DELETE https://127.0.0.1:7443/admin/api/v1/accounts/shop7/ftp/web@seven.example.test)" = 204 ] \
+                   && ! ftps ftp://127.0.0.1/ -u "web@seven.example.test:Ftp-Pass-Word-3" -o /dev/null && [ -f $F/public_html/app/home.html ]; }
+t_ftp_audit()    { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'ftp.%'" | tr '\n' ' '); echo "$got" >&2
+                   for want in ftp.create:ok ftp.password:ok ftp.folder:ok ftp.kill:ok ftp.settings:ok ftp.delete:ok; do
+                       grep -qw "$want" <<<"$got" || { echo "missing $want"; return 1; }
+                   done
+                   ! mariadb -uroot -N lpanel -e "select details from audit_log where action like 'ftp.%'" | grep -q 'Ftp-Pass-Word'; }
+check "Pure-FTPd runs with LPanel's configuration: TLS for logins, no anonymous" t_ftp_running
+check "FTPS serves the hostname's certificate, the panel's own" t_ftp_cert
+check "lpanel ftp:create makes a login and its folder, as the account's" t_ftp_cli
+check "a file uploaded over FTPS is the account's, 644; folders 755" t_ftp_upload
+check "a login sees only its folder" t_ftp_jail
+check "plain FTP, wrong passwords, system users and anonymous are refused" t_ftp_refused
+check "a new password holds at once" t_ftp_password
+check "a new folder holds at once" t_ftp_folder
+check "the account's quota holds over FTP" t_ftp_quota
+check "a session is listed with its account and ended" t_ftp_session
+check "a suspended account's logins are shut out, and let in again" t_ftp_suspend
+check "lpanel ftp:settings: plain FTP only when allowed; bad ports refused" t_ftp_settings
+check "the User panel lists logins and makes one" t_ftp_panel
+check "the API shows the server and removes a login (its files stay)" t_ftp_api
+check "FTP changes are in the audit log, never a password" t_ftp_audit
 
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"

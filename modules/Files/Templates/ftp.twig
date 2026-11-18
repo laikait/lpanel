@@ -1,0 +1,202 @@
+{% extends "@Panel/shell.twig" %}
+
+{% macro err(errors, key) %}{% if errors[key] is defined %}<div class="error">{{ errors[key]|local }}</div>{% endif %}{% endmacro %}
+
+{% macro copy(value) %}<button class="btn btn-sm btn-ghost setup-copy" type="button" data-copy="{{ value }}" data-copied="{{ 'Files.ftp_copied'|local }}" aria-label="{{ 'Files.ftp_copy_name'|local({name: value}) }}">{{ icon('copy') }}</button>{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Files.ftp_title'|local }}</h1>
+        <p>{{ 'Files.ftp_lead'|local }}</p>
+    </div>
+</div>
+
+{% if state and state.state == 'failed' %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Files.ftp_last_failed'|local }}</strong><br><span class="mono">{{ state.error }}</span></p></div>
+{% elseif state and state.state == 'pending' %}
+    <div class="alert alert-info">{{ icon('clock') }}<p>{{ 'Files.ftp_pending_text'|local({since: state.changed_at|when}) }}</p></div>
+{% endif %}
+{% if account.status == 'suspended' %}
+    <div class="alert alert-warning">{{ icon('pause') }}<p>{{ 'Files.ftp_suspended_text'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-3 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('users') }}</span>
+        <div><div class="stat-label">{{ 'Files.ftp_logins'|local }}</div><div class="stat-value">{{ users|length }} / {{ limit ? limit : '∞' }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('lock') }}</span>
+        <div><div class="stat-label">{{ 'Files.ftp_encryption'|local }}</div><div class="stat-value">{{ ('Files.ftp_tls_short_' ~ settings.tls)|local }}</div><div class="stat-sub">{{ ('Files.ftp_tls_sub_' ~ settings.tls)|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('activity') }}</span>
+        <div><div class="stat-label">{{ 'Files.ftp_sessions'|local }}</div><div class="stat-value">{{ info is null ? '—' : sessions|length }}</div><div class="stat-sub">{{ 'Files.ftp_sessions_sub'|local }}</div></div>
+    </div>
+</div>
+
+<div class="grid grid-side" style="margin-bottom:20px">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Files.ftp_logins'|local }}</h2><p>{{ 'Files.ftp_logins_lead'|local }}</p></div></div>
+        {% if users is empty %}
+            <div class="empty">{{ icon('upload') }}<h3>{{ 'Files.ftp_none'|local }}</h3><p>{{ 'Files.ftp_none_hint'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Files.ftp_login'|local }}</th>
+                <th class="hide-sm">{{ 'Files.ftp_folder'|local }}</th>
+                <th style="text-align:end"><span class="sr-only">{{ 'Files.ftp_actions'|local }}</span></th>
+            </tr></thead>
+            <tbody>
+            {% for u in users %}
+                <tr>
+                    <td>
+                        <strong class="mono ftp-login">{{ u.login|e|split('@')|join('<wbr>@')|raw }}</strong>
+                        <div class="domain-sub show-sm mono">/{{ u.folder }}</div>
+                    </td>
+                    <td class="hide-sm"><span class="mono">/{{ u.folder }}</span>{% if u.folder == '' %} <span class="badge plain">{{ 'Files.ftp_whole_home'|local }}</span>{% endif %}</td>
+                    <td class="db-actions-cell">
+                        <div class="db-actions">
+                            <details class="db-more">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Files.ftp_folder_for'|local({name: u.login}) }}">{{ icon('folder') }}<span class="hide-sm">{{ 'Files.ftp_folder'|local }}</span></summary>
+                                <form class="db-panel" method="post" action="{{ u.folder_url }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <div class="field">
+                                        <label for="fd-{{ u.id }}">{{ 'Files.ftp_folder'|local }}</label>
+                                        <div class="affix"><span class="affix-text">~/</span><input class="input mono" id="fd-{{ u.id }}" name="folder" maxlength="1024" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ u.folder }}"></div>
+                                        <div class="hint">{{ 'Files.ftp_folder_change_hint'|local }}</div>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" type="submit">{{ 'Files.ftp_save_folder'|local }}</button>
+                                </form>
+                            </details>
+                            <details class="db-more">
+                                <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Files.ftp_password_for'|local({name: u.login}) }}">{{ icon('key') }}<span class="hide-sm">{{ 'Files.ftp_password'|local }}</span></summary>
+                                <form class="db-panel" method="post" action="{{ u.password_url }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <div class="field">
+                                        <label for="pw-{{ u.id }}">{{ 'Files.ftp_new_password'|local }}</label>
+                                        <div class="input-row">
+                                            <input class="input mono" type="password" id="pw-{{ u.id }}" name="password" minlength="{{ password_min }}" maxlength="128" autocomplete="new-password" required>
+                                            <button class="btn btn-sm" type="button" data-generate="pw-{{ u.id }}">{{ icon('refresh') }}{{ 'Files.ftp_generate'|local }}</button>
+                                        </div>
+                                        <div class="hint">{{ 'Files.ftp_password_change_hint'|local }}</div>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" type="submit">{{ 'Files.ftp_change_password'|local }}</button>
+                                </form>
+                            </details>
+                            <form class="inline-form" method="post" action="{{ u.delete_url }}" data-confirm="{{ 'Files.ftp_confirm_delete'|local({name: u.login}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Files.ftp_delete_name'|local({name: u.login}) }}">{{ icon('trash') }}</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </div>
+
+    <form class="card" method="post" action="{{ store_url }}">
+        <div class="card-head"><div><h2>{{ 'Files.ftp_create'|local }}</h2><p>{{ 'Files.ftp_create_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            {% if at_limit %}<div class="alert alert-warning" style="margin-top:0">{{ icon('alert') }}<p>{{ 'Files.ftp_error_limit'|local }}</p></div>{% endif %}
+            {% if domains is empty %}<div class="alert alert-warning" style="margin-top:0">{{ icon('alert') }}<p>{{ 'Files.ftp_no_domains'|local }}</p></div>{% endif %}
+            <div class="field">
+                <label for="ftp-name">{{ 'Files.ftp_login'|local }}</label>
+                <div class="ftp-login-row">
+                    <input class="input mono{% if errors.new_name is defined %} is-invalid{% endif %}" id="ftp-name" name="name" maxlength="64" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.name|default('') }}" placeholder="designer" required>
+                    <span class="ftp-at" aria-hidden="true">@</span>
+                    <select class="input mono{% if errors.new_domain is defined %} is-invalid{% endif %}" name="domain" aria-label="{{ 'Files.ftp_domain'|local }}">
+                        {% for d in domains %}<option value="{{ d }}"{% if old.domain|default('') == d %} selected{% endif %}>{{ d }}</option>{% endfor %}
+                    </select>
+                </div>
+                {{ _self.err(errors, 'new_name') }}{{ _self.err(errors, 'new_domain') }}
+                <div class="hint">{{ 'Files.ftp_name_hint'|local }}</div>
+            </div>
+            <div class="field">
+                <label for="ftp-pw">{{ 'Files.ftp_password'|local }}</label>
+                <div class="input-row">
+                    <input class="input mono{% if errors.new_password is defined %} is-invalid{% endif %}" type="password" id="ftp-pw" name="password" minlength="{{ password_min }}" maxlength="128" autocomplete="new-password" required>
+                    <button class="btn btn-sm" type="button" data-generate="ftp-pw">{{ icon('refresh') }}{{ 'Files.ftp_generate'|local }}</button>
+                </div>
+                {{ _self.err(errors, 'new_password') }}
+                <div class="hint">{{ 'Files.ftp_password_hint'|local({min: password_min}) }}</div>
+            </div>
+            <div class="field">
+                <label for="ftp-folder">{{ 'Files.ftp_folder'|local }}</label>
+                <div class="affix"><span class="affix-text">~/</span><input class="input mono{% if errors.new_folder is defined %} is-invalid{% endif %}" id="ftp-folder" name="folder" maxlength="1024" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old.folder|default('') }}"></div>
+                {{ _self.err(errors, 'new_folder') }}
+                <div class="hint">{{ 'Files.ftp_folder_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit"{% if at_limit or domains is empty %} disabled{% endif %}>{{ icon('plus') }}{{ 'Files.ftp_create_button'|local }}</button></div>
+    </form>
+</div>
+
+<div class="grid grid-side">
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Files.ftp_sessions'|local }}</h2><p>{{ 'Files.ftp_sessions_lead'|local }}</p></div></div>
+        {% if info is null %}
+            <div class="card-body"><p class="muted" style="margin:0">{{ 'Files.ftp_sessions_unknown'|local }}</p></div>
+        {% elseif sessions is empty %}
+            <div class="empty">{{ icon('activity') }}<h3>{{ 'Files.ftp_no_sessions'|local }}</h3><p>{{ 'Files.ftp_no_sessions_hint'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Files.ftp_login'|local }}</th>
+                <th class="hide-sm">{{ 'Files.ftp_from'|local }}</th>
+                <th>{{ 'Files.ftp_doing'|local }}</th>
+                <th style="text-align:end"><span class="sr-only">{{ 'Files.ftp_actions'|local }}</span></th>
+            </tr></thead>
+            <tbody>
+            {% for s in sessions %}
+                <tr>
+                    <td><strong class="mono ftp-login">{{ s.login|e|split('@')|join('<wbr>@')|raw }}</strong><div class="domain-sub show-sm mono">{{ s.peer }}</div></td>
+                    <td class="hide-sm mono">{{ s.peer }}</td>
+                    <td>{% include '@Files/ftp-doing.twig' %}</td>
+                    <td style="text-align:end">
+                        <form class="inline-form" method="post" action="{{ s.kill_url }}" data-confirm="{{ 'Files.ftp_confirm_kill'|local({name: s.login}) }}">
+                            <input type="hidden" name="_token" value="{{ lp.token }}">
+                            <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Files.ftp_kill_name'|local({name: s.login}) }}">{{ icon('x') }}</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </section>
+
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Files.ftp_connect'|local }}</h2><p>{{ 'Files.ftp_connect_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <dl class="setup-list">
+                <div class="setup-item">
+                    <dt>{{ 'Files.ftp_host'|local }}</dt>
+                    <dd>{% if host %}<span class="mono">{{ host }}</span>{{ _self.copy(host) }}{% else %}<span class="muted">{{ 'Files.ftp_host_unknown'|local }}</span>{% endif %}</dd>
+                </div>
+                <div class="setup-item">
+                    <dt>{{ 'Files.ftp_port'|local }}</dt>
+                    <dd class="mono">21</dd>
+                </div>
+                <div class="setup-item">
+                    <dt>{{ 'Files.ftp_encryption'|local }}</dt>
+                    <dd>{{ ('Files.ftp_tls_client_' ~ settings.tls)|local }}</dd>
+                </div>
+                <div class="setup-item">
+                    <dt>{{ 'Files.ftp_username'|local }}</dt>
+                    <dd class="muted">{{ 'Files.ftp_username_value'|local }}</dd>
+                </div>
+                <div class="setup-item">
+                    <dt>{{ 'Files.ftp_mode'|local }}</dt>
+                    <dd>{{ 'Files.ftp_mode_value'|local }}</dd>
+                </div>
+            </dl>
+        </div>
+        <div class="card-body mail-client-foot"><p class="hint" style="margin:0">{{ 'Files.ftp_connect_hint'|local }}</p></div>
+    </section>
+</div>
+{% endblock %}

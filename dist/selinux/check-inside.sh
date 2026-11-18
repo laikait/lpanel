@@ -127,6 +127,12 @@ check "ClamAV's socket"                          label /run/clamd.scan/clamd.soc
 check "its signatures"                           label /var/lib/clamav/main.cvd antivirus_db_t
 check "Rspamd reaches ClamAV's socket"           allowed -s unconfined_service_t -t antivirus_t -c unix_stream_socket -p connectto
 
+echo "== FTP (Pure-FTPd; EL's policy has no domain for it)"
+check "Pure-FTPd's binary is plain bin_t"        label /usr/sbin/pure-ftpd bin_t
+check "so it runs unconfined, started by systemd" trans init_t bin_t unconfined_service_t
+check "its certificate file is cert_t"           label /etc/pki/pure-ftpd/pure-ftpd.pem cert_t
+check "the panel cannot reach its files"         refused -s httpd_t -t cert_t -c file -p write
+
 echo "== what the panel (httpd_t) is not given"
 check "no other unconfined service"              refused -s httpd_t -t unconfined_service_t -c unix_stream_socket -p connectto
 check "no shadow"                                refused -s httpd_t -t shadow_t -c file -p read

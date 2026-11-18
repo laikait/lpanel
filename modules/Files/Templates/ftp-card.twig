@@ -1,0 +1,29 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Files.ftp_title'|local }}</h2><p>{{ 'Files.ftp_card_lead'|local({n: ftp_users|length}) }}</p></div>
+        {% if ftp_state %}
+            {% if ftp_state.state == 'applied' %}<span class="badge ok">{{ 'Files.ftp_state_applied'|local }}</span>
+            {% elseif ftp_state.state == 'pending' %}<span class="badge warn">{{ 'Files.ftp_state_pending'|local }}</span>
+            {% else %}<span class="badge bad">{{ 'Files.ftp_state_failed'|local }}</span>{% endif %}
+        {% endif %}
+    </div>
+    {% if ftp_state and ftp_state.state == 'failed' %}
+        <div class="card-body"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p><span class="mono">{{ ftp_state.error }}</span></p></div></div>
+    {% endif %}
+    {% if ftp_users is empty %}
+        <div class="card-body"><p class="muted">{{ 'Files.ftp_none'|local }}</p></div>
+    {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>{{ 'Files.ftp_login'|local }}</th><th>{{ 'Files.ftp_folder'|local }}</th><th class="hide-sm">{{ 'Files.ftp_made_at'|local }}</th></tr></thead>
+            <tbody>
+            {% for u in ftp_users %}
+                <tr>
+                    <td class="mono"><strong>{{ u.login }}</strong></td>
+                    <td class="mono">/{{ u.folder }}</td>
+                    <td class="hide-sm">{{ u.created_at ? u.created_at|when : '—' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+</div>

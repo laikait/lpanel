@@ -776,6 +776,55 @@ the SSH key manager).
   recursive permissions; administrators opening the file manager itself
   (they log in as the owner).
 
+**M7b: FTP. Built 2026-11-18.**
+- **Pure-FTPd, virtual users only.** Each login is `name@domain` (one of
+  the account's domains, unique on the server) and works as the account's
+  own Unix user, shut in a folder of its home, so the account's permissions
+  and disk quota hold as for its PHP. No anonymous logins, no system users,
+  no PAM. Only a bcrypt hash is kept.
+- **The agent** keeps one file of logins per account
+  (`/etc/pure-ftpd/lpanel/users.d/<account>`, 0600 root), joins them and has
+  `pure-pw` index them; Pure-FTPd reads the index at each login, so nothing
+  reloads. A missing folder is made as the account's (through an `os.Root`:
+  no link out). A login of another account is refused. A changed or removed
+  login's sessions end at once; a suspended account's logins are taken out
+  and its sessions end; a terminated account's go before its user.
+- **FTPS**: Pure-FTPd serves the hostname certificate (copied whenever
+  AutoSSL renews it). TLS is required for logins by default; the Admin panel
+  chooses optional, required or strict (transfers too).
+- **User panel → FTP** (feature `ftp`, the package's `ftp_accounts` limit):
+  the logins with their folders; new login (name, domain, password with a
+  generator, folder, `public_html` by default), change password, change
+  folder, remove (the files stay); what to type into an FTP client; the
+  sessions open now, which the owner can end.
+- **Admin panel → FTP** (capability `server.ftp`): Pure-FTPd's state and
+  version; settings (TLS, passive ports, the address given out behind NAT,
+  clients at once and from one address), written whole into
+  `pure-ftpd.conf`, with the old file put back if Pure-FTPd will not start;
+  every session on the server with its account, to end; every login. The
+  account page shows its logins.
+- **Where it shows:** the API (`/admin/api/v1/accounts/{user}/ftp`,
+  `…/ftp/{login}`, `…/ftp/sessions`; `/admin/api/v1/ftp`,
+  `…/ftp/settings`, `…/ftp/sessions/{pid}`) and
+  `lpanel ftp:list|create|password|folder|delete|sessions|kill|settings|settle|sync`
+  (passwords on standard input). Every change is audited (`ftp.*`), never a
+  password.
+- **Installer:** Pure-FTPd from EPEL (vsftpd and proftpd are stopped),
+  `ftp:settings --apply`, firewalld's ftp service and ports 30000–30100.
+- **Tests:** Go (logins and their file, folders and links out, another
+  account's login, sessions ended by changes and suspension, ending only
+  listed sessions, the configuration and its roll-back, the certificate);
+  PHP 156; SELinux check 86; `tests/e2e/install.sh` with the real
+  Pure-FTPd (FTPS uploads owned by the account, the folder as the whole
+  view, plain FTP and system users refused, new passwords and folders at
+  once, the quota, a session listed and ended, suspension, the TLS setting,
+  the panel and the API): `WEB=apache` 264 checks, `WEB=nginx`
+  265, `WEB=hybrid` 269; `tests/e2e/agent.sh` 37.
+- **Not yet:** FTP traffic in the bandwidth count; brute-force blocking
+  (M9); a quota or bandwidth limit per login; an SELinux domain for
+  Pure-FTPd (EL's policy has none, so it runs unconfined); FTP logins as
+  sub-users' own (a sub-user with the `ftp` grant manages the account's).
+
 ### M8: Backups
 - Restic schedules and retention; local, S3, B2, Wasabi and SFTP destinations.
 - User downloads and self-service restore; admin restore.

@@ -51,6 +51,9 @@ type Config struct {
 	// Mail is "on" when the installer set up Exim and Dovecot; "off" turns
 	// the mail operations off.
 	Mail string `json:"mail"`
+	// FTP is "on" when the installer set up Pure-FTPd; "off" turns the FTP
+	// operations off.
+	FTP string `json:"ftp"`
 	// FilesStaging is the panel's folder for the file manager's uploads,
 	// saved files and downloads; the agent opens files in it by name only.
 	FilesStaging string `json:"files_staging"`
@@ -90,6 +93,7 @@ func Defaults() Config {
 		Web:          "apache",
 		PanelPHP:     "83",
 		Mail:         "off",
+		FTP:          "off",
 		FilesStaging: "/var/lib/lpanel/files",
 		ACME: ACME{
 			LetsEncrypt: "https://acme-v02.api.letsencrypt.org/directory",
@@ -136,6 +140,9 @@ func (c Config) validate() error {
 	case "apache", "nginx", "hybrid", "off":
 	default:
 		return fmt.Errorf("web must be \"apache\", \"nginx\", \"hybrid\" or \"off\", not %q", c.Web)
+	}
+	if c.FTP != "on" && c.FTP != "off" {
+		return fmt.Errorf("ftp must be \"on\" or \"off\", not %q", c.FTP)
 	}
 	if c.Mail != "on" && c.Mail != "off" {
 		return fmt.Errorf("mail must be \"on\" or \"off\", not %q", c.Mail)
