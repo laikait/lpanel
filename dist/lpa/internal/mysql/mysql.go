@@ -836,3 +836,24 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// Databases lists an account's databases, sorted (for backups). With no
+// MariaDB on the server, an account has none.
+func (m *Manager) Databases(ctx context.Context, username string) ([]string, error) {
+	if err := m.account(username); err != nil {
+		return nil, err
+	}
+	if !m.SQL.Installed() {
+		return nil, nil
+	}
+	have, err := m.databases(ctx, username+"_")
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(have))
+	for db := range have {
+		out = append(out, db)
+	}
+	sort.Strings(out)
+	return out, nil
+}

@@ -120,6 +120,14 @@ limited by these:
 | T83 | A key added behind the panel's back (in `~/.ssh/authorized_keys`, by the account's PHP or the file manager), or a key with options that run a command or forward ports | sshd reads keys for `lpanel-users` only from `/etc/ssh/lpanel/keys/<account>`, root's; the agent refuses keys with options or a second line, rewrites each as `restrict,pty …`, and the drop-in turns off forwarding, agent forwarding, tunnels, X11 and `~/.ssh/rc` | Go `TestApplyWritesRestrictedLines`, `TestApplyRefuses`; e2e "a key in ~/.ssh, a password and forwarding are all refused" |
 | T84 | SSH passwords guessed, or weak keys accepted | Accounts sign in with keys only (passwords and keyboard-interactive off for the group); DSA, RSA under 2048 bits and unknown types are refused in the panel and the agent | PHP `test_the_owner_adds_a_public_key`, Go `TestApplyRefuses` |
 | T85 | A private key the panel made being kept, logged or shown again | The pair is made in the panel (libsodium) and the private half is answered once, on the page or API response that made it (`no-store`); it is not in the database, the session, the audit log or the agent | PHP `test_a_key_made_by_the_panel_is_shown_once_and_never_kept`, e2e "keeps no private key" |
+| T86 | Backups read by whoever holds the storage (a cloud provider, a stolen disk, the SFTP host) | Every repository is encrypted by restic with a random 256-bit password that only the agent holds (`/etc/lpa/backup`, 0700 root); the panel never sees it | Go `TestALocalDestinationGetsARepositoryAndAPassword`, e2e "its password is root's alone" |
+| T87 | A compromised panel reading the destinations' credentials, or pointing a backup at a system folder | S3/B2 keys go from the panel to the agent once and are never returned, logged or kept in the panel's database; the agent refuses local destinations in `/home`, `/etc` and other system folders, and every field is pattern-checked before it reaches restic's environment (never its arguments, never a shell) | PHP `test_secrets_go_to_the_server_and_stay_there`, Go `TestS3KeepsItsSecretsAndNeverShowsThem`, `TestDestinationsAreChecked` |
+| T88 | One account's backup carrying another's data, or a database the panel names that is not the account's | The agent dumps only databases with the account's prefix, as MariaDB lists them, and each snapshot is the account's home and its own stage folder only | Go `TestARunBacksEachAccountUpAndKeepsGoing` |
+| T89 | An existing repository overwritten, or backups lost to a destination the agent cannot open | A destination is kept only after restic opens (or makes) its repository; one made with another password is refused (`backup_wrong_password`), never re-initialized; removing a destination leaves its data | Go `TestAWrongPasswordOrNoAnswerIsNotKept`, e2e "a repository with another password is refused" |
+| T90 | An owner restoring another account's data, or a path outside their home | The agent restores only from snapshots tagged with the account (checked on each operation, not taken from the panel); paths are relative, without `..` or patterns; databases only with the account's prefix; the panel also limits mailboxes and databases to the account's own | Go `TestOnlyTheAccountsOwnSnapshotsAndPaths`, PHP `test_an_owner_puts_files_back_from_their_own_snapshot` |
+| T91 | A restore, run as root, writing outside the home through a link or hard link the owner planted | restic restores into a root-only staging folder; files are copied through an `os.Root` on the home (no escape), links met where folders go are replaced, files are written under new names and renamed over the old ones; the same for downloads' `lpanel-backups/` | Go `TestARestorePutsFilesBackAndKeepsNewerOnes`, `TestADownloadIsAnArchiveInTheHome`, e2e "a link out of the home is not followed" |
+| T92 | A restored file giving its owner more than they had (set-id bits, root's ownership) | Every file put back is the account's, with its permission bits only (no set-id) | Go `TestARestorePutsFilesBackAndKeepsNewerOnes`, e2e "as the owner's" |
+| T93 | An account made again from a snapshot taking another account's names, or a second factor carried over | It is made only when its username, domains, databases, database users and FTP logins are all free here; backups never hold second-factor secrets, so the owner sets theirs up again | PHP `test_a_terminated_account_is_made_again_from_its_snapshot` |
 | T64 | Deleting mail outside the account's home through a link the owner made in it | Mail is deleted (`mail.purge`) through an `os.Root` at the home, which no link can lead out of, and only once the mailbox is no longer set up | Go `TestPurgeDoesNotFollowALinkOutOfTheHome`, `TestPurgeDeletesOnlyMailNoLongerSetUp` |
 | T49 | A visitor claiming HTTPS to Apache behind nginx | nginx always sets `X-Forwarded-Proto` to its own `$scheme`; Apache turns it into `HTTPS=on` and listens only on 127.0.0.1 | Go `TestHybridServesHTTPSInFront`, e2e install "PHP knows the visit came over HTTPS" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
@@ -190,6 +198,22 @@ These are tracked, not forgotten. Each names the milestone that closes it.
   with M9; administrators can choose `strict`.
 - **FTP transfers do not count towards bandwidth yet.** Pure-FTPd logs them
   (`/var/log/pureftpd.log`); metering them with web traffic is M10's.
+
+- **Losing the server loses the repository passwords** unless root kept
+  them (`lpa backup-password <id>`, as the panel says when a destination is
+  added): restic repositories cannot be opened without them. Exporting them
+  to the administrator's own records in the Admin panel needs root's
+  confirmation; for now another server opens a repository only with the
+  password root copies by hand.
+- **Certificates are not in backups**: a site made again waits for AutoSSL
+  (custom certificates are uploaded again). Sub-users are not made again
+  with their account.
+- **A download counts towards the account's disk** but is written by root,
+  so it may take the account over its quota.
+- **Backups are not verified** (`restic check`) on a schedule yet, and a
+  failed run is only shown in the Admin panel; alerts are M10's.
+- **A database is dumped with `--single-transaction`**: consistent for
+  InnoDB tables, not for MyISAM ones written during the dump.
 
 - **A jailed session still reaches the network** like the account's PHP
   does (outgoing connections, local services such as MariaDB and the mail

@@ -30,6 +30,7 @@ final class FtpListeners
 
         match ($op) {
             'account.terminate' => $this->sync->forget($id),
+            'account.restore' => $this->sync->touch($id),
             'account.suspend', 'account.unsuspend' => $this->users->count($id) > 0 || $this->sync->stateOf($id) !== null
                 ? $this->sync->touch($id)
                 : null,

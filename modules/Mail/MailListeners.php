@@ -65,7 +65,7 @@ final class MailListeners
 
         match ($op) {
             'account.terminate' => $this->sync->forget($id),
-            'account.create' => $this->webChanged($row),
+            'account.create', 'account.restore' => $this->webChanged($row),
             'account.suspend', 'account.unsuspend' => $this->sync->stateOf($id) !== null ? $this->sync->touch($id) : null,
             default => null,
         };

@@ -35,7 +35,7 @@ final class WebListeners
     {
         match ($op) {
             'account.terminate' => $this->sync->forget((int) $row['id']),
-            'account.create', 'account.suspend', 'account.unsuspend', 'account.modify' => $this->sync->touch((int) $row['id']),
+            'account.create', 'account.restore', 'account.suspend', 'account.unsuspend', 'account.modify' => $this->sync->touch((int) $row['id']),
             default => null,
         };
 

@@ -1305,6 +1305,122 @@ check "the User panel lists keys and makes one" t_ssh_panel
 check "the API lists keys and removes one" t_ssh_api
 check "SSH key changes are in the audit log, never a private key" t_ssh_audit
 
+echo "== backups (restic)"
+# A local destination, every account, then an SFTP one on this machine.
+R() { restic --no-cache -r "$1" --password-file "/etc/lpa/backup/destinations/$2.pass" "${@:3}"; }
+t_bk_dest()     { lpanel backup:destination-add disk local --path=/backup/lpanel/ > /tmp/bk.out && cat /tmp/bk.out >&2 \
+                  && [ -f /backup/lpanel/config ] && [ "$(stat -c '%a %U' /etc/lpa/backup)" = "700 root" ] \
+                  && [ "$(stat -c '%a %U' /etc/lpa/backup/destinations/d1.pass)" = "600 root" ] \
+                  && /usr/local/lpa/bin/lpa backup-password d1 | grep -Eqx '[0-9a-f]{64}' \
+                  && ! lpanel backup:destination-add home local --path=/home/x >/dev/null 2>&1 \
+                  && lpanel backup:destinations | grep -q '/backup/lpanel'; }
+t_bk_run()      { lpanel backup:settings --enabled=1 --time=23:59 --destination=disk --daily=1 --weekly=0 --monthly=0 >/dev/null \
+                  && lpanel backup:run --wait > /tmp/bkrun.out 2>&1; local r=$?; cat /tmp/bkrun.out >&2
+                  [ $r = 0 ] && grep -q '^shop7 *ok ' /tmp/bkrun.out && grep -q '^shop3 *ok ' /tmp/bkrun.out && ! grep -q FAILED /tmp/bkrun.out \
+                  && [ "$(R /backup/lpanel d1 snapshots --json --tag account:shop7 | grep -o '"short_id"' | wc -l)" = 1 ]; }
+t_bk_content()  { [ "$(R /backup/lpanel d1 dump --tag account:shop7 latest /home/shop7/public_html/sftpup.txt)" = "over sftp" ] \
+                  && R /backup/lpanel d1 ls --tag account:shop3 latest > /tmp/bkls && grep -q '/var/lib/lpa/backup/shop3/databases/shop3_data.sql' /tmp/bkls \
+                  && grep -q '/var/lib/lpa/backup/shop3/lpanel.json' /tmp/bkls && ! grep -q '^/home/shop3/tmp/.' /tmp/bkls \
+                  && R /backup/lpanel d1 dump --tag account:shop3 latest /var/lib/lpa/backup/shop3/databases/shop3_data.sql | grep -q 'CREATE DATABASE.*shop3_data' \
+                  && R /backup/lpanel d1 dump --tag account:shop3 latest /var/lib/lpa/backup/shop3/lpanel.json | grep -q '"username":"shop3"' \
+                  && ! R /backup/lpanel d1 dump --tag account:shop3 latest /var/lib/lpa/backup/shop3/lpanel.json | grep -q totp_secret \
+                  && [ -z "$(ls -A /var/lib/lpa/backup 2>/dev/null)" ]; }
+t_bk_keep()     { lpanel backup:run --accounts=shop7 --wait >/dev/null 2>&1 \
+                  && [ "$(R /backup/lpanel d1 snapshots --json --tag account:shop7 | grep -o '"short_id"' | wc -l)" = 1 ] \
+                  && lpanel backup:snapshots shop7 | grep -Eq '^[0-9a-f]{8} '; }
+t_bk_wrongpw()  { mkdir -p /backup/other && restic --no-cache -r /backup/other init --password-file <(echo someone-else) >/dev/null 2>&1 \
+                  && ! lpanel backup:destination-add other local --path=/backup/other > /tmp/bkw.out 2>&1; cat /tmp/bkw.out >&2; grep -q "password does not open it" /tmp/bkw.out; }
+t_bk_sftp()     { id bkp >/dev/null 2>&1 || useradd -m bkp
+                  ! lpanel backup:destination-add box sftp --host=127.0.0.1 --user=bkp --path=/home/bkp/repo >/dev/null 2>&1 || return 1
+                  install -d -m 700 -o bkp -g bkp /home/bkp/.ssh && cp /etc/lpa/backup/id_ed25519.pub /home/bkp/.ssh/authorized_keys \
+                  && chown bkp: /home/bkp/.ssh/authorized_keys && chmod 600 /home/bkp/.ssh/authorized_keys \
+                  && lpanel backup:destination-add box sftp --host=127.0.0.1 --user=bkp --path=/home/bkp/repo > /tmp/bks.out && grep -q 'ssh-ed25519' /tmp/bks.out \
+                  && [ -f /home/bkp/repo/config ] && lpanel backup:run --accounts=shop7 --destination=box --wait >/dev/null 2>&1 \
+                  && lpanel backup:snapshots shop7 --destination=box | grep -Eq '^[0-9a-f]{8} '; }
+t_bk_panel()    { signin "$ROOT_PASSWORD" >/dev/null; curl -ks -b $jar -c $jar https://127.0.0.1:7443/admin/backups -o /tmp/bk.html && grep -q '/backup/lpanel' /tmp/bk.html \
+                  && grep -q 'lpanel-backup' /tmp/bk.html && grep -q 'Daily, 23:59' /tmp/bk.html \
+                  && curl -ks -b $jar -c $jar 'https://127.0.0.1:7443/admin/backups?account=shop7' -o /tmp/bk2.html && grep -Eq '<td class="mono">[0-9a-f]{8}</td>' /tmp/bk2.html; }
+t_bk_api()      { [ "$(api -o /tmp/bkapi.json -w '%{http_code}' https://127.0.0.1:7443/admin/api/v1/backups)" = 200 ] && grep -q '"name":"disk"' /tmp/bkapi.json \
+                  && [ "$(api -o /tmp/bkacct.json -w '%{http_code}' https://127.0.0.1:7443/admin/api/v1/accounts/shop7/backups)" = 200 ] && grep -q '"ok":true' /tmp/bkacct.json \
+                  && [ "$(api -o /dev/null -w '%{http_code}' -X DELETE https://127.0.0.1:7443/admin/api/v1/backups/destinations/1)" = 409 ]; }
+t_bk_audit()    { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'backup.%'" | tr '\n' ' '); echo "$got" >&2
+                  for a in backup.destination_add:ok backup.destination_add:failed backup.settings:ok backup.run:ok backup.finished:ok; do echo "$got" | grep -q "$a" || return 1; done; }
+check "a local destination gets an encrypted repository; its password is root's alone" t_bk_dest
+check "lpanel backup:run backs every account up, one snapshot each" t_bk_run
+check "a snapshot holds the home, each database's dump and the account's description" t_bk_content
+check "retention keeps what the schedule says" t_bk_keep
+check "a repository with another password is refused, not overwritten" t_bk_wrongpw
+check "an SFTP destination works once the agent's key is authorized" t_bk_sftp
+check "the Admin panel shows destinations, the schedule and an account's snapshots" t_bk_panel
+check "the API shows backups, an account's last one, and protects the scheduled destination" t_bk_api
+check "backup changes are in the audit log" t_bk_audit
+
+echo "== restores"
+snap() { lpanel backup:snapshots "$1" ${2:+--destination=$2} | awk 'NR == 2 { print $1 }'; }
+t_rs_files()    { local s; s=$(snap shop7); [ -n "$s" ] || return 1
+                  echo broken > /home/shop7/public_html/sftpup.txt && echo extra > /home/shop7/public_html/made-since.txt \
+                  && ln -sfn /etc /home/shop7/public_html/evil && chown -h shop7: /home/shop7/public_html/evil \
+                  && lpanel backup:restore shop7 "$s" --paths=public_html --wait > /tmp/rs.out 2>&1; local r=$?; cat /tmp/rs.out >&2
+                  [ $r = 0 ] && [ "$(cat /home/shop7/public_html/sftpup.txt)" = "over sftp" ] && [ "$(stat -c %U /home/shop7/public_html/sftpup.txt)" = shop7 ] \
+                  && [ -f /home/shop7/public_html/made-since.txt ] && [ -z "$(ls -A /var/lib/lpa/restore 2>/dev/null)" ] \
+                  && [ ! -e /etc/sftpup.txt ] && [ -z "$(find /home/shop7/public_html -user root -print -quit)" ]; }
+t_rs_folder()   { lpanel backup:restore shop7 "$(snap shop7)" --paths=public_html/sftpup.txt --folder --wait >/dev/null 2>&1 \
+                  && f=$(ls -d /home/shop7/restored-*/public_html/sftpup.txt) && [ "$(cat $f)" = "over sftp" ] && [ "$(stat -c %U "$(dirname "$(dirname "$f")")")" = shop7 ]; }
+t_rs_database() { mariadb -uroot shop3_data -e "create table notes (note varchar(20)); insert into notes values ('kept')" \
+                  && lpanel backup:run --accounts=shop3 --wait >/dev/null 2>&1 && mariadb -uroot shop3_data -e "delete from notes" \
+                  && lpanel backup:restore shop3 "$(snap shop3)" --databases=shop3_data --wait >/dev/null 2>&1 \
+                  && [ "$(mariadb -ushop3_app "-p$DBPW" -N shop3_data -e 'select note from notes')" = kept ] \
+                  && ! lpanel backup:restore shop3 "$(snap shop3)" --databases=shop7_x >/dev/null 2>&1; }
+t_rs_mailbox()  { local d=/home/shop3/mail/three.example.test/sender; [ -d "$d" ] || return 1
+                  lpanel backup:restore shop3 "$(snap shop3)" --mailbox=sender@three.example.test --wait >/dev/null 2>&1 && [ "$(stat -c %U "$d")" = shop3 ]; }
+t_rs_download() { lpanel backup:download shop7 "$(snap shop7)" --path=public_html --wait > /tmp/rsd.out 2>&1; cat /tmp/rsd.out >&2
+                  f=$(ls /home/shop7/lpanel-backups/*public_html.tar.gz) && [ "$(stat -c '%U %a' "$f")" = "shop7 600" ] \
+                  && tar -tzf "$f" | grep -q 'public_html/sftpup.txt' \
+                  && lpanel backup:download shop3 "$(snap shop3)" --database=shop3_data --wait >/dev/null 2>&1 \
+                  && zcat /home/shop3/lpanel-backups/shop3_data-*.sql.gz | grep -q "INSERT INTO \`notes\`"; }
+t_rs_panel()    { signin "$ROOT_PASSWORD" >/dev/null; local s; s=$(snap shop7)
+                  curl -ks -b $jar -c $jar "https://127.0.0.1:7443/admin/backups/accounts/shop7?snapshot=$s" -o /tmp/rsp.html && grep -q 'public_html' /tmp/rsp.html \
+                  && [ "$(signin_as 7444 /panel shop7 Owner-Pass-Word-7)" = "303 https://127.0.0.1:7444/panel" ] \
+                  && curl -ks -b /tmp/jar2 -c /tmp/jar2 "https://127.0.0.1:7444/panel/backups?snapshot=$s&path=public_html" -o /tmp/rsu.html && grep -q 'sftpup.txt' /tmp/rsu.html \
+                  && echo broken > /home/shop7/public_html/sftpup.txt \
+                  && curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null --data-urlencode "_token=$(token /tmp/rsu.html)" -d "snapshot=$s" -d kind=files \
+                       -d 'paths[]=public_html/sftpup.txt' -d mode=place https://127.0.0.1:7444/panel/backups/restore \
+                  && for _ in $(seq 30); do lpanel backup:settle >/dev/null; [ "$(cat /home/shop7/public_html/sftpup.txt)" = "over sftp" ] && break; sleep 1; done \
+                  && [ "$(cat /home/shop7/public_html/sftpup.txt)" = "over sftp" ]; }
+t_rs_api()      { local code; code=$(api -o /tmp/rsa.json -w '%{http_code}' "https://127.0.0.1:7443/admin/api/v1/accounts/shop7/backups/files?snapshot=$(snap shop7)&path=public_html") \
+                  && [ "$code" = 200 ] && grep -q sftpup.txt /tmp/rsa.json \
+                  && [ "$(api -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"snapshot\":\"$(snap shop7)\",\"kind\":\"files\",\"paths\":[\"../../etc\"]}" https://127.0.0.1:7443/admin/api/v1/accounts/shop7/backups/restores)" = 422 ]; }
+# The exit: an account that is gone, made again from its backup through a
+# destination added as another server would add it (with the repository's password).
+t_rs_moved()    { /usr/local/lpa/bin/lpa backup-password d1 | lpanel backup:destination-add moved local --path=/backup/lpanel --existing > /tmp/rsm.out 2>&1; cat /tmp/rsm.out >&2
+                  lpanel backup:accounts --destination=moved | grep -Eq '^shop3 +[0-9a-f]{8} .* yes$' \
+                  && ! { echo wrong-password | lpanel backup:destination-add moved2 local --path=/backup/lpanel --existing >/dev/null 2>&1; }; }
+t_rs_recreate() { local s rex; s=$(snap shop3 moved); rex=$(mariadb -uroot -N lpanel -e "select id from panel_users where username='rex'")
+                  lpanel accounts:terminate shop3 --yes >/dev/null && for _ in $(seq 60); do systemctl start lpanel-scheduler.service; getent passwd shop3 >/dev/null || break; sleep 1; done
+                  ! getent passwd shop3 && ! mariadb -uroot -e 'use shop3_data' 2>/dev/null || return 1
+                  lpanel backup:recreate "$s" --destination=moved --dry-run | grep -q 'reseller rex' \
+                  && lpanel backup:recreate "$s" --destination=moved --wait > /tmp/rsr.out 2>&1; local r=$?; cat /tmp/rsr.out >&2; [ $r = 0 ] || return 1
+                  for _ in $(seq 30); do systemctl start lpanel-scheduler.service; says three.example.test "bool(false)" >/dev/null 2>&1 && break; sleep 1; done
+                  getent passwd shop3 >/dev/null && lpanel accounts:list | grep -Eq '^shop3 +three\.example\.test .*active' \
+                  && [ "$(mariadb -uroot -N lpanel -e "select owner_id from accounts where username='shop3'")" = "$rex" ] \
+                  && says three.example.test "bool(false)" \
+                  && [ "$(mariadb -ushop3_app "-p$DBPW" -N shop3_data -e 'select note from notes')" = kept ] \
+                  && python3 /tmp/imap.py imaps 127.0.0.1 sender@three.example.test "$MPW" | grep -q MESSAGES \
+                  && [ "$(signin_as 7444 /panel shop3 Owner-Pass-Word-3)" = "303 https://127.0.0.1:7444/panel" ] \
+                  && [ -z "$(find /home/shop3/public_html -user root -print -quit)" ]; }
+t_rs_audit()    { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'backup.%' or (action = 'account.create' and details like '%restored%')" | tr '\n' ' '); echo "$got" >&2
+                  for a in backup.restore:ok backup.restored:ok backup.download:ok backup.download_ready:ok backup.account_restore:ok account.create:ok; do echo "$got" | grep -q "$a" || return 1; done; }
+check "files go back in place, as the owner's; newer files stay; a link out of the home is not followed" t_rs_files
+check "or into a restored-<time> folder" t_rs_folder
+check "a database comes back as it was; another account's is refused" t_rs_database
+check "a mailbox comes back" t_rs_mailbox
+check "downloads are archives in the home's lpanel-backups/" t_rs_download
+check "the Admin panel and the owner's User panel browse and restore" t_rs_panel
+check "the API browses a snapshot and refuses a path out of the home" t_rs_api
+check "another server's repository opens with its password, and shows its accounts" t_rs_moved
+check "a terminated account is made again from its backup: site, database, mail, owner's login, reseller" t_rs_recreate
+check "restores are in the audit log" t_rs_audit
+
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"
 t_switched() {

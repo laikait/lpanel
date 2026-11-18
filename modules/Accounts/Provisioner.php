@@ -90,6 +90,48 @@ final class Provisioner
         return $outcome;
     }
 
+    /**
+     * Make an account again from a backup (Backups): its login is made by
+     * the caller (with the password it had), and $import writes the
+     * modules' rows once the account has its id, before the server is
+     * asked. On a definite failure, $undo takes those rows away and nothing
+     * is left behind.
+     *
+     * @param array{username: string, domain: string, package_id: int, owner_id: int|null} $values
+     * @param \Closure(int): void                                                          $import
+     * @param \Closure(int): void                                                          $undo
+     * @param array<string, mixed>                                                         $details for the audit log
+     *
+     * @return array{0: int, 1: Outcome} the account's id, and how the creation went
+     */
+    public function restore(?Identity $actor, ?Request $request, string $loginId, array $values, \Closure $import, \Closure $undo, array $details = []): array
+    {
+        $package = $this->packages->byId($values['package_id']) ?? throw new \LogicException('package vanished');
+        $id = $this->accounts->insert([
+            'login_id' => (int) $loginId,
+            'username' => $values['username'],
+            'domain' => $values['domain'],
+            'package_id' => (int) $package['id'],
+            'owner_id' => $values['owner_id'],
+            'status' => Accounts::CREATING,
+        ]);
+        $import($id);
+
+        $outcome = $this->start($id, 'account.create', ['username' => $values['username']] + self::limits($package));
+
+        if ($outcome->status === Outcome::FAILED && !\in_array($outcome->code, self::UNCERTAIN, true)) {
+            $undo($id);
+            $this->users->delete($loginId);
+            $this->accounts->delete($id);
+        }
+
+        $this->audit->record('account.create', $actor, $request, $values['username'], self::auditOutcome($outcome), [
+            'domain' => $values['domain'], 'package' => $package['name'], 'owner_id' => $values['owner_id'], 'restored' => true,
+        ] + $details + self::details($outcome));
+
+        return [$id, $outcome];
+    }
+
     /** Put an account on another package: new quota and shell, now. */
     public function changePackage(Identity $actor, ?Request $request, int $id, int $packageId): Outcome
     {

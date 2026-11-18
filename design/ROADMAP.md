@@ -875,6 +875,94 @@ the SSH key manager).
 
 **Exit:** a full account is restored onto a clean server from S3 and works.
 
+In two parts: M8a (destinations, schedule, runs, retention) and M8b
+(restore: files, databases and mailboxes by the owner, whole accounts by
+the administrator, including terminated ones and onto another server;
+downloads; S3 tested against MinIO).
+
+**M8a: Backups. Built 2026-11-18.**
+- **restic, run by the agent.** One repository per destination: a local
+  folder, an SFTP server (with the agent's own key, shown to authorize), any
+  S3-compatible store (AWS, Wasabi, Backblaze's S3 API, MinIO…) or
+  Backblaze B2. The agent keeps the credentials and makes each repository's
+  password (random, never shown by the panel; root prints it with
+  `lpa backup-password <id>`). A destination is kept only once restic has
+  opened or made its repository; one with another password is refused.
+- **A run** backs each account up as one snapshot: its home (not `tmp/`), a
+  dump of each of its databases, and `lpanel.json`, the panel's description
+  of it (its rows in every module, its package, its owner's login without
+  second-factor secrets): what a restore on another server needs. Then that
+  account's retention (daily, weekly, monthly); space is freed once a week.
+  One account failing does not stop the others; one run at a time, in the
+  background, followed by the panel (`backup:settle`).
+- **Admin panel → Backups** (capability `server.backups`): the schedule
+  (daily, at a time, to a destination) and retention; destinations (add,
+  change with or without new keys, remove); runs with each account's
+  outcome and failures; back up every account now; one account's snapshots.
+  The account page shows its last backup, with "Back up now".
+- **Where it shows:** the API (`/admin/api/v1/backups`, `…/settings`,
+  `…/destinations[/{id}]`, `…/runs[/{id}]`,
+  `/admin/api/v1/accounts/{user}/backups`) and `lpanel backup:destinations|
+  destination-add|destination-change|destination-remove|settings|run|runs|
+  snapshots|settle|due` (keys on standard input). Every change is audited
+  (`backup.*`), never a secret.
+- **Installer:** restic from EPEL; `/etc/lpa/backup`, `/var/lib/lpa/backup`
+  and `/var/cache/lpa/restic`, root's alone.
+- **Tests:** Go (destinations and their checks, secrets kept and never
+  answered, the SFTP key, runs, dumps of the account's own databases only,
+  retention, warnings and failures, one run at a time; and the real restic
+  with `LPA_RESTIC=1`); PHP 172; `tests/e2e/install.sh` with the real
+  restic (a local and an SFTP destination, every account, the snapshot's
+  files, dumps and description, retention, a foreign repository refused,
+  the panel and the API): `WEB=apache` 285 checks, `WEB=nginx`
+  286, `WEB=hybrid` 290; `tests/e2e/agent.sh` 37.
+- **Not yet:** see M8b.
+
+**M8b: Restores. Built 2026-11-19.**
+- **By the owner** (User panel → Backups, with the package's `backups`
+  feature): the account's snapshots at the scheduled destination, browsed
+  folder by folder; files and folders put back in place (newer files stay)
+  or into `restored-<time>/`; a mailbox or a database put back; everything
+  put back; archives of the snapshot, a folder or a database made in the
+  home's `lpanel-backups/`.
+- **By the administrator** (Admin panel → Backups → Restore, and each
+  account's "Snapshots and restore"): the same for any account and any
+  destination; every account a destination has, on this server or not; an
+  account that is not here (terminated, or another server's) made again
+  from its snapshot: login with its password, domains, mail, databases with
+  their users and grants, DNS, FTP, SSH keys, package (made if missing) and
+  reseller, then its files and data. A repository another server made is
+  added with that server's password ("Moving from another server?").
+- **Agent:** `backup.files`, `backup.meta`, `backup.restore`,
+  `backup.download`; restores go through a root-only staging folder and an
+  `os.Root` on the home (no link followed out of it, hard links replaced),
+  as the owner's; SELinux labels restored.
+- **The export** now holds every table (redirects, protected folders,
+  grants, DNS records and autoresponders were missing from M8a's) and the
+  reseller (format 2).
+- **Where it shows:** the API (`/admin/api/v1/backups/snapshots[/{id}/plan]`,
+  `…/restores[/{id}]`, `/admin/api/v1/accounts/{user}/backups/files|restores|downloads`)
+  and `lpanel backup:accounts|files|restore|recreate|download|restores`,
+  `backup:destination-add --existing`. Audited: `backup.restore`,
+  `backup.restored`, `backup.download`, `backup.download_ready`,
+  `backup.account_restore`.
+- **Also fixed:** the agent and authd stayed in `init_t` on SELinux servers
+  (systemd's `NoNewPrivileges`), which broke FTPS and root sign-in on a real
+  AlmaLinux 9.9 install; `dist/installer/diagnose.sh` collects what such a
+  problem needs.
+- **Tests:** Go (restores in place and into a folder, links and other
+  accounts' snapshots refused, databases, listings, downloads, another
+  server's password; the real restic with `LPA_RESTIC=1`); PHP 176;
+  `tests/e2e/install.sh` (files, folder, database, mailbox, downloads, the
+  panels, the API, and a terminated account made again through the
+  repository added as another server would add it): `WEB=apache`
+  E2E8B_APACHE checks, `WEB=nginx` E2E8B_NGINX, `WEB=hybrid` E2E8B_HYBRID;
+  `tests/e2e/agent.sh` E2E8B_AGENT.
+- **Not yet:** S3 against a real store in the tests (MinIO no longer
+  publishes binaries or images; another S3 server is to be chosen),
+  `restic check` on a schedule, certificates and sub-users in snapshots,
+  the panel's own database and settings in a server snapshot.
+
 ### M9: Security
 - Firewall manager, IP and country lists.
 - Built-in brute-force blocking.

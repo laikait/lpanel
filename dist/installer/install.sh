@@ -84,7 +84,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim, Dovecot, Rspamd, ClamAV, Pure-FTPd and bubblewrap)"
+step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim, Dovecot, Rspamd, ClamAV, Pure-FTPd, bubblewrap and restic)"
 
 rpm -q epel-release >/dev/null 2>&1 || dnf -y -q install epel-release
 rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
@@ -109,7 +109,8 @@ dnf -y -q install \
     exim dovecot dovecot-pigeonhole \
     rspamd clamd clamav-update \
     pure-ftpd \
-    openssh-server openssh-clients bubblewrap rsync git-core
+    openssh-server openssh-clients bubblewrap rsync git-core \
+    restic
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -622,6 +623,15 @@ fi
 rm -f /tmp/lpanel-sshd-test
 
 # ---------------------------------------------------------------------------
+step "Backups (restic)"
+# The agent's: destinations with their credentials and each repository's
+# password (root's alone), the stage where an account's database dumps wait
+# while it is backed up, and restic's cache. Destinations are set up in the
+# Admin panel, Backups.
+install -d -m 0700 -o root -g root /etc/lpa/backup /var/lib/lpa/backup /var/cache/lpa /var/cache/lpa/restic
+note "restic $(restic version 2>/dev/null | awk '{print $2}'): add a destination in the Admin panel, Backups"
+
+# ---------------------------------------------------------------------------
 step "Services"
 
 for unit in lpa.service lpanel-authd.service lpanel-authd.socket lpanel-php-fpm.service \
@@ -668,6 +678,7 @@ systemctl enable -q --now lpa.service lpanel-authd.socket lpanel-php-fpm.service
 # Restarted even when already running, so a rerun brings new binaries, units
 # and SELinux domains into effect (authd's socket is made again with its label).
 systemctl restart lpa.service lpanel-authd.socket lpanel-php-fpm.service lpanel-nginx.service
+systemctl try-restart lpanel-authd.service   # a running one keeps its old domain otherwise
 for _ in $(seq 50); do [ -S /run/lpa/lpa.sock ] && [ -S /run/lpanel/php-fpm.sock ] && break; sleep 0.2; done
 
 # The hostname AutoSSL gets the panel's own certificate for: --hostname, or
@@ -720,6 +731,16 @@ ok=1
 curl -ksf -o /dev/null https://127.0.0.1:7443/health && note "Admin panel answers on 7443" || { note "FAILED: nothing answers on 7443"; ok=0; }
 curl -ksf -o /dev/null https://127.0.0.1:7444/health && note "User panel answers on 7444" || { note "FAILED: nothing answers on 7444"; ok=0; }
 if runuser -u lpanel -- $PHP "$PANEL/laika" agent:ping >/dev/null 2>&1; then note "the panel reaches the agent"; else note "FAILED: the panel cannot reach the agent"; ok=0; fi
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    # A program left in init_t (systemd's own domain) answers, but is refused
+    # much of its work: certificates, sites, Let's Encrypt, root's password.
+    # authd starts on its first sign-in, so it is checked only when it runs.
+    ctx() { local pid; pid=$(systemctl show -p MainPID --value "$1"); [ "${pid:-0}" != 0 ] && ps -o label= -p "$pid" 2>/dev/null; }
+    lpa_ctx=$(ctx lpa.service || true)
+    authd_ctx=$(ctx lpanel-authd.service || true)
+    case "$lpa_ctx" in *:lpanel_agent_t:*) note "the agent runs in its SELinux domain" ;; *) note "FAILED: the agent runs as ${lpa_ctx:-nothing}, not lpanel_agent_t"; ok=0 ;; esac
+    case "$authd_ctx" in *:lpanel_authd_t:*|"") ;; *) note "FAILED: the root password check runs as $authd_ctx, not lpanel_authd_t"; ok=0 ;; esac
+fi
 [ "$ok" -eq 1 ] || die "the installation finished but does not work yet; see journalctl -u lpa -u lpanel-php-fpm -u lpanel-nginx."
 
 cat <<DONE

@@ -1,0 +1,26 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Backups.title'|local }}</h2>
+            <p>{% if backup_last %}{{ 'Backups.card_last'|local({at: backup_last.finished_at ? backup_last.finished_at|when : '—'}) }}{% else %}{{ 'Backups.card_never'|local }}{% endif %}</p>
+        </div>
+        {% if backup_last %}{% if backup_last.ok %}<span class="badge ok">{{ 'Backups.state_done'|local }}</span>{% else %}<span class="badge bad">{{ 'Backups.state_failed'|local }}</span>{% endif %}{% endif %}
+    </div>
+    <div class="card-body">
+        {% if backup_last and not backup_last.ok %}<div class="alert alert-error" style="margin-top:0">{{ icon('alert') }}<p><span class="mono">{{ backup_last.error }}</span></p></div>{% endif %}
+        {% if backup_last and backup_last.ok %}
+            <dl class="facts">
+                <dt>{{ 'Backups.snapshot'|local }}</dt><dd class="mono">{{ backup_last.snapshot|slice(0, 8) }}</dd>
+                <dt>{{ 'Backups.files'|local }}</dt><dd>{{ backup_last.files|number_format }}{% if backup_last.databases %} · {{ 'Backups.card_databases'|local({n: backup_last.databases}) }}{% endif %}</dd>
+                {% if backup_last.warning %}<dt>{{ 'Backups.warning'|local }}</dt><dd>{{ backup_last.warning }}</dd>{% endif %}
+            </dl>
+        {% endif %}
+        <div class="backup-card-actions">
+            <form method="post" action="{{ backup_now_url }}">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <input type="hidden" name="username" value="{{ backup_username }}">
+                <button class="btn btn-sm" type="submit">{{ icon('archive') }}{{ 'Backups.back_up_now'|local }}</button>
+            </form>
+            <a class="btn btn-sm btn-ghost" href="{{ backup_snapshots_url }}">{{ icon('refresh') }}{{ 'Backups.see_snapshots'|local }}</a>
+        </div>
+    </div>
+</div>

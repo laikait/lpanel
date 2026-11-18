@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"lpa/internal/accounts"
+	"lpa/internal/backup"
 	"lpa/internal/certs"
 	"lpa/internal/config"
 	"lpa/internal/dns"
@@ -63,6 +64,20 @@ func main() {
 		err = printJSON(ops.ReadFacts(sysinfo.New(), version, time.Now()))
 	case "ops":
 		fmt.Println(strings.Join(registry(config.Defaults(), nil, time.Now(), false).Names(), "\n"))
+	case "backup-password":
+		// Root's own copy of a destination's repository password, to keep
+		// somewhere safe: without it, nothing there can be restored on
+		// another server. No operation returns it.
+		if len(os.Args) != 3 {
+			usage()
+			os.Exit(2)
+		}
+		b := &backup.Manager{}
+		b.Defaults()
+		var pw string
+		if pw, err = b.Password(os.Args[2]); err == nil {
+			fmt.Println(pw)
+		}
 	case "version", "-v", "--version":
 		fmt.Println(version)
 	default:
@@ -76,7 +91,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: lpa serve [-config path] | facts | ops | version")
+	fmt.Fprintln(os.Stderr, "usage: lpa serve [-config path] | facts | ops | backup-password <destination id> | version")
 }
 
 func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bool) *ops.Registry {
@@ -136,6 +151,8 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	ftps.Defaults()
 	keys := &sshkeys.Manager{Owner: acc.Owner, Log: log}
 	keys.Defaults()
+	backups := &backup.Manager{Owner: acc.Owner, Databases: dbs.Databases, Log: log, SELinux: acc.SELinux}
+	backups.Defaults()
 	// The hostname certificate serves mail and FTP too; each server on its
 	// own, so one that cannot take it does not keep the other from it.
 	tls.AfterHost = func(ctx context.Context) error {
@@ -169,6 +186,7 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	ops.Mail(reg, mails)
 	ops.FTP(reg, ftps)
 	ops.SSH(reg, keys)
+	ops.Backup(reg, backups)
 	self, err := os.Executable()
 	if err != nil {
 		self = "/usr/local/lpa/bin/lpa"

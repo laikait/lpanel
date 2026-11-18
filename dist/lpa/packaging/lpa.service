@@ -16,8 +16,12 @@ RuntimeDirectoryMode=0755
 StateDirectory=lpa
 StateDirectoryMode=0700
 UMask=0077
-# The agent needs root for its work, but nothing new beyond that.
-NoNewPrivileges=yes
+# No NoNewPrivileges=: the agent runs system tools (useradd, restorecon,
+# mariadb, restic...) that SELinux moves into their own domains. Under
+# NoNewPrivileges, the kernel refuses each of those moves unless the policy
+# allows it, one tool at a time. Settings that would imply NoNewPrivileges
+# (SystemCallFilter=, RestrictAddressFamilies=...) are left out for the same
+# reason.
 ProtectClock=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes

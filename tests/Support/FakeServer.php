@@ -159,8 +159,29 @@ final class FakeServer
     /** @var bool when true, ssh.apply refuses every list (as the agent does a bad key) */
     public bool $sshRefuse = false;
 
+    /** @var array<string, array<string, mixed>> agent id (d1…) => what backup.destination kept, secrets included */
+    public array $backupDestinations = [];
+
+    /** @var list<array<string, mixed>> what each backup.run was asked */
+    public array $backupRuns = [];
+
+    /** @var bool while true, a backup run is still going on (op.status says running) */
+    public bool $backupHold = false;
+
+    /** @var array<string, string> account => why its backup fails */
+    public array $backupFail = [];
+
+    /** @var bool when true, backup.destination cannot reach the destination */
+    public bool $backupUnreachable = false;
+
     /** @var array<string, array<string, mixed>> request id => response */
     private array $journal = [];
+
+    /** @var list<array<string, mixed>> what each backup.restore and backup.download was asked, with the op */
+    public array $backupRestores = [];
+
+    /** @var list<string> ids of backup runs (op.status answers "running" for them while backupHold) */
+    private array $backupIds = [];
 
     private int $nextUid = 1001;
 
@@ -172,10 +193,78 @@ final class FakeServer
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
-        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply'] as $op) {
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
+        $answers['op.status'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $entry = $this->journal[(string) $args['id']] ?? null;
+
+            if ($entry === null) {
+                return ['status' => 'refused', 'error' => ['code' => 'not_found', 'message' => 'no operation with that id']];
+            }
+
+            return $this->backupHold && \in_array((string) $args['id'], $this->backupIds, true) ? ['status' => 'running'] : $entry;
+        };
+        $answers['backup.status'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'running' => $this->backupHold, 'destination' => 'd1', 'current' => 'shop', 'done' => 0, 'total' => 1, 'installed' => true,
+        ]];
+        $answers['backup.snapshots'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $out = [];
+
+            foreach (\array_reverse($this->backupRuns, true) as $n => $run) {
+                foreach ($run['accounts'] as $a) {
+                    if (($args['username'] ?? '') === '' || $a['username'] === $args['username']) {
+                        $id = self::snapshotId($n, (string) $a['username']);
+                        $out[] = ['id' => $id, 'short_id' => \substr($id, 0, 8), 'time' => \sprintf('2026-11-18T02:%02d:00Z', $n % 60), 'username' => $a['username'], 'files' => 12, 'bytes' => 4096];
+                    }
+                }
+            }
+
+            return ['status' => 'done', 'result' => $out];
+        };
+        $answers['backup.files'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $snap = $this->snapshotOf((string) $args['snapshot']);
+
+            if ($snap === null || $snap['username'] !== $args['username']) {
+                return ['status' => 'failed', 'error' => ['code' => 'backup_not_in_snapshot', 'message' => 'snapshot ' . $args['snapshot'] . ' is not ' . $args['username'] . '\'s']];
+            }
+
+            $dbs = [];
+
+            foreach ($snap['meta']['tables']['db_databases'] ?? [] as $db) {
+                $dbs[] = (string) $db['name'];
+            }
+
+            $entries = $args['path'] === ''
+                ? [['name' => 'public_html', 'type' => 'dir', 'size' => 0, 'mtime' => '2026-11-17T10:00:00Z'], ['name' => '.bashrc', 'type' => 'file', 'size' => 120, 'mtime' => '2026-11-17T10:00:00Z']]
+                : [['name' => 'index.html', 'type' => 'file', 'size' => 2048, 'mtime' => '2026-11-17T10:00:00Z']];
+
+            return ['status' => 'done', 'result' => ['snapshot' => ['id' => $args['snapshot']], 'path' => $args['path'], 'entries' => $entries, 'databases' => $args['path'] === '' ? $dbs : [], 'truncated' => false]];
+        };
+        $answers['backup.meta'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $snap = $this->snapshotOf((string) $args['snapshot']);
+
+            return $snap === null
+                ? ['status' => 'failed', 'error' => ['code' => 'backup_not_in_snapshot', 'message' => 'there is no snapshot ' . $args['snapshot']]]
+                : ['status' => 'done', 'result' => ['snapshot' => ['id' => $args['snapshot'], 'short_id' => \substr((string) $args['snapshot'], 0, 8), 'time' => '2026-11-18T02:30:00Z', 'username' => $snap['username']], 'meta' => $snap['meta']]];
+        };
         $answers['ftp.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
             'enabled' => true, 'installed' => true, 'running' => true, 'version' => '1.0.52',
             'logins' => \array_sum(\array_map(static fn(array $s): int => $s['suspended'] ? 0 : \count($s['users']), $this->ftp)),
@@ -308,7 +397,11 @@ final class FakeServer
         }
 
         // These run in the background: the first answer is "accepted".
-        $async = \str_starts_with($op, 'php.') || $op === 'ssl.issue' || $op === 'ssl.host_issue';
+        $async = \str_starts_with($op, 'php.') || \in_array($op, ['ssl.issue', 'ssl.host_issue', 'backup.run', 'backup.restore', 'backup.download'], true);
+
+        if (\in_array($op, ['backup.run', 'backup.restore', 'backup.download'], true)) {
+            $this->backupIds[] = $id;
+        }
 
         return ($op === 'account.terminate' && $response['status'] === 'done') || $async ? ['status' => 'accepted'] : $response;
     }
@@ -355,6 +448,10 @@ final class FakeServer
 
         if (\str_starts_with($op, 'ftp.')) {
             return $this->runFtp($op, $args);
+        }
+
+        if (\str_starts_with($op, 'backup.')) {
+            return $this->runBackup($op, $args);
         }
 
         if ($op === 'ssh.apply') {
@@ -500,6 +597,112 @@ final class FakeServer
         $this->ftp[$name] = $args;
 
         return ['status' => 'done', 'result' => ['users' => \count($logins), 'ended' => $ended]];
+    }
+
+    /**
+     * The backup operations, checked as the agent checks them.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    private function runBackup(string $op, array $args): array
+    {
+        $fail = static fn(string $code, string $message): array => ['status' => 'failed', 'error' => ['code' => $code, 'message' => $message]];
+
+        if ($op === 'backup.destination') {
+            if (\preg_match('/^d\d+$/', (string) ($args['id'] ?? '')) !== 1 || !\in_array($args['type'] ?? '', ['local', 'sftp', 's3', 'b2'], true)) {
+                return $fail('bad_args', 'not a destination');
+            }
+
+            if ($this->backupUnreachable) {
+                return $fail('backup_unreachable', 'the destination did not answer: dial tcp: i/o timeout');
+            }
+
+            $old = $this->backupDestinations[$args['id']] ?? [];
+            $created = $old === [];
+            $this->backupDestinations[$args['id']] = $args + \array_intersect_key($old, ['access_key' => 0, 'secret_key' => 0]);
+
+            return ['status' => 'done', 'result' => [
+                'destination' => \array_diff_key($args, ['access_key' => 0, 'secret_key' => 0]),
+                'created' => $created,
+                'public_key' => $args['type'] === 'sftp' ? 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyForTests lpanel-backup' : '',
+                'snapshots' => 0,
+            ]];
+        }
+
+        if ($op === 'backup.destination_remove') {
+            if (!isset($this->backupDestinations[$args['id'] ?? ''])) {
+                return $fail('backup_no_destination', 'there is no destination ' . ($args['id'] ?? ''));
+            }
+
+            unset($this->backupDestinations[$args['id']]);
+
+            return ['status' => 'done', 'result' => ['removed' => true]];
+        }
+
+        if (!isset($this->backupDestinations[$args['destination'] ?? ''])) {
+            return $fail('backup_no_destination', 'there is no destination');
+        }
+
+        if ($op === 'backup.restore' || $op === 'backup.download') {
+            $snap = $this->snapshotOf((string) $args['snapshot']);
+
+            if ($snap === null || $snap['username'] !== $args['username']) {
+                return $fail('backup_not_in_snapshot', 'snapshot ' . $args['snapshot'] . ' is not ' . $args['username'] . '\'s');
+            }
+
+            if (!isset($this->users[$args['username']])) {
+                return $fail('no_such_account', 'there is no user named ' . $args['username']);
+            }
+
+            $this->backupRestores[] = ['op' => $op] + $args;
+
+            return ['status' => 'done', 'result' => $op === 'backup.download'
+                ? ['file' => 'lpanel-backups/' . (($args['database'] ?? '') !== '' ? $args['database'] . '-20261118-023000.sql.gz' : $args['username'] . '-20261118-023000.tar.gz'), 'bytes' => 4096]
+                : ['files' => \count($args['paths']) * 3, 'bytes' => 6144, 'skipped' => 0, 'folder' => ($args['folder'] ?? false) ? 'restored-20261119-101500' : '', 'databases' => $args['databases'], 'warnings' => []]];
+        }
+
+        // backup.run
+
+        $this->backupRuns[] = $args;
+        $out = ['accounts' => [], 'ok' => 0, 'failed' => 0, 'pruned' => (bool) $args['prune']];
+
+        foreach ($args['accounts'] as $a) {
+            $why = !isset($this->users[$a['username']]) ? 'there is no user named ' . $a['username'] : ($this->backupFail[$a['username']] ?? null);
+            $out['accounts'][] = $why === null
+                ? ['username' => $a['username'], 'ok' => true, 'snapshot' => \hash('sha256', $a['username'] . \count($this->backupRuns)), 'files' => 12, 'bytes' => 4096, 'added' => 1024, 'databases' => 0, 'seconds' => 0.5, 'forgotten' => 0]
+                : ['username' => $a['username'], 'ok' => false, 'error' => $why];
+            $out[$why === null ? 'ok' : 'failed']++;
+        }
+
+        return ['status' => 'done', 'result' => $out];
+    }
+
+    /**
+     * A snapshot backup.snapshots listed, as the run that made it had it.
+     *
+     * @return array{username: string, meta: array<string, mixed>}|null
+     */
+    private function snapshotOf(string $id): ?array
+    {
+        foreach ($this->backupRuns as $n => $run) {
+            foreach ($run['accounts'] as $a) {
+                $full = self::snapshotId($n, (string) $a['username']);
+
+                if ($id === $full || $id === \substr($full, 0, 8)) {
+                    return ['username' => (string) $a['username'], 'meta' => \is_array($a['meta']) ? $a['meta'] : []];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /** The id of the snapshot run $n made of an account. */
+    public static function snapshotId(int $n, string $username): string
+    {
+        return \hash('sha256', $n . '/' . $username);
     }
 
     /**

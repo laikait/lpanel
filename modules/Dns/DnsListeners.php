@@ -28,7 +28,7 @@ final class DnsListeners
     {
         match ($op) {
             'account.terminate' => $this->zones->deleteAccount((int) $row['id']),
-            'account.create' => $this->sync->reconcile((int) $row['id']),
+            'account.create', 'account.restore' => $this->sync->reconcile((int) $row['id']),
             default => null,
         };
     }

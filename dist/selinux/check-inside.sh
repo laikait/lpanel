@@ -66,6 +66,11 @@ check "Apache's site files are its config"       label /etc/httpd/lpanel/sites/s
 echo "== the two root programs"
 check "systemd starts lpa in lpanel_agent_t"     trans init_t lpanel_agent_exec_t lpanel_agent_t
 check "and authd in lpanel_authd_t"              trans init_t lpanel_authd_exec_t lpanel_authd_t
+# Units with NoNewPrivileges=yes: without these the switch is refused and
+# the program stays in init_t (found on a real AlmaLinux 9.9 server).
+check "even under NoNewPrivileges (lpa)"         allowed -s init_t -t lpanel_agent_t -c process2 -p nnp_transition
+check "even under NoNewPrivileges (authd)"       allowed -s init_t -t lpanel_authd_t -c process2 -p nnp_transition
+check "authd can run PAM's unix_chkpwd"          allowed -s lpanel_authd_t -t chkpwd_t -c process2 -p nnp_transition
 check "lpa keeps root's powers (unconfined)"     attr_has unconfined_domain_type lpanel_agent_t
 check "authd too"                                attr_has unconfined_domain_type lpanel_authd_t
 check "systemd can make authd's socket"          allowed -s init_t -t lpanel_sock_t -c sock_file -p create

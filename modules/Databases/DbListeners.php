@@ -34,6 +34,7 @@ final class DbListeners
     {
         match ($op) {
             'account.terminate' => $this->sync->forget((int) $row['id']),
+            'account.restore' => $this->sync->touch((int) $row['id']),
             'account.suspend', 'account.unsuspend' => $this->databases->count((int) $row['id']) > 0 || $this->sync->stateOf((int) $row['id']) !== null
                 ? $this->sync->touch((int) $row['id'])
                 : null,

@@ -27,9 +27,12 @@ final class SshListeners
      */
     public function accountChanged(string $op, array $row): void
     {
-        if ($op === 'account.terminate') {
-            $this->sync->forget((int) $row['id']);
-        }
+        match ($op) {
+            'account.terminate' => $this->sync->forget((int) $row['id']),
+            // Made again from a backup (Backups): its keys, on the server.
+            'account.restore' => $this->sync->touch((int) $row['id']),
+            default => null,
+        };
     }
 
     /**

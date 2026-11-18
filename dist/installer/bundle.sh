@@ -76,15 +76,16 @@ cp dist/authd/packaging/authd.json dist/authd/packaging/lpanel-authd.service \
 install -m 0644 dist/selinux/bin/lpanel.pp "$out/packaging/lpanel.pp"
 install -m 0755 dist/selinux/setup.sh "$out/packaging/selinux-setup.sh"
 install -m 0755 dist/installer/install.sh "$out/install.sh"
+install -m 0755 dist/installer/diagnose.sh "$out/diagnose.sh"
 echo "$version" > "$out/VERSION"
 
 # Built on Windows, the files lose their execute bits; the archive sets them
 # for the programs (bin/, install.sh, selinux-setup.sh).
 rm -f "dist/build/lpanel-${version}.tar" "dist/build/lpanel-${version}.tar.gz"
 tar -C dist/build -cf "dist/build/lpanel-${version}.tar" \
-    --exclude="lpanel-${version}/bin/*" --exclude="lpanel-${version}/install.sh" \
+    --exclude="lpanel-${version}/bin/*" --exclude="lpanel-${version}/install.sh" --exclude="lpanel-${version}/diagnose.sh" \
     --exclude="lpanel-${version}/packaging/selinux-setup.sh" "lpanel-${version}"
 tar -C dist/build -rf "dist/build/lpanel-${version}.tar" --mode=0755 \
-    "lpanel-${version}/bin" "lpanel-${version}/install.sh" "lpanel-${version}/packaging/selinux-setup.sh"
+    "lpanel-${version}/bin" "lpanel-${version}/install.sh" "lpanel-${version}/diagnose.sh" "lpanel-${version}/packaging/selinux-setup.sh"
 gzip -9 "dist/build/lpanel-${version}.tar"
 echo "dist/build/lpanel-${version}.tar.gz ($(du -h "dist/build/lpanel-${version}.tar.gz" | cut -f1))"

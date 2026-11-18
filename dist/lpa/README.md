@@ -67,6 +67,7 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `internal/files` | the file manager: a worker as the account's user, inside its home (`os.Root`), and the staging folder |
 | `internal/ftp` | FTP logins on Pure-FTPd (PureDB), its configuration, its certificate and its sessions |
 | `internal/sshkeys` | accounts' SSH keys, in files sshd reads instead of `~/.ssh` |
+| `internal/backup` | backups with restic: destinations (with their secrets and repository passwords), runs, retention, snapshots |
 | `cmd/lpanel-jail` | the login shell of accounts with SSH or SFTP: runs everything inside bubblewrap (a separate binary; not part of lpa) |
 | `internal/sysexec` | runs `useradd`, `usermod`, `userdel`, `pkill`, `restorecon`, `httpd`, `systemctl` and Remi's `php-fpm` by absolute path, no shell, fixed environment |
 | `packaging/` | the systemd unit and the default configuration |
@@ -141,6 +142,15 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `ftp.settings` | change | `{tls, passive_from, passive_to, passive_ip, max_clients, max_per_ip}`: `pure-ftpd.conf`, whole; Pure-FTPd restarts, and the old file comes back if it will not start |
 | `ftp.info` | read-only | Pure-FTPd's state and version, the logins, the settings applied and every session with its account |
 | `ftp.kill` | change | `{pid, username?}`: end one session listed by `pure-ftpwho` (with `username`, only one of that account's) |
+| `backup.destination` | change | `{id, type, path \| host, port, user \| endpoint, scheme, region, bucket, prefix, access_key?, secret_key?}`: checks a destination, keeps it with its secrets (empty secrets keep the ones there) and makes its repository with a new random password; a destination that does not answer is not kept |
+| `backup.destination_remove` | change | `{id}`: forgets a destination and its password; what was backed up stays there |
+| `backup.run` | change, background | `{destination, accounts: [{username, meta}], keep: {daily, weekly, monthly}, prune}`: one snapshot per account (home without `tmp/`, a dump of each of its databases, `meta` as `lpanel.json`), then that account's retention; one run at a time |
+| `backup.status` | read-only | the run going on now: account, done, total |
+| `backup.snapshots` | read-only | `{destination, username?}`: snapshots, newest first, with their account |
+| `backup.files` | read-only | `{destination, snapshot, username, path}`: one folder of the account's snapshot (and, at the top, the databases it holds) |
+| `backup.meta` | read-only | `{destination, snapshot}`: the snapshot's `lpanel.json`, to make its account again |
+| `backup.restore` | change, background | `{destination, snapshot, username, paths, databases, folder}`: puts paths in the home (or into `restored-<time>/`) and databases back from the account's own snapshot |
+| `backup.download` | change, background | `{destination, snapshot, username, path \| database}`: a `.tar.gz` (or `.sql.gz`) in the home's `lpanel-backups/` |
 | `ssh.apply` | change | `{username, keys: [{type, key, comment}]}`: an account's whole list of SSH public keys, written to `/etc/ssh/lpanel/keys/<account>`; an empty list removes the file |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
@@ -482,6 +492,63 @@ certificate is copied, key first, into `/etc/pki/pure-ftpd/pure-ftpd.pem`
 restarts, since it reads it at start. Sessions come from `pure-ftpwho -s`;
 `ftp.kill` signals only a process in that list. The error codes are
 `ftp_off`, `ftp_taken` and `ftp_no_session`.
+
+### Backups (`backup.*`)
+
+M8's backups are restic repositories, one per destination: a local folder
+(not in `/home`, `/etc` or another system folder), an SFTP server, an
+S3-compatible store (`s3:https://endpoint/bucket/prefix`) or Backblaze B2.
+Everything that opens a destination is the agent's, in `/etc/lpa/backup`
+(0700 root): `destinations/<id>.json` with the credentials,
+`destinations/<id>.pass` with the repository's password (64 hex characters,
+made once when the destination is first added and never changed), and
+`id_ed25519` for SFTP (one key for every SFTP destination; the answer gives
+its public half to authorize). The panel sends secrets once and never gets
+them back. Root keeps a copy of a password for disaster recovery with
+`lpa backup-password <id>`; no operation returns it.
+
+restic runs from `/usr/bin/restic` with an environment the agent builds
+(the repository, the password file, S3 or B2 keys, a cache in
+`/var/cache/lpa/restic`), never through a shell; secrets are in the
+environment, not the arguments. `backup.destination` asks `restic cat config`
+first: exit 10 (no repository) makes one, 12 (wrong password) is
+`backup_wrong_password` and the destination is not kept.
+
+`backup.run` runs in the background (the panel follows it with
+`op.status`) and backs each account up in turn: `mariadb-dump
+--single-transaction` of each database with the account's prefix (as the
+agent lists them, whatever the panel says) and the panel's description into
+`/var/lib/lpa/backup/<account>/` (0700, removed afterwards), then
+`restic backup --host lpanel --tag lpanel --tag account:<name>` of the home
+(without `tmp/`) and that folder, then `restic forget` of that account's
+snapshots beyond the retention. restic's exit 3 (some files unreadable) is a
+warning; anything else fails that account and the next one goes on. `prune`
+frees space at the end. A second run, or a destination change during a run,
+is `backup_busy`. The error codes are `backup_off` (no restic),
+`backup_no_destination`, `backup_unreachable`, `backup_wrong_password` and
+`backup_busy`.
+
+`backup.destination` may bring `password`: the repository password another
+server made (its `lpa backup-password`), for a destination added now. It
+must open the repository there (`backup_wrong_password` otherwise), and a
+destination that does not work leaves no password behind.
+
+Restores (M8b) take an account and one of its snapshots; the snapshot's
+`account:` tag must be that account (`backup_not_in_snapshot` otherwise), so
+an account is only ever given its own data. restic restores what was asked
+(`--include` of the paths in the snapshot's home, which may be another
+server's) into `/var/lib/lpa/restore/<account>-*/` (0700 root, removed
+afterwards), never into a home. The files are then copied into the home
+through an `os.Root` opened on it: a link out of the home is never followed,
+a link met where a folder goes is replaced by the folder, and each file is
+written under a temporary name and renamed over the old one (a hard link the
+owner made is replaced, not written through), as the owner's, with its mode
+(no set-id bits) and time. Files made since stay. With SELinux, `restorecon`
+labels what was put back. A database comes back by loading its dump from the
+snapshot (`restic dump`) into `mariadb` as root; only the account's own
+(by prefix). One restore or download at a time (`backup_busy`).
+`backup.download` writes into `lpanel-backups/` (0700, the owner's) the same
+way.
 
 ### SSH and SFTP (`ssh.apply`, `cmd/lpanel-jail`)
 

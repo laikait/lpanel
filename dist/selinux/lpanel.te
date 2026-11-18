@@ -21,6 +21,24 @@ type lpanel_authd_exec_t;
 init_daemon_domain(lpanel_authd_t, lpanel_authd_exec_t)
 unconfined_domain(lpanel_authd_t)
 
+#
+# systemd starts authd with NoNewPrivileges=yes. Under it the kernel allows a
+# domain change only when the policy says so (nnp_transition). Without this
+# rule, authd silently stays in init_t, which may not do its work. The rule
+# for lpa is there too, so the agent's unit can be hardened the same way
+# later. authd, still under NoNewPrivileges, runs unix_chkpwd, which PAM uses
+# to read /etc/shadow when SELinux is on; that program's own domain is
+# narrower than authd's.
+#
+
+gen_require(`
+	type init_t;
+	type chkpwd_t;
+')
+
+allow init_t { lpanel_agent_t lpanel_authd_t }:process2 { nnp_transition nosuid_transition };
+allow lpanel_authd_t chkpwd_t:process2 { nnp_transition nosuid_transition };
+
 # /run/lpa and /run/lpanel-authd, and the sockets in them.
 type lpanel_sock_t;
 files_pid_file(lpanel_sock_t)

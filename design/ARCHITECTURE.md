@@ -228,6 +228,26 @@ private half it shows once and never keeps), the agent writes them to
 drop-in reads keys only from there for the `lpanel-users` group, with
 passwords and forwarding off.
 
+Backups (M8) are restic repositories the agent writes to: a local folder,
+SFTP, any S3-compatible store or Backblaze B2. The Admin panel adds a
+destination (the agent checks it and makes the repository, keeping its
+credentials and a random password to itself) and sets the daily schedule
+and retention; the panel's scheduler starts the run (`backup.run`, in the
+background) and follows it. Each account becomes one snapshot a run: its
+home, a dump of each of its databases, and the panel's description of it
+(`lpanel.json`: its rows in every module, its package and its owner's login),
+which is what a restore on another server starts from.
+
+Restores (M8b) go the other way: the owner (User panel → Backups) or the
+administrator browses an account's snapshot folder by folder and puts files,
+a mailbox, a database or all of it back (`backup.restore`), or has an
+archive made in the home (`backup.download`). An account that is not on the
+server (terminated, or on another server whose repository was added here
+with its password) is made again from its snapshot's `lpanel.json`: the
+panel writes its login, row and module rows with new ids, asks the agent to
+create it, lets every module apply its rows (`accounts.changed`
+`account.restore`), then has the files and databases put back.
+
 Exim finds a domain's files with `dsearch`, which answers only with a name
 that is in the folder, so a name from a message never becomes part of a
 path. Exim hands local mail to Dovecot over LMTP and checks logins through
@@ -348,6 +368,11 @@ user, not from SELinux.
 | `/etc/pki/pure-ftpd/pure-ftpd.pem` | the hostname's key and certificate for FTPS (0600 root), refreshed by lpa when it changes |
 | `/usr/libexec/lpanel/jail-shell`, `jail-sftp` | accounts' login shells (`lpanel-jail`): everything over SSH runs inside bubblewrap |
 | `/etc/ssh/sshd_config.d/40-lpanel.conf` | sshd's rules for the `lpanel-users` group (installer): keys from the panel only, no passwords, no forwarding |
+| `/etc/lpa/backup/` | backup destinations (lpa; 0700 root): `destinations/<id>.json` with credentials, `<id>.pass` the repository password, `id_ed25519` the SFTP key |
+| `/var/lib/lpa/backup/<account>/` | an account's database dumps and `lpanel.json` while it is backed up (removed afterwards) |
+| `/var/cache/lpa/restic/` | restic's cache |
+| `/var/lib/lpa/restore/` | what restic restores, before it is copied into a home (lpa; 0700, emptied after each restore) |
+| `~/lpanel-backups/` | archives made for the account's owner to download (0700, the owner's) |
 | `/etc/ssh/lpanel/keys/<account>` | an account's SSH public keys (lpa, `ssh.apply`; root:account 0640), each `restrict,pty` |
 | `/var/lib/lpanel/files/` | the file manager's staging folder (0700 lpanel): uploads (also PHP's upload folder), saved files and downloads on their way to and from the agent, under 64 hex digits; `files:sweep` removes what nobody collected |
 | `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs (`lpanel_agent_exec_t`, `lpanel_authd_exec_t`) |
