@@ -365,3 +365,46 @@ func TestCreateLabelsTheHomeWhenSELinuxIsOn(t *testing.T) {
 		t.Fatal("the account was left behind")
 	}
 }
+
+func TestTheSSHGroupAndJailShells(t *testing.T) {
+	m, sys, _ := setup(t)
+	// Before the installer makes the group, accounts are made without it.
+	if _, err := m.Create(context.Background(), CreateArgs{Username: "shop5", Shell: "none"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sys.calls[0], "--groups") {
+		t.Errorf("useradd with a missing group: %s", sys.calls[0])
+	}
+	sys.appendLine(m.Files.Group, SSHGroup+":x:990:")
+	jail := "jail"
+	acct, err := m.Modify(context.Background(), ModifyArgs{Username: "shop5", Shell: &jail})
+	if err != nil || acct.Shell != "jail" {
+		t.Fatalf("got %+v %v", acct, err)
+	}
+	if last := sys.calls[len(sys.calls)-1]; last != "usermod --append --groups "+SSHGroup+" shop5" {
+		t.Errorf("an account made before the group did not join it: %s", last)
+	}
+	sys.calls = nil
+	if _, err := m.Create(context.Background(), CreateArgs{Username: "shop6", Shell: "sftp"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sys.calls[0], "--shell "+Shells["sftp"]) || !strings.Contains(sys.calls[0], "--groups "+SSHGroup+" shop6") {
+		t.Errorf("useradd: %s", sys.calls[0])
+	}
+	// A member is not added again.
+	sys.rewrite(m.Files.Group, func(f []string) []string {
+		if f[0] == SSHGroup {
+			f[3] = "shop5,shop6"
+		}
+		return f
+	})
+	sys.calls = nil
+	if _, err := m.Modify(context.Background(), ModifyArgs{Username: "shop6", Shell: &jail}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range sys.calls {
+		if strings.Contains(c, "--append") {
+			t.Errorf("joined twice: %s", c)
+		}
+	}
+}

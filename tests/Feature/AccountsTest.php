@@ -60,9 +60,9 @@ final class AccountsTest extends TestCase
         self::assertSame('shop.example.com', $account['domain']);
         self::assertSame((int) $this->rex, (int) $account['owner_id']);
         self::assertSame('/home/shop', $account['home']);
-        // The kernel quota the agent was asked for: 2048 MB, 50 000 files, and a shell because of "ssh".
+        // The kernel quota the agent was asked for: 2048 MB, 50 000 files, and the jailed shell because of "ssh".
         self::assertSame(['blocks_kib' => 2048 * 1024, 'inodes' => 50000], $this->server->users['shop']['quota']);
-        self::assertSame('bash', $this->server->users['shop']['shell']);
+        self::assertSame('jail', $this->server->users['shop']['shell']);
 
         $page = $rex->get('/admin/accounts/' . $account['id'])->body();
         self::assertStringContainsString('shop.example.com', $page);

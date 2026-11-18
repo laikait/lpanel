@@ -111,3 +111,18 @@ func eachLine(path string, fn func(fields []string)) error {
 	}
 	return sc.Err()
 }
+
+// inGroup says whether user is a member of group (listed in its fourth field).
+func (f Files) inGroup(group, user string) (bool, error) {
+	found := false
+	err := eachLine(f.Group, func(fields []string) {
+		if len(fields) >= 4 && fields[0] == group {
+			for _, m := range strings.Split(fields[3], ",") {
+				if m == user {
+					found = true
+				}
+			}
+		}
+	})
+	return found, err
+}

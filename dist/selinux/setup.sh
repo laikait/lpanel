@@ -19,14 +19,15 @@ if [ "${#noreload[@]}" -gt 0 ]; then semodule -n -i "$pp"; else semodule -i "$pp
 # those requests on to it), and Apache's behind nginx (hybrid; 8080 is
 # otherwise a proxy-cache port), are web ports.
 for port in 7443 7444 7449 8080; do
-    semanage port "${noreload[@]}" -a -t http_port_t -p tcp "$port" 2>/dev/null \
-        || semanage port "${noreload[@]}" -m -t http_port_t -p tcp "$port"
+    # Newer semanage modifies an existing port itself and says so; quietly.
+    semanage port "${noreload[@]}" -a -t http_port_t -p tcp "$port" >/dev/null 2>&1 \
+        || semanage port "${noreload[@]}" -m -t http_port_t -p tcp "$port" >/dev/null
 done
 
 # Rspamd's worker, which Exim asks about mail from outside, is a spam
 # checker's port: EL's policy lets Exim connect to those.
-semanage port "${noreload[@]}" -a -t spamd_port_t -p tcp 11333 2>/dev/null \
-    || semanage port "${noreload[@]}" -m -t spamd_port_t -p tcp 11333
+semanage port "${noreload[@]}" -a -t spamd_port_t -p tcp 11333 >/dev/null 2>&1 \
+    || semanage port "${noreload[@]}" -m -t spamd_port_t -p tcp 11333 >/dev/null
 
 # Releases before the module labelled the panel's code with local rules; the
 # module's own rules replace them.

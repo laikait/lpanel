@@ -45,7 +45,9 @@ done
 step "Checking this server"
 
 [ "$(id -u)" -eq 0 ] || die "run the installer as root."
-[ -d "$BUNDLE/panel" ] && [ -x "$BUNDLE/bin/lpa" ] && [ -x "$BUNDLE/bin/lpanel-authd" ] \
+# -f, not -x: a bundle unpacked from a copy may have lost its execute bits;
+# each binary is installed with its mode set (install -m 0755).
+[ -d "$BUNDLE/panel" ] && [ -f "$BUNDLE/bin/lpa" ] && [ -f "$BUNDLE/bin/lpanel-authd" ] && [ -f "$BUNDLE/bin/lpanel-jail" ] \
     || die "this is not an LPanel bundle (missing panel/ or bin/). Build one with dist/installer/bundle.sh."
 
 . /etc/os-release
@@ -82,7 +84,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim, Dovecot, Rspamd and ClamAV)"
+step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim, Dovecot, Rspamd, ClamAV, Pure-FTPd and bubblewrap)"
 
 rpm -q epel-release >/dev/null 2>&1 || dnf -y -q install epel-release
 rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
@@ -106,7 +108,8 @@ dnf -y -q install \
     pdns pdns-backend-mysql bind-utils \
     exim dovecot dovecot-pigeonhole \
     rspamd clamd clamav-update \
-    pure-ftpd
+    pure-ftpd \
+    openssh-server openssh-clients bubblewrap rsync git-core
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -499,7 +502,7 @@ RestartSec=60
 UNIT
 systemctl daemon-reload
 systemctl try-restart rspamd >/dev/null 2>&1 || true
-note "$(rspamd --version 2>/dev/null | awk '{print "Rspamd", $NF}'), ClamAV $(clamd --version 2>/dev/null | awk '{print $2}' | cut -d/ -f1): installed"
+note "Rspamd $(rspamd --version 2>/dev/null | grep -oE '[0-9]+.[0-9]+.[0-9]+' | head -1), ClamAV $(clamd --version 2>/dev/null | awk '{print $2}' | cut -d/ -f1): installed"
 
 # ---------------------------------------------------------------------------
 step "Webmail (Roundcube $(cat "$BUNDLE/ROUNDCUBE_VERSION"))"
@@ -560,6 +563,65 @@ systemctl enable -q pure-ftpd
 note "Pure-FTPd $(rpm -q --qf '%{VERSION}' pure-ftpd): port 21 and passive ports 30000-30100, logins over TLS"
 
 # ---------------------------------------------------------------------------
+step "SSH and SFTP (jailed)"
+# An account with SSH or SFTP logs in to lpanel-jail, which runs the shell,
+# the command or the SFTP server inside the account's own sandbox
+# (bubblewrap): its home, read-only /usr, no other account. Installed under
+# two names; jail-sftp allows SFTP only.
+install -d -m 0755 -o root -g root /usr/libexec/lpanel
+install -m 0755 "$BUNDLE/bin/lpanel-jail" /usr/libexec/lpanel/jail-shell
+install -m 0755 "$BUNDLE/bin/lpanel-jail" /usr/libexec/lpanel/jail-sftp
+for sh in /usr/libexec/lpanel/jail-shell /usr/libexec/lpanel/jail-sftp; do
+    grep -qxF "$sh" /etc/shells || echo "$sh" >> /etc/shells
+done
+# Every account is in lpanel-users (the agent adds new ones); sshd's drop-in
+# gives the group its rules. Accounts made before this release join here.
+getent group lpanel-users >/dev/null || groupadd --system lpanel-users
+getent passwd | awk -F: '$5 == "lpanel account" && $3 >= 1000 { print $1 }' | while read -r u; do
+    id -nG "$u" | tr ' ' '\n' | grep -qx lpanel-users || usermod --append --groups lpanel-users "$u"
+done
+# Their keys are the agent's to write; sshd reads them as the account.
+install -d -m 0711 -o root -g root /etc/ssh/lpanel /etc/ssh/lpanel/keys
+# The SFTP server must be the program, not sshd's built-in one: the built-in
+# one would not go through the account's shell, and so not into its jail.
+if grep -Eq '^[[:space:]]*Subsystem[[:space:]]+sftp[[:space:]]+internal-sftp' /etc/ssh/sshd_config; then
+    sed -i -E 's|^([[:space:]]*Subsystem[[:space:]]+sftp[[:space:]]+)internal-sftp.*|\1/usr/libexec/openssh/sftp-server|' /etc/ssh/sshd_config
+    note "sshd: SFTP now goes through the account's shell (sftp-server instead of internal-sftp)"
+fi
+if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
+    note "WARNING: /etc/ssh/sshd_config does not include sshd_config.d; accounts' SSH rules are not in effect"
+fi
+cat > /etc/ssh/sshd_config.d/40-lpanel.conf <<'SSHD'
+# LPanel's hosting accounts (written by the installer; changes are overwritten).
+# Keys come from the panel only, never from the account's own ~/.ssh;
+# passwords are never accepted, and nothing is forwarded.
+Match Group lpanel-users
+    AuthorizedKeysFile /etc/ssh/lpanel/keys/%u
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    PermitUserRC no
+    AllowTcpForwarding no
+    AllowStreamLocalForwarding no
+    AllowAgentForwarding no
+    X11Forwarding no
+    PermitTunnel no
+    PermitTTY yes
+SSHD
+chmod 0600 /etc/ssh/sshd_config.d/40-lpanel.conf
+# A configuration sshd refuses would lock everyone out at its next restart.
+# (sshd -t needs host keys; a fresh machine makes them at first start.)
+[ -e /etc/ssh/ssh_host_ed25519_key ] || ssh-keygen -A
+if /usr/sbin/sshd -t 2>/tmp/lpanel-sshd-test; then
+    systemctl enable -q sshd
+    if systemctl is-active --quiet sshd; then systemctl reload sshd; else systemctl start sshd; fi
+    note "sshd: accounts sign in with keys from the panel, into their jail (bubblewrap $(rpm -q --qf '%{VERSION}' bubblewrap))"
+else
+    rm -f /etc/ssh/sshd_config.d/40-lpanel.conf
+    note "FAILED: sshd refused the configuration ($(head -1 /tmp/lpanel-sshd-test)); accounts cannot use SSH until it is fixed"
+fi
+rm -f /tmp/lpanel-sshd-test
+
+# ---------------------------------------------------------------------------
 step "Services"
 
 for unit in lpa.service lpanel-authd.service lpanel-authd.socket lpanel-php-fpm.service \
@@ -574,7 +636,7 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     # booleans customers' sites need. Installed in permissive mode too, so
     # switching to enforcing later needs nothing more.
     bash "$BUNDLE/packaging/selinux-setup.sh" "$BUNDLE/packaging/lpanel.pp" "$PANEL" "$HOMES"
-    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma /usr/local/lpanel-webmail /var/lib/lpanel-webmail /etc/exim /etc/dovecot /etc/pki/lpanel-mail /etc/pure-ftpd /etc/pki/pure-ftpd
+    restorecon -R "$PANEL" /etc/lpanel /var/log/lpanel /var/lib/lpanel /usr/local/lpa /etc/pki/lpanel /var/www/lpanel-acme         /usr/local/lpanel-pma /var/lib/lpanel-pma /usr/local/lpanel-webmail /var/lib/lpanel-webmail /etc/exim /etc/dovecot /etc/pki/lpanel-mail /etc/pure-ftpd /etc/pki/pure-ftpd /etc/ssh/lpanel /usr/libexec/lpanel
     install -d -m 0755 /etc/httpd/lpanel && restorecon -R /etc/httpd/lpanel
     for d in /etc/nginx/lpanel /var/log/nginx/lpanel /etc/nginx/nginx.conf; do
         if [ -e "$d" ]; then restorecon -R "$d"; fi
@@ -589,12 +651,14 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
 fi
 
 if systemctl is-active --quiet firewalld; then
-    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-service=http --add-service=https --add-service=dns \
+    # Services and ports in separate calls: firewall-cmd refuses both in one.
+    firewall-cmd -q --permanent --add-service=http --add-service=https --add-service=dns \
         --add-service=smtp --add-service=smtps --add-service=smtp-submission \
         --add-service=imap --add-service=imaps --add-service=pop3 --add-service=pop3s \
-        --add-service=ftp --add-port=30000-30100/tcp
+        --add-service=ftp --add-service=ssh
+    firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-port=30000-30100/tcp
     firewall-cmd -q --reload
-    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS), mail (25, 465, 587, 143, 993, 110, 995), FTP (21, 30000-30100) open"
+    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS), mail (25, 465, 587, 143, 993, 110, 995), FTP (21, 30000-30100) and SSH (22) open"
 fi
 
 step "Database tables"
@@ -628,6 +692,10 @@ runuser -u lpanel -- $PHP "$PANEL/laika" mail:sync --all >/dev/null || note "som
 runuser -u lpanel -- $PHP "$PANEL/laika" ftp:settings --apply >/dev/null && note "Pure-FTPd runs with LPanel's settings" \
     || note "FAILED: Pure-FTPd did not start; see Admin panel, FTP, and journalctl -u pure-ftpd"
 runuser -u lpanel -- $PHP "$PANEL/laika" ftp:sync --all >/dev/null || note "some accounts' FTP logins are not on the server yet; ftp:settle retries them every minute"
+# SSH: every account's keys, then each account's shell as its package says
+# (accounts made before M7c had the server's own shell; now the jail).
+runuser -u lpanel -- $PHP "$PANEL/laika" ssh:sync --all >/dev/null || note "some accounts' SSH keys are not on the server yet; ssh:settle retries them every minute"
+runuser -u lpanel -- $PHP "$PANEL/laika" accounts:reapply >/dev/null || note "some accounts did not get their package's shell yet; accounts:settle retries them every minute"
 # Sites whose state changed with this release (such as mail clients' setup
 # and webmail names) are written again; the rest are left alone.
 runuser -u lpanel -- $PHP "$PANEL/laika" web:sync --all --changed >/dev/null || note "some sites are not up to date yet; web:settle retries them every minute"

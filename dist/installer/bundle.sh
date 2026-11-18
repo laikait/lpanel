@@ -36,6 +36,7 @@ composer install --no-dev --optimize-autoloader --no-interaction --no-progress -
 
 echo "== binaries"
 install -m 0755 dist/lpa/bin/lpa_linux_amd64 "$out/bin/lpa"
+install -m 0755 dist/lpa/bin/lpanel-jail_linux_amd64 "$out/bin/lpanel-jail"
 install -m 0755 dist/authd/bin/lpanel-authd_linux_amd64 "$out/bin/lpanel-authd"
 
 echo "== phpMyAdmin"
@@ -77,5 +78,13 @@ install -m 0755 dist/selinux/setup.sh "$out/packaging/selinux-setup.sh"
 install -m 0755 dist/installer/install.sh "$out/install.sh"
 echo "$version" > "$out/VERSION"
 
-tar -C dist/build -czf "dist/build/lpanel-${version}.tar.gz" "lpanel-${version}"
+# Built on Windows, the files lose their execute bits; the archive sets them
+# for the programs (bin/, install.sh, selinux-setup.sh).
+rm -f "dist/build/lpanel-${version}.tar" "dist/build/lpanel-${version}.tar.gz"
+tar -C dist/build -cf "dist/build/lpanel-${version}.tar" \
+    --exclude="lpanel-${version}/bin/*" --exclude="lpanel-${version}/install.sh" \
+    --exclude="lpanel-${version}/packaging/selinux-setup.sh" "lpanel-${version}"
+tar -C dist/build -rf "dist/build/lpanel-${version}.tar" --mode=0755 \
+    "lpanel-${version}/bin" "lpanel-${version}/install.sh" "lpanel-${version}/packaging/selinux-setup.sh"
+gzip -9 "dist/build/lpanel-${version}.tar"
 echo "dist/build/lpanel-${version}.tar.gz ($(du -h "dist/build/lpanel-${version}.tar.gz" | cut -f1))"

@@ -13,6 +13,7 @@ use App\Engine\Routing\RouteCollector;
 use App\Engine\Scheduler\ScheduleCollector;
 use App\Modules\Files\Commands\FileCommands;
 use App\Modules\Files\Commands\FtpCommands;
+use App\Modules\Files\Commands\SshCommands;
 use App\Modules\Files\FileManager;
 use App\Modules\Files\Ftp\FtpActions;
 use App\Modules\Files\Ftp\FtpListeners;
@@ -23,19 +24,25 @@ use App\Modules\Files\Http\FileApi;
 use App\Modules\Files\Http\FilePages;
 use App\Modules\Files\Http\FtpApi;
 use App\Modules\Files\Http\FtpPages;
+use App\Modules\Files\Http\SshApi;
+use App\Modules\Files\Http\SshPages;
+use App\Modules\Files\Ssh\SshActions;
+use App\Modules\Files\Ssh\SshKeys;
+use App\Modules\Files\Ssh\SshListeners;
+use App\Modules\Files\Ssh\SshSync;
 
 /**
  * Files: the file manager for each account's home (browse, edit, upload,
  * download, move, copy, delete, permissions, archives), the disk usage
- * explorer, and FTP logins on Pure-FTPd, each shut in a folder of the home.
- * The agent does every file operation as the account's own user, and FTP
- * logins work as it too.
+ * explorer, FTP logins on Pure-FTPd, each shut in a folder of the home, and
+ * SSH keys for the jailed shell and SFTP. The agent does every file
+ * operation as the account's own user, and FTP and SSH logins work as it too.
  */
 return static function (ModuleContext $module): void {
     $module
         ->name('Files')
         ->version('0.1.0')
-        ->description('The file manager, disk usage explorer and FTP logins for each account.');
+        ->description('The file manager, disk usage explorer, FTP logins and SSH keys for each account.');
 
     $module->requires('Panel', '^0.1')
         ->requires('Audit', '^0.1')
@@ -65,6 +72,13 @@ return static function (ModuleContext $module): void {
         $services->bind(FtpPages::class);
         $services->bind(FtpApi::class);
         $services->bind(FtpCommands::class);
+        $services->singleton(SshKeys::class);
+        $services->singleton(SshSync::class);
+        $services->singleton(SshActions::class);
+        $services->singleton(SshListeners::class);
+        $services->bind(SshPages::class);
+        $services->bind(SshApi::class);
+        $services->bind(SshCommands::class);
     });
 
     $module->access(static function (AccessCollector $access): void {
@@ -140,6 +154,24 @@ return static function (ModuleContext $module): void {
             $routes->put('/{login}', [FtpApi::class, 'update'])->name('.update')->where('username', $user)->where('login', $login)->meta($modify);
             $routes->delete('/{login}', [FtpApi::class, 'destroy'])->name('.destroy')->where('username', $user)->where('login', $login)->meta($modify);
         }, name: 'api.account_ftp', meta: ['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '120/1m']);
+
+        // SSH keys: an owner or a sub-user with ssh or sftp (SshPages checks
+        // which; a route asks for one capability, or all of a list).
+        $routes->group('/panel/ssh', static function (RouteCollector $routes) use ($id): void {
+            $routes->get('', [SshPages::class, 'index'])->name('');
+            $routes->post('/keys', [SshPages::class, 'store'])->name('.store');
+            $routes->post('/generate', [SshPages::class, 'generate'])->name('.generate');
+            $routes->post('/keys/{id}/delete', [SshPages::class, 'delete'])->name('.delete')->where('id', $id);
+        }, name: 'user.ssh', meta: ['can' => 'user.panel']);
+
+        // Changing an account's SSH keys is changing the account.
+        $routes->group('/admin/api/v1/accounts/{username}/ssh-keys', static function (RouteCollector $routes): void {
+            $user = '[a-z][a-z0-9]{1,15}';
+            $modify = ['can' => 'accounts.modify'];
+            $routes->get('', [SshApi::class, 'index'])->name('')->where('username', $user);
+            $routes->post('', [SshApi::class, 'store'])->name('.store')->where('username', $user)->meta($modify);
+            $routes->delete('/{key}', [SshApi::class, 'destroy'])->name('.destroy')->where('username', $user)->where('key', '[A-Za-z0-9:+/%=._@() -]{1,90}')->meta($modify);
+        }, name: 'api.account_ssh', meta: ['can' => 'accounts.manage', 'csrf' => false, 'rate_limit' => '120/1m']);
     });
 
     $module->commands(static function (CommandCollector $commands): void {
@@ -251,6 +283,27 @@ return static function (ModuleContext $module): void {
             ->option('max-clients', 'Clients at once.')
             ->option('max-per-ip', 'Clients at once from one address.')
             ->flag('apply', 'Send the settings to the server again, as the panel has them.');
+        $commands->add('ssh:keys', [SshCommands::class, 'keys'])
+            ->describe('Show an account\'s SSH access and keys.')
+            ->argument('username', $account);
+        $commands->add('ssh:add', [SshCommands::class, 'add'])
+            ->describe('Add an SSH public key, read from standard input (as in a .pub file).')
+            ->argument('username', $account)
+            ->option('name', 'What to call it (default: the key\'s own comment).');
+        $commands->add('ssh:generate', [SshCommands::class, 'generate'])
+            ->describe('Make an Ed25519 key pair: the public key is added, the private key printed (and not kept).')
+            ->argument('username', $account)
+            ->argument('name', 'What to call it.');
+        $commands->add('ssh:delete', [SshCommands::class, 'delete'])
+            ->describe('Remove an SSH key.')
+            ->argument('username', $account)
+            ->argument('key', 'Its name, or its fingerprint (SHA256:...).');
+        $commands->add('ssh:settle', [SshCommands::class, 'settle'])
+            ->describe('Send SSH key changes the agent has not answered yet.');
+        $commands->add('ssh:sync', [SshCommands::class, 'sync'])
+            ->describe('Send an account\'s SSH keys to the server again, as the panel has them.')
+            ->argument('username', $account, required: false)
+            ->flag('all', 'Every account.');
         $commands->add('ftp:settle', [FtpCommands::class, 'settle'])
             ->describe('Send FTP changes the agent has not answered yet.');
         $commands->add('ftp:sync', [FtpCommands::class, 'sync'])
@@ -262,18 +315,22 @@ return static function (ModuleContext $module): void {
     $module->schedules(static function (ScheduleCollector $schedules): void {
         $schedules->command('files:sweep')->hourly()->withoutOverlapping(600);
         $schedules->command('ftp:settle')->everyMinute()->withoutOverlapping(600);
+        $schedules->command('ssh:settle')->everyMinute()->withoutOverlapping(600);
     });
 
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'files', 'label' => 'Files.title', 'icon' => 'folder', 'route' => 'user.files', 'can' => 'feature.file_manager', 'order' => 18];
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'ftp', 'label' => 'Files.ftp_title', 'icon' => 'upload', 'route' => 'user.ftp', 'can' => 'feature.ftp', 'order' => 19];
+        $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'ssh', 'label' => 'Files.ssh_title', 'icon' => 'terminal', 'route' => 'user.ssh', 'can' => ['feature.ssh', 'feature.sftp'], 'order' => 20];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'ftp', 'label' => 'Files.ftp_title', 'icon' => 'upload', 'route' => 'admin.ftp', 'can' => 'server.ftp', 'order' => 47];
 
         return $items;
     });
 
-    $module->onBoot(static function (FtpListeners $listeners, HookEngine $hooks, FilterEngine $filters): void {
+    $module->onBoot(static function (FtpListeners $listeners, SshListeners $ssh, HookEngine $hooks, FilterEngine $filters): void {
         $hooks->add('accounts.changed', [$listeners, 'accountChanged'], 20, 'Files', 2);
         $filters->add('accounts.show', [$listeners, 'accountShow'], 25, 'Files', 3);
+        $hooks->add('accounts.changed', [$ssh, 'accountChanged'], 21, 'Files', 2);
+        $filters->add('accounts.show', [$ssh, 'accountShow'], 26, 'Files', 3);
     });
 };

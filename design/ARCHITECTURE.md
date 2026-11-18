@@ -217,6 +217,17 @@ reloaded. `pure-ftpd.conf` is written whole by the agent from the Admin
 panel's settings (TLS for logins by default, passive ports, client limits),
 and Pure-FTPd serves the hostname certificate, copied whenever it changes.
 
+SSH and SFTP (M7c) are jailed. A package's `ssh` feature gives an account
+the login shell `jail-shell` (a shell, commands and SFTP), `sftp` gives
+`jail-sftp` (SFTP only); both are `lpanel-jail`, which runs everything the
+account does over SSH inside bubblewrap: its own home, read-only `/usr`,
+its own process list, no other account. Signing in is by key only: the
+panel keeps each account's public keys (and can make an Ed25519 pair whose
+private half it shows once and never keeps), the agent writes them to
+`/etc/ssh/lpanel/keys/<account>` (`ssh.apply`), and the installer's sshd
+drop-in reads keys only from there for the `lpanel-users` group, with
+passwords and forwarding off.
+
 Exim finds a domain's files with `dsearch`, which answers only with a name
 that is in the folder, so a name from a message never becomes part of a
 path. Exim hands local mail to Dovecot over LMTP and checks logins through
@@ -335,6 +346,9 @@ user, not from SELinux.
 | `/etc/pure-ftpd/pure-ftpd.conf` | Pure-FTPd's configuration, written whole by lpa (`ftp.settings`) |
 | `/etc/pure-ftpd/lpanel/` | FTP logins (lpa; 0700 root): `users.d/<account>` (login, bcrypt hash, uid, folder), the joined `passwd`, its index `pureftpd.pdb`, `settings.json` |
 | `/etc/pki/pure-ftpd/pure-ftpd.pem` | the hostname's key and certificate for FTPS (0600 root), refreshed by lpa when it changes |
+| `/usr/libexec/lpanel/jail-shell`, `jail-sftp` | accounts' login shells (`lpanel-jail`): everything over SSH runs inside bubblewrap |
+| `/etc/ssh/sshd_config.d/40-lpanel.conf` | sshd's rules for the `lpanel-users` group (installer): keys from the panel only, no passwords, no forwarding |
+| `/etc/ssh/lpanel/keys/<account>` | an account's SSH public keys (lpa, `ssh.apply`; root:account 0640), each `restrict,pty` |
 | `/var/lib/lpanel/files/` | the file manager's staging folder (0700 lpanel): uploads (also PHP's upload folder), saved files and downloads on their way to and from the agent, under 64 hex digits; `files:sweep` removes what nobody collected |
 | `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs (`lpanel_agent_exec_t`, `lpanel_authd_exec_t`) |
 | `/etc/lpa/lpa.json`, `/etc/lpa/panel.pub` | agent config, and the panel's public key |

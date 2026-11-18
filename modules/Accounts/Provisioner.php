@@ -401,9 +401,25 @@ final class Provisioner
         }
 
         return [
-            'shell' => Packages::has($package, 'ssh') ? 'bash' : 'none',
+            'shell' => self::shell($package),
             'quota' => ['blocks_kib' => $kib, 'inodes' => (int) $package['inodes']],
         ];
+    }
+
+    /**
+     * The login shell a package gives: a shell and SFTP, both jailed (ssh),
+     * SFTP alone, jailed (sftp), or none. The server's own unjailed shell
+     * is never given out.
+     *
+     * @param array<string, mixed> $package
+     */
+    public static function shell(array $package): string
+    {
+        return match (true) {
+            Packages::has($package, 'ssh') => 'jail',
+            Packages::has($package, 'sftp') => 'sftp',
+            default => 'none',
+        };
     }
 
     /**

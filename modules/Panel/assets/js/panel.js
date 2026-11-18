@@ -73,10 +73,31 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
     button.addEventListener('click', async () => {
         try {
             await navigator.clipboard.writeText(button.getAttribute('data-copy'));
-            const label = button.textContent;
+            if (button.dataset.copying) return;
+            // Its icon too: restore the markup, not only the text.
+            const label = button.innerHTML;
+            button.dataset.copying = '1';
             button.textContent = button.getAttribute('data-copied') || 'Copied';
-            setTimeout(() => { button.textContent = label; }, 1500);
+            setTimeout(() => { button.innerHTML = label; delete button.dataset.copying; }, 1500);
         } catch (_) { /* clipboard refused: nothing to do */ }
+    });
+});
+
+// Download buttons: save an element's text as a file, made in the browser
+// (data-download="name", data-download-from="element id").
+document.querySelectorAll('[data-download]').forEach((button) => {
+    button.addEventListener('click', () => {
+        const from = document.getElementById(button.getAttribute('data-download-from') || '');
+        if (!from) return;
+        const text = 'value' in from ? from.value : from.textContent;
+        const url = URL.createObjectURL(new Blob([text], { type: 'application/octet-stream' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = button.getAttribute('data-download') || 'download';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
     });
 });
 

@@ -44,11 +44,19 @@ const (
 // becomes a database prefix and part of paths and mail addresses later.
 var nameRule = regexp.MustCompile(`^[a-z][a-z0-9]{1,15}$`)
 
-// Shells a hosting account may have. "none" until jailed SSH arrives (M7).
+// Shells a hosting account may have. "jail" is a shell and SFTP inside the
+// account's own sandbox (cmd/lpanel-jail), "sftp" only SFTP in it; "bash" is
+// the server's own shell, unjailed, which the panel does not give out.
 var Shells = map[string]string{
 	"none": "/sbin/nologin",
+	"jail": "/usr/libexec/lpanel/jail-shell",
+	"sftp": "/usr/libexec/lpanel/jail-sftp",
 	"bash": "/bin/bash",
 }
+
+// SSHGroup holds every LPanel account: sshd's drop-in reads their keys from
+// /etc/ssh/lpanel/keys and turns off forwarding for its members.
+const SSHGroup = "lpanel-users"
 
 // Manager carries out account changes.
 type Manager struct {
@@ -130,7 +138,7 @@ func checkName(name string) error {
 func shellPath(shell string) (string, error) {
 	path, ok := Shells[shell]
 	if !ok {
-		return "", badArgs("shell must be \"none\" or \"bash\", not %q", shell)
+		return "", badArgs("shell must be \"none\", \"jail\", \"sftp\" or \"bash\", not %q", shell)
 	}
 	return path, nil
 }
@@ -188,9 +196,14 @@ func (m *Manager) Create(ctx context.Context, a CreateArgs) (Account, error) {
 		return Account{}, protocol.Fail(CodeExists, home+" already exists")
 	}
 
-	if err := sysexec.Must(ctx, m.Run, "useradd",
-		"--create-home", "--home-dir", home, "--shell", shell, "--user-group",
-		"--comment", Marker, "--key", "UMASK=0077", a.Username); err != nil {
+	useradd := []string{"--create-home", "--home-dir", home, "--shell", shell, "--user-group",
+		"--comment", Marker, "--key", "UMASK=0077"}
+	if ok, err := m.Files.groupExists(SSHGroup); err != nil {
+		return Account{}, err
+	} else if ok {
+		useradd = append(useradd, "--groups", SSHGroup)
+	}
+	if err := sysexec.Must(ctx, m.Run, "useradd", append(useradd, a.Username)...); err != nil {
 		return Account{}, err
 	}
 
@@ -272,6 +285,9 @@ func (m *Manager) Modify(ctx context.Context, a ModifyArgs) (Account, error) {
 		if err := m.setQuota(e.Home, e.UID, *a.Quota); err != nil {
 			return Account{}, err
 		}
+	}
+	if err := m.joinSSHGroup(ctx, a.Username); err != nil {
+		return Account{}, err
 	}
 	e, err = m.owned(a.Username)
 	if err != nil {
@@ -420,4 +436,15 @@ func (m *Manager) describe(e Entry) Account {
 		acct.UsageProblem = err.Error()
 	}
 	return acct
+}
+
+// joinSSHGroup puts an account made before the group existed into it.
+func (m *Manager) joinSSHGroup(ctx context.Context, name string) error {
+	if ok, err := m.Files.groupExists(SSHGroup); err != nil || !ok {
+		return err
+	}
+	if in, err := m.Files.inGroup(SSHGroup, name); err != nil || in {
+		return err
+	}
+	return sysexec.Must(ctx, m.Run, "usermod", "--append", "--groups", SSHGroup, name)
 }

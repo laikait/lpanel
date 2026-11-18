@@ -827,3 +827,25 @@ a.du-name:hover { color: var(--accent-text); text-decoration: underline; }
     .ftp-login-row select { flex-basis: 100%; }
     .ftp-file { max-width: 160px; }
 }
+
+/* SSH access (Files module): keys, a key made once, and what the jail holds. */
+.ssh-generated { margin-bottom: 20px; border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.ssh-generated .card-head .badge { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.ssh-private { width: 100%; font-family: var(--mono); resize: vertical; font-size: 12.5px; line-height: 1.45; background: var(--surface-2); white-space: pre; overflow: auto; }
+.ssh-gen-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.ssh-steps { margin: 16px 0 0; padding-inline-start: 20px; display: grid; gap: 8px; font-size: 13.5px; color: var(--text-2); }
+.ssh-steps code { overflow-wrap: anywhere; color: var(--text); }
+.ssh-name { overflow-wrap: anywhere; }
+.ssh-fp { font-size: 12px; overflow-wrap: anywhere; word-break: break-all; }
+.ssh-paste { width: 100%; font-family: var(--mono); resize: vertical; font-size: 12.5px; word-break: break-all; }
+.ssh-cmd { overflow-wrap: anywhere; min-width: 0; padding: 2px 6px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); }
+.ssh-facts { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; font-size: 13.5px; }
+.ssh-facts li { display: flex; align-items: flex-start; gap: 10px; }
+.ssh-facts .ic { flex: none; margin-top: 2px; color: var(--ok); }
+.ssh-facts li:has(use[href$="#x"]) .ic { color: var(--text-3); }
+@media (max-width: 560px) {
+    .ssh-gen-actions .btn { flex: 1 1 auto; justify-content: center; }
+    .ssh-private { font-size: 11.5px; }
+}
+.ssh-layout { align-items: start; }
+.ssh-type, .ssh-made { white-space: nowrap; }

@@ -825,6 +825,50 @@ the SSH key manager).
   Pure-FTPd (EL's policy has none, so it runs unconfined); FTP logins as
   sub-users' own (a sub-user with the `ftp` grant manages the account's).
 
+**M7c: Jailed SSH and SFTP, and SSH keys. Built 2026-11-18.**
+- **Packages decide:** feature `ssh` gives a jailed shell and SFTP, the new
+  feature `sftp` (on in new packages) gives SFTP alone, neither gives
+  nothing. The server's own unjailed bash is never given out; accounts that
+  had it (the old `ssh` feature) get the jail when the installer runs
+  `accounts:reapply`.
+- **The jail** (`lpanel-jail`, installed as `/usr/libexec/lpanel/jail-shell`
+  and `jail-sftp`) is the account's login shell and runs everything in
+  bubblewrap: the account's home only, `/tmp` in the home (its quota),
+  read-only `/usr`, PHP, git and the MariaDB client, its own processes, a
+  passwd with only itself, no setuid. SFTP goes through it too (the
+  installer replaces sshd's `internal-sftp`). It never falls back to an
+  unjailed shell.
+- **Keys only.** sshd's drop-in (`40-lpanel.conf`, checked with `sshd -t`
+  before sshd reloads, so a bad file never locks anyone out) matches the
+  `lpanel-users` group every account is in: keys from
+  `/etc/ssh/lpanel/keys/<account>` only, never `~/.ssh`; no passwords, no
+  forwarding, no `~/.ssh/rc`. The agent writes each key as
+  `restrict,pty …`, refusing DSA, short RSA and keys with options.
+- **User panel → SSH access** (features `ssh` or `sftp`): what the plan
+  allows, the keys with fingerprints, add a key (paste a `.pub`), make a key
+  (Ed25519, made by the panel; the private key is shown once, to download
+  or copy, and never kept), remove a key; how to connect, and what the
+  sandbox holds. The Admin panel's account page shows the access and keys.
+- **Where it shows:** the API (`/admin/api/v1/accounts/{user}/ssh-keys`,
+  with `generate: true` to make a pair; delete by name or fingerprint) and
+  `lpanel ssh:keys|add|generate|delete|settle|sync`, `accounts:reapply`.
+  Every change is audited (`ssh.*`) with the key's fingerprint.
+- **Installer:** bubblewrap, openssh-server and -clients, rsync and git;
+  the jail shells in `/etc/shells`; the `lpanel-users` group (existing
+  accounts join); the sshd drop-in; firewalld's ssh service;
+  `ssh:sync --all`, then `accounts:reapply`.
+- **Tests:** Go (key parsing, restrictions, refusals and file modes; the
+  jail's arguments, environment and SFTP-only rule; the group); PHP
+  163; SELinux check 92; `tests/e2e/install.sh` with the real sshd and
+  bubblewrap (SFTP-only, the jailed shell's view, keys in `~/.ssh`,
+  passwords and forwarding refused, a generated key, removal, suspension,
+  the panel and the API): `WEB=apache` 276 checks, `WEB=nginx`
+  277, `WEB=hybrid` 281; `tests/e2e/agent.sh` 37.
+- **Not yet:** SSH and FTP brute-force blocking (M9); the jail for PHP and
+  cron (v2: a CageFS-like view); per-account network rules (M9); an SELinux
+  user domain for sessions (with the VM run); the SSH port read from sshd
+  (the User panel says 22).
+
 ### M8: Backups
 - Restic schedules and retention; local, S3, B2, Wasabi and SFTP destinations.
 - User downloads and self-service restore; admin restore.

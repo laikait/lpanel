@@ -116,6 +116,10 @@ limited by these:
 | T79 | A login that was removed, re-passworded or moved to another folder, or a suspended account, still working through an open session | A change ends that login's sessions at once (and every session of a suspended account); a suspended account's logins are taken out of Pure-FTPd's file | Go `TestChangesAndSuspensionEndSessions`, e2e "a suspended account's logins are shut out" |
 | T80 | Ending a process that is not an FTP session, or another account's session, through the panel | `ftp.kill` signals only a pid that `pure-ftpwho` lists, and with an account only one of that account's logins | Go `TestKillOnlyEndsAListedSessionOfTheAccount`, PHP `test_sessions_are_listed_and_ended_per_account` |
 | T81 | Text in a login, hash or folder breaking Pure-FTPd's file (a colon or newline adding a field or a user) | The panel and the agent take only a fixed login pattern, bcrypt hashes and folders without colons, backslashes, control characters or `..` | Go `TestApplyRefusesBadInput`, PHP `test_the_owner_makes_a_login_shut_in_a_folder` |
+| T82 | An account's SSH or SFTP session reaching another account's files or processes, or the system's | Every session runs inside bubblewrap (`lpanel-jail` is the login shell; it never falls back to an unjailed one): only its own home is mounted, `/usr` and the root are read-only, it has its own PID namespace and `/proc`, a passwd naming only itself, and `no_new_privs` (no setuid). SFTP goes through the shell too: the installer replaces sshd's `internal-sftp` with the `sftp-server` program | Go `TestArgs`, `TestParseAndInner`; e2e "a jailed shell: its home only, its own processes…", "an SFTP-only account … sees only its home" |
+| T83 | A key added behind the panel's back (in `~/.ssh/authorized_keys`, by the account's PHP or the file manager), or a key with options that run a command or forward ports | sshd reads keys for `lpanel-users` only from `/etc/ssh/lpanel/keys/<account>`, root's; the agent refuses keys with options or a second line, rewrites each as `restrict,pty …`, and the drop-in turns off forwarding, agent forwarding, tunnels, X11 and `~/.ssh/rc` | Go `TestApplyWritesRestrictedLines`, `TestApplyRefuses`; e2e "a key in ~/.ssh, a password and forwarding are all refused" |
+| T84 | SSH passwords guessed, or weak keys accepted | Accounts sign in with keys only (passwords and keyboard-interactive off for the group); DSA, RSA under 2048 bits and unknown types are refused in the panel and the agent | PHP `test_the_owner_adds_a_public_key`, Go `TestApplyRefuses` |
+| T85 | A private key the panel made being kept, logged or shown again | The pair is made in the panel (libsodium) and the private half is answered once, on the page or API response that made it (`no-store`); it is not in the database, the session, the audit log or the agent | PHP `test_a_key_made_by_the_panel_is_shown_once_and_never_kept`, e2e "keeps no private key" |
 | T64 | Deleting mail outside the account's home through a link the owner made in it | Mail is deleted (`mail.purge`) through an `os.Root` at the home, which no link can lead out of, and only once the mailbox is no longer set up | Go `TestPurgeDoesNotFollowALinkOutOfTheHome`, `TestPurgeDeletesOnlyMailNoLongerSetUp` |
 | T49 | A visitor claiming HTTPS to Apache behind nginx | nginx always sets `X-Forwarded-Proto` to its own `$scheme`; Apache turns it into `HTTPS=on` and listens only on 127.0.0.1 | Go `TestHybridServesHTTPSInFront`, e2e install "PHP knows the visit came over HTTPS" |
 | T22 | A lost or repeated agent answer making an account twice, or leaving the panel and the server disagreeing | The operation and its id are written before sending; retries reuse the id and the journal answers with the first outcome | `AccountsTest::test_an_unreachable_agent_records_the_change_and_settle_finishes_it_exactly_once`, e2e agent "the same id again gets the first answer" |
@@ -143,9 +147,11 @@ These are tracked, not forgotten. Each names the milestone that closes it.
   their own paths, but a browser treats them as one origin. A separate
   hostname for each is planned with the white-label settings (M11).
 - **The file manager's worker runs in the agent's SELinux domain** (an
-  unconfined one) under the account's uid: the kernel's permissions and the
-  `os.Root` keep it to the home, not SELinux. A confined domain for it is
-  planned with jailed SSH (M7c), which needs one for accounts' sessions.
+  unconfined one) under the account's uid, and accounts' SSH sessions run
+  as the login's usual `unconfined_t`: the kernel's permissions, the
+  `os.Root` and bubblewrap's namespaces keep them to the home, not SELinux.
+  A confined user domain for both needs an enforcing machine to test on
+  (the VM run) and comes with M9's isolation hardening.
 - **The mail servers' SELinux rules are checked against EL's policy only**
   (dist/selinux check), not yet on an enforcing machine (the VM run).
 - **Remote database access is not limited by the firewall yet.** MariaDB
@@ -184,6 +190,19 @@ These are tracked, not forgotten. Each names the milestone that closes it.
   with M9; administrators can choose `strict`.
 - **FTP transfers do not count towards bandwidth yet.** Pure-FTPd logs them
   (`/var/log/pureftpd.log`); metering them with web traffic is M10's.
+
+- **A jailed session still reaches the network** like the account's PHP
+  does (outgoing connections, local services such as MariaDB and the mail
+  ports). Per-account outgoing rules come with the firewall manager (M9).
+- **The jail is for SSH only.** Accounts' PHP-FPM pools and cron jobs (M10)
+  run unjailed under the account's uid, as before: the kernel's permissions
+  keep accounts apart there. A CageFS-like view for PHP is a v2 item.
+- **No SSH brute-force blocking yet** (keys only, so guessing is not a
+  threat to accounts, but the log noise and root's own login are the
+  administrator's): M9. The SSH port is assumed to be 22 in the User panel.
+- **Inside the jail, files the system owns show as `nobody`** (root is not
+  mapped into the account's user namespace), and setuid tools such as
+  `sendmail`, `su` and `sudo` do not work; scripts send mail through SMTP.
 
 - **The panel's nginx and the sites' nginx share the `nginx` user.** With
   nginx serving sites (alone, or in front of Apache as a member of its

@@ -53,7 +53,8 @@ return [
     'feature_backups' => 'Backups',
     'feature_cron' => 'Cron jobs',
     'feature_ftp' => 'FTP',
-    'feature_ssh' => 'Shell access',
+    'feature_sftp' => 'SFTP (files over SSH, no shell)',
+    'feature_ssh' => 'SSH (a jailed shell, and SFTP)',
     'feature_php_settings' => 'PHP settings',
     'feature_stats' => 'Statistics',
 

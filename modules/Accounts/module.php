@@ -117,6 +117,8 @@ return static function (ModuleContext $module): void {
             ->flag('yes', 'Really do it.');
         $commands->add('accounts:settle', [AccountCommands::class, 'settle'])
             ->describe('Finish account changes the agent has not answered yet.');
+        $commands->add('accounts:reapply', [AccountCommands::class, 'reapply'])
+            ->describe('Give every account its package\'s quota and shell again (after an upgrade).');
         $commands->add('accounts:usage', [AccountCommands::class, 'usage'])
             ->describe('Read every account\'s disk use from the kernel\'s quotas.');
         $commands->add('dev:seed-hosting', DevSeedHosting::class)

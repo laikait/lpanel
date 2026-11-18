@@ -36,10 +36,10 @@ final class Packages
     public const BANDWIDTH_ACTIONS = ['block', 'warn'];
 
     /** What an account on the package may use. Each is checked by the module that offers it. */
-    public const FEATURES = ['domains', 'file_manager', 'email', 'databases', 'dns', 'ssl', 'backups', 'cron', 'ftp', 'ssh', 'php_settings', 'stats'];
+    public const FEATURES = ['domains', 'file_manager', 'email', 'databases', 'dns', 'ssl', 'backups', 'cron', 'ftp', 'sftp', 'ssh', 'php_settings', 'stats'];
 
-    /** A new package offers everything but shell access. */
-    public const DEFAULT_FEATURES = ['domains', 'file_manager', 'email', 'databases', 'dns', 'ssl', 'backups', 'cron', 'ftp', 'php_settings', 'stats'];
+    /** A new package offers everything but a shell (SFTP, the shell's file transfer, is in). */
+    public const DEFAULT_FEATURES = ['domains', 'file_manager', 'email', 'databases', 'dns', 'ssl', 'backups', 'cron', 'ftp', 'sftp', 'php_settings', 'stats'];
 
     /** The largest number a limit may hold: 1 PB in MB, and plenty of everything else. */
     public const MAX_LIMIT = 1_000_000_000;

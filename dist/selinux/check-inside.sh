@@ -133,6 +133,14 @@ check "so it runs unconfined, started by systemd" trans init_t bin_t unconfined_
 check "its certificate file is cert_t"           label /etc/pki/pure-ftpd/pure-ftpd.pem cert_t
 check "the panel cannot reach its files"         refused -s httpd_t -t cert_t -c file -p write
 
+echo "== SSH and SFTP (the jail is a login shell, bubblewrap a plain program)"
+check "the jail shell is plain bin_t"            label /usr/libexec/lpanel/jail-shell bin_t
+check "the SFTP-only shell too"                  label /usr/libexec/lpanel/jail-sftp bin_t
+check "bubblewrap is plain bin_t"                label /usr/bin/bwrap bin_t
+check "accounts' keys are etc_t"                 label /etc/ssh/lpanel/keys/shop7 etc_t
+check "sshd may read them"                       allowed -s sshd_t -t etc_t -c file -p read
+check "the panel cannot write them"              refused -s httpd_t -t etc_t -c file -p write
+
 echo "== what the panel (httpd_t) is not given"
 check "no other unconfined service"              refused -s httpd_t -t unconfined_service_t -c unix_stream_socket -p connectto
 check "no shadow"                                refused -s httpd_t -t shadow_t -c file -p read

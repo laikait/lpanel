@@ -38,6 +38,7 @@ import (
 	"lpa/internal/protocol"
 	"lpa/internal/quota"
 	"lpa/internal/server"
+	"lpa/internal/sshkeys"
 	"lpa/internal/sysexec"
 	"lpa/internal/sysinfo"
 	"lpa/internal/web"
@@ -133,13 +134,15 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	mails.Defaults()
 	ftps := &ftp.Manager{Enabled: cfg.FTP == "on", Run: sysexec.Exec{}, Owner: acc.Owner, Log: log}
 	ftps.Defaults()
+	keys := &sshkeys.Manager{Owner: acc.Owner, Log: log}
+	keys.Defaults()
 	// The hostname certificate serves mail and FTP too; each server on its
 	// own, so one that cannot take it does not keep the other from it.
 	tls.AfterHost = func(ctx context.Context) error {
 		return errors.Join(mails.HostTLS(ctx), ftps.HostTLS(ctx))
 	}
 	// A terminated account's sites, then its databases, its zones, its
-	// mail and its FTP logins, go before its user.
+	// mail, its FTP logins and its SSH keys, go before its user.
 	acc.BeforeRemove = func(ctx context.Context, username string) error {
 		if err := sites.RemoveFor(ctx, username); err != nil {
 			return err
@@ -153,7 +156,10 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 		if err := mails.RemoveFor(ctx, username); err != nil {
 			return err
 		}
-		return ftps.RemoveFor(ctx, username)
+		if err := ftps.RemoveFor(ctx, username); err != nil {
+			return err
+		}
+		return keys.RemoveFor(ctx, username)
 	}
 	ops.Accounts(reg, acc)
 	ops.Web(reg, sites)
@@ -162,6 +168,7 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	ops.DNS(reg, zones)
 	ops.Mail(reg, mails)
 	ops.FTP(reg, ftps)
+	ops.SSH(reg, keys)
 	self, err := os.Executable()
 	if err != nil {
 		self = "/usr/local/lpa/bin/lpa"

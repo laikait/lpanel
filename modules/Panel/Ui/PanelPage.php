@@ -168,7 +168,11 @@ final class PanelPage
                 continue;
             }
 
-            if (\is_string($item['can'] ?? null) && !$this->authorizer->allows($identity, $item['can'])) {
+            // A capability, or a list of them: any one shows the item.
+            $can = $item['can'] ?? null;
+            $can = \is_string($can) ? [$can] : (\is_array($can) ? \array_values(\array_filter($can, 'is_string')) : []);
+
+            if ($can !== [] && \array_filter($can, fn(string $c): bool => $this->authorizer->allows($identity, $c)) === []) {
                 continue;
             }
 

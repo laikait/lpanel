@@ -153,6 +153,12 @@ final class FakeServer
     /** @var list<int> sessions ftp.kill ended */
     public array $ftpKilled = [];
 
+    /** @var array<string, list<array<string, mixed>>> account => the keys ssh.apply last wrote */
+    public array $sshKeys = [];
+
+    /** @var bool when true, ssh.apply refuses every list (as the agent does a bad key) */
+    public bool $sshRefuse = false;
+
     /** @var array<string, array<string, mixed>> request id => response */
     private array $journal = [];
 
@@ -166,7 +172,7 @@ final class FakeServer
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
-        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill'] as $op) {
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -351,6 +357,27 @@ final class FakeServer
             return $this->runFtp($op, $args);
         }
 
+        if ($op === 'ssh.apply') {
+            if (!isset($this->users[$name])) {
+                return ['status' => 'failed', 'error' => ['code' => 'no_such_account', 'message' => 'there is no user named ' . $name]];
+            }
+
+            foreach ($args['keys'] as $k) {
+                if ($this->sshRefuse || !\in_array($k['type'] ?? '', ['ssh-ed25519', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521', 'ssh-rsa', 'sk-ssh-ed25519@openssh.com', 'sk-ecdsa-sha2-nistp256@openssh.com'], true)
+                    || \base64_decode((string) $k['key'], true) === false || \preg_match('/[\r\n]/', (string) $k['comment']) === 1) {
+                    return ['status' => 'failed', 'error' => ['code' => 'bad_args', 'message' => 'key 1: the key is not a valid SSH public key']];
+                }
+            }
+
+            if ($args['keys'] === []) {
+                unset($this->sshKeys[$name]);
+            } else {
+                $this->sshKeys[$name] = $args['keys'];
+            }
+
+            return ['status' => 'done', 'result' => ['keys' => \count($args['keys']), 'fingerprints' => []]];
+        }
+
         if ($op === 'account.create') {
             if (isset($this->users[$name])) {
                 return ['status' => 'failed', 'error' => ['code' => 'exists', 'message' => 'a user named ' . $name . ' already exists']];
@@ -364,7 +391,7 @@ final class FakeServer
         if ($op === 'account.terminate') {
             $existed = isset($this->users[$name]);
             // The agent removes the sites first (BeforeRemove).
-            unset($this->users[$name], $this->sites[$name], $this->dbs[$name], $this->sso[$name], $this->mail[$name], $this->ftp[$name]);
+            unset($this->users[$name], $this->sites[$name], $this->dbs[$name], $this->sso[$name], $this->mail[$name], $this->ftp[$name], $this->sshKeys[$name]);
             // And the account's zones.
             $this->zones = \array_filter($this->zones, static fn(array $z): bool => $z['username'] !== $name);
 

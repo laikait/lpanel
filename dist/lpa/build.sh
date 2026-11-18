@@ -12,4 +12,7 @@ for arch in amd64 arm64; do
         -ldflags "-s -w -X main.version=${version}" \
         -o "bin/lpa_linux_${arch}" ./cmd/lpa
     echo "bin/lpa_linux_${arch} (${version})"
+    # The login shell of accounts with SSH or SFTP (installed as jail-shell and jail-sftp).
+    CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath -ldflags "-s -w" \
+        -o "bin/lpanel-jail_linux_${arch}" ./cmd/lpanel-jail
 done

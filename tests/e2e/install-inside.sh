@@ -1241,6 +1241,70 @@ check "the User panel lists logins and makes one" t_ftp_panel
 check "the API shows the server and removes a login (its files stay)" t_ftp_api
 check "FTP changes are in the audit log, never a password" t_ftp_audit
 
+echo "== SSH and SFTP (jailed)"
+# shop7 is on Filer (the default features: SFTP, no shell), then on Sheller.
+SSHO=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o ConnectTimeout=10 -o LogLevel=ERROR)
+sshk()  { local k=$1; shift; ssh -i "$k" "${SSHO[@]}" shop7@127.0.0.1 "$@"; }
+sftpk() { local k=$1; shift; sftp -i "$k" "${SSHO[@]}" -b - shop7@127.0.0.1 "$@"; }
+rm -f /tmp/k1 /tmp/k1.pub /tmp/k2 /tmp/k2.pub /tmp/kgen
+ssh-keygen -q -t ed25519 -N '' -C e2e@laptop -f /tmp/k1; ssh-keygen -q -t ed25519 -N '' -C own -f /tmp/k2
+t_ssh_setup()    { sshd -T -C user=shop7,host=x,addr=127.0.0.1 > /tmp/sshdT; grep -Ei '^(authorizedkeysfile|allowtcpforwarding|passwordauthentication|permituserrc) ' /tmp/sshdT >&2
+                   systemctl is-active --quiet sshd && [ -f /etc/ssh/sshd_config.d/40-lpanel.conf ] \
+                   && grep -qx 'authorizedkeysfile /etc/ssh/lpanel/keys/%u' /tmp/sshdT && grep -qx 'allowtcpforwarding no' /tmp/sshdT \
+                   && grep -qx 'passwordauthentication no' /tmp/sshdT && grep -qx 'permituserrc no' /tmp/sshdT \
+                   && sshd -T -C user=root,host=x,addr=127.0.0.1 | grep -qx 'authorizedkeysfile .ssh/authorized_keys' \
+                   && id -nG shop7 | tr ' ' '\n' | grep -qx lpanel-users && [ "$(getent passwd shop7 | cut -d: -f7)" = /usr/libexec/lpanel/jail-sftp ]; }
+t_ssh_key_cli()  { lpanel ssh:add shop7 < /tmp/k1.pub >/dev/null && [ "$(stat -c '%a %U %G' /etc/ssh/lpanel/keys/shop7)" = "640 root shop7" ] \
+                   && grep -q "^restrict,pty ssh-ed25519 $(cut -d' ' -f2 /tmp/k1.pub) e2e@laptop$" /etc/ssh/lpanel/keys/shop7 \
+                   && lpanel ssh:keys shop7 > /tmp/sshkeys && grep -qF "$(ssh-keygen -lf /tmp/k1.pub | cut -d' ' -f2)" /tmp/sshkeys && grep -q 'SFTP only' /tmp/sshkeys; }
+t_ssh_sftp_only() { printf 'over sftp\n' > /tmp/sftpup.txt; printf 'put /tmp/sftpup.txt public_html/sftpup.txt\nls /home\nls /\n' | sftpk /tmp/k1 > /tmp/sftp.out; cat /tmp/sftp.out >&2
+                   [ "$(cat $F/public_html/sftpup.txt)" = "over sftp" ] && [ "$(stat -c '%U %G %a' $F/public_html/sftpup.txt)" = "shop7 shop7 644" ] \
+                   && grep -qx '/home/shop7 *' /tmp/sftp.out && ! grep -q '/home/shop[0-689]' /tmp/sftp.out \
+                   && ! sshk /tmp/k1 id 2>/tmp/ssh.err && grep -q 'SFTP access only' /tmp/ssh.err; }
+t_ssh_shell()    { lpanel packages:create Sheller --disk=20 --features=domains,file_manager,ftp,sftp,ssh >/dev/null && lpanel accounts:package shop7 Sheller >/dev/null \
+                   && for _ in $(seq 30); do [ "$(getent passwd shop7 | cut -d: -f7)" = /usr/libexec/lpanel/jail-shell ] && break; lpanel accounts:settle >/dev/null; sleep 1; done \
+                   && sshk /tmp/k1 'id -un; echo "home=$(ls /home)"; echo "procs=$(ps -e --no-headers | wc -l)"; echo "passwd=$(wc -l < /etc/passwd)"; touch /etc/x 2>/dev/null && echo etc-writable; echo shell-was-here > ~/public_html/shell.txt; test -S /var/lib/mysql/mysql.sock && echo db-socket; command -v git >/dev/null && echo has-git; ls /opt/remi >/dev/null 2>&1 && echo has-php' > /tmp/ssh.out; cat /tmp/ssh.out >&2
+                   grep -qx shop7 /tmp/ssh.out && grep -qx 'home=shop7' /tmp/ssh.out && grep -qx 'passwd=3' /tmp/ssh.out && ! grep -q etc-writable /tmp/ssh.out \
+                   && [ "$(grep -o 'procs=[0-9]*' /tmp/ssh.out | cut -d= -f2)" -lt 8 ] && grep -qx db-socket /tmp/ssh.out && grep -qx has-git /tmp/ssh.out && grep -qx has-php /tmp/ssh.out \
+                   && [ "$(stat -c '%U' $F/public_html/shell.txt)" = shop7 ] && [ "$(ssh -tt -i /tmp/k1 "${SSHO[@]}" shop7@127.0.0.1 'echo tty-ok' </dev/null | tr -d '\r')" = tty-ok ]; }
+t_ssh_refused()  { mkdir -p $F/.ssh && cp /tmp/k2.pub $F/.ssh/authorized_keys && chown -R shop7: $F/.ssh && chmod 700 $F/.ssh \
+                   && ! sshk /tmp/k2 true 2>/dev/null && rm -rf $F/.ssh \
+                   && ! ssh "${SSHO[@]}" -o PubkeyAuthentication=no shop7@127.0.0.1 true 2>/dev/null || return 1
+                   ! ssh -i /tmp/k1 "${SSHO[@]}" -o ExitOnForwardFailure=yes -W 127.0.0.1:22 shop7@127.0.0.1 2>/tmp/fwd.err </dev/null || return 1
+                   cat /tmp/fwd.err >&2; grep -Eqi 'prohibited|forwarding failed' /tmp/fwd.err; }
+t_ssh_generate() { lpanel ssh:generate shop7 made-here > /tmp/kgen 2>/dev/null && chmod 600 /tmp/kgen && head -1 /tmp/kgen | grep -q 'BEGIN OPENSSH PRIVATE KEY' \
+                   && [ "$(sshk /tmp/kgen 'id -un')" = shop7 ] && ! mariadb -uroot -N lpanel -e "select * from ssh_keys" | grep -q PRIVATE; }
+t_ssh_delete()   { lpanel ssh:delete shop7 e2e@laptop >/dev/null && ! sshk /tmp/k1 true 2>/dev/null && [ "$(sshk /tmp/kgen 'echo still')" = still ] \
+                   && ! grep -q "$(cut -d' ' -f2 /tmp/k1.pub)" /etc/ssh/lpanel/keys/shop7; }
+t_ssh_suspend()  { lpanel accounts:suspend shop7 >/dev/null && ! sshk /tmp/kgen true 2>/dev/null \
+                   && lpanel accounts:unsuspend shop7 >/dev/null && [ "$(sshk /tmp/kgen 'echo back')" = back ]; }
+t_ssh_reapply()  { usermod --shell /bin/bash shop7 && lpanel accounts:reapply >/dev/null \
+                   && for _ in $(seq 30); do [ "$(getent passwd shop7 | cut -d: -f7)" = /usr/libexec/lpanel/jail-shell ] && break; lpanel accounts:settle >/dev/null; sleep 1; done \
+                   && [ "$(getent passwd shop7 | cut -d: -f7)" = /usr/libexec/lpanel/jail-shell ]; }
+t_ssh_panel()    { [ "$(signin_as 7444 /panel shop7 Owner-Pass-Word-7)" = "303 https://127.0.0.1:7444/panel" ] \
+                   && curl -ks -b /tmp/jar2 -c /tmp/jar2 https://127.0.0.1:7444/panel/ssh -o /tmp/ssh.html && grep -q 'made-here' /tmp/ssh.html && grep -q 'Shell and SFTP' /tmp/ssh.html \
+                   && curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /tmp/sshgen.html --data-urlencode "_token=$(token /tmp/ssh.html)" -d name=panel-made https://127.0.0.1:7444/panel/ssh/generate \
+                   && grep -q 'BEGIN OPENSSH PRIVATE KEY' /tmp/sshgen.html && grep -q 'panel-made' /etc/ssh/lpanel/keys/shop7; }
+t_ssh_api()      { [ "$(api -o /tmp/sshapi.json -w '%{http_code}' https://127.0.0.1:7443/admin/api/v1/accounts/shop7/ssh-keys)" = 200 ] \
+                   && grep -q '"access":"jail"' /tmp/sshapi.json && grep -q '"name":"made-here"' /tmp/sshapi.json \
+                   && [ "$(api -o /dev/null -w '%{http_code}' -X DELETE https://127.0.0.1:7443/admin/api/v1/accounts/shop7/ssh-keys/panel-made)" = 204 ] \
+                   && ! grep -q 'panel-made' /etc/ssh/lpanel/keys/shop7; }
+t_ssh_audit()    { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'ssh.%'" | tr '\n' ' '); echo "$got" >&2
+                   for a in ssh.key_add:ok ssh.key_generate:ok ssh.key_delete:ok; do echo "$got" | grep -q "$a" || return 1; done
+                   ! mariadb -uroot -N lpanel -e "select details from audit_log where action like 'ssh.%'" | grep -q PRIVATE; }
+check "sshd takes LPanel's rules for accounts: keys from the panel only, no passwords, no forwarding" t_ssh_setup
+check "lpanel ssh:add writes the key, restricted, readable by the account alone" t_ssh_key_cli
+check "an SFTP-only account moves files over SFTP, sees only its home, and gets no shell" t_ssh_sftp_only
+check "a jailed shell: its home only, its own processes, a read-only system, PHP, git and MariaDB" t_ssh_shell
+check "a key in ~/.ssh, a password and forwarding are all refused" t_ssh_refused
+check "lpanel ssh:generate makes a key that signs in, and keeps no private key" t_ssh_generate
+check "a removed key no longer signs in" t_ssh_delete
+check "a suspended account cannot sign in, and can again once unsuspended" t_ssh_suspend
+check "lpanel accounts:reapply gives the server's own shell back to the jail" t_ssh_reapply
+check "the User panel lists keys and makes one" t_ssh_panel
+check "the API lists keys and removes one" t_ssh_api
+check "SSH key changes are in the audit log, never a private key" t_ssh_audit
+
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"
 t_switched() {

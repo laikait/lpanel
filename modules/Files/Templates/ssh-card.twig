@@ -1,0 +1,29 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Files.ssh_title'|local }}</h2><p>{{ ('Files.ssh_access_' ~ ssh_access)|local }} · {{ 'Files.ssh_card_lead'|local({n: ssh_keys|length}) }}</p></div>
+        {% if ssh_state %}
+            {% if ssh_state.state == 'applied' %}<span class="badge ok">{{ 'Files.ftp_state_applied'|local }}</span>
+            {% elseif ssh_state.state == 'pending' %}<span class="badge warn">{{ 'Files.ftp_state_pending'|local }}</span>
+            {% else %}<span class="badge bad">{{ 'Files.ftp_state_failed'|local }}</span>{% endif %}
+        {% endif %}
+    </div>
+    {% if ssh_state and ssh_state.state == 'failed' %}
+        <div class="card-body"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p><span class="mono">{{ ssh_state.error }}</span></p></div></div>
+    {% endif %}
+    {% if ssh_keys is empty %}
+        <div class="card-body"><p class="muted">{{ 'Files.ssh_none'|local }}</p></div>
+    {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr><th>{{ 'Files.ssh_key'|local }}</th><th class="hide-sm">{{ 'Files.ssh_fingerprint'|local }}</th><th class="hide-sm">{{ 'Files.ftp_made_at'|local }}</th></tr></thead>
+            <tbody>
+            {% for k in ssh_keys %}
+                <tr>
+                    <td><strong>{{ k.name }}</strong><div class="domain-sub">{{ k.type }} · {{ k.bits }}</div></td>
+                    <td class="hide-sm mono ssh-fp">{{ k.fingerprint }}</td>
+                    <td class="hide-sm">{{ k.created_at ? k.created_at|when : '—' }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+</div>

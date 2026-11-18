@@ -66,6 +66,8 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `internal/certs` | certificates: the store, checks of key and chain, the ACME client (`golang.org/x/crypto/acme`) and the hostname's certificate |
 | `internal/files` | the file manager: a worker as the account's user, inside its home (`os.Root`), and the staging folder |
 | `internal/ftp` | FTP logins on Pure-FTPd (PureDB), its configuration, its certificate and its sessions |
+| `internal/sshkeys` | accounts' SSH keys, in files sshd reads instead of `~/.ssh` |
+| `cmd/lpanel-jail` | the login shell of accounts with SSH or SFTP: runs everything inside bubblewrap (a separate binary; not part of lpa) |
 | `internal/sysexec` | runs `useradd`, `usermod`, `userdel`, `pkill`, `restorecon`, `httpd`, `systemctl` and Remi's `php-fpm` by absolute path, no shell, fixed environment |
 | `packaging/` | the systemd unit and the default configuration |
 
@@ -75,8 +77,8 @@ Operations marked async answer `accepted` at once. The panel then asks
 |---|---|---|
 | `system.ping` | read-only | answers with the agent version and time |
 | `system.facts` | read-only | hostname, OS, kernel, CPUs, load, memory, uptime, disks |
-| `account.create` | change | `{username, shell, quota}`: user and group, 0711 home with `public_html`, quota. Undone if any step fails |
-| `account.modify` | change | `{username, shell?, quota?}` |
+| `account.create` | change | `{username, shell, quota}`: user and group (and `lpanel-users`, when the installer has made it), 0711 home with `public_html`, quota. `shell` is `none`, `jail`, `sftp` or `bash`. Undone if any step fails |
+| `account.modify` | change | `{username, shell?, quota?}`; an account made before `lpanel-users` existed joins it |
 | `account.suspend` | change | `{username}`: expires the account (PAM then refuses every login) and ends its processes |
 | `account.unsuspend` | change | `{username}`: removes the expiry |
 | `account.terminate` | change, background | `{username}`: ends processes, removes the user, group, home (never following links) and mail spool. A name with no user is already gone |
@@ -139,6 +141,7 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `ftp.settings` | change | `{tls, passive_from, passive_to, passive_ip, max_clients, max_per_ip}`: `pure-ftpd.conf`, whole; Pure-FTPd restarts, and the old file comes back if it will not start |
 | `ftp.info` | read-only | Pure-FTPd's state and version, the logins, the settings applied and every session with its account |
 | `ftp.kill` | change | `{pid, username?}`: end one session listed by `pure-ftpwho` (with `username`, only one of that account's) |
+| `ssh.apply` | change | `{username, keys: [{type, key, comment}]}`: an account's whole list of SSH public keys, written to `/etc/ssh/lpanel/keys/<account>`; an empty list removes the file |
 | `op.status` | built in | the journalled outcome of an earlier request |
 
 The account operations refuse (`not_ours`) any user without the comment
@@ -479,3 +482,35 @@ certificate is copied, key first, into `/etc/pki/pure-ftpd/pure-ftpd.pem`
 restarts, since it reads it at start. Sessions come from `pure-ftpwho -s`;
 `ftp.kill` signals only a process in that list. The error codes are
 `ftp_off`, `ftp_taken` and `ftp_no_session`.
+
+### SSH and SFTP (`ssh.apply`, `cmd/lpanel-jail`)
+
+M7c's shell access is jailed. An account's login shell is one of
+`/sbin/nologin` (`none`), `/usr/libexec/lpanel/jail-shell` (`jail`: a shell,
+commands and SFTP) or `/usr/libexec/lpanel/jail-sftp` (`sftp`: SFTP only);
+`bash` stays possible from the API but the panel never gives it out. Both
+jail names are the same small static binary (`cmd/lpanel-jail`); the name it
+was started under decides. sshd starts it as the account, for a terminal
+(`-jail-shell`), a command (`-c …`) or SFTP (`-c /usr/libexec/openssh/sftp-server`,
+which is why the installer makes sure SFTP is that program, not sshd's
+`internal-sftp`). It replaces itself with bubblewrap, which builds a world
+of the account's own: its home at its usual path (no other home), the
+home's `tmp/` as `/tmp`, `/usr` and Remi's `/opt/remi` read-only, a short
+list of `/etc` read-only, an `/etc/passwd` and `/etc/group` naming only
+root, nobody and the account, its own PID namespace and `/proc`, IPC of its
+own, MariaDB's socket, and a read-only root. `no_new_privs` keeps setuid
+programs from working. The environment is rebuilt (no `LD_PRELOAD`,
+`BASH_ENV` or agent socket comes in). If bubblewrap cannot start, the login
+fails; it never falls back to an unjailed shell.
+
+Keys (`ssh.apply`, `internal/sshkeys`): the panel sends an account's whole
+list; each key is parsed (`golang.org/x/crypto/ssh`), DSA and RSA under
+2048 bits are refused, a key may not carry options or a second line, and
+each is written as `restrict,pty <type> <key> <comment>` to
+`/etc/ssh/lpanel/keys/<account>` (root, the account's group, 0640: sshd
+reads it as the account). The installer's `sshd_config.d/40-lpanel.conf`
+matches the `lpanel-users` group, which every account is in, and reads keys
+from there only (never `~/.ssh`), with passwords, keyboard-interactive,
+`~/.ssh/rc` and every kind of forwarding off. Suspension needs nothing
+here: an expired account cannot log in with any key. `RemoveFor` (in the
+terminate chain) removes the file.

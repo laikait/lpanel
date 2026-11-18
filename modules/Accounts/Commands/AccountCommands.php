@@ -14,6 +14,7 @@ use App\Modules\Accounts\Http\AccountPages;
 use App\Modules\Accounts\Outcome;
 use App\Modules\Accounts\Provisioner;
 use App\Modules\Identity\PanelUsers;
+use App\Modules\Packages\Packages;
 
 /**
  * accounts:* — the same actions as the Admin panel, as root, from the shell.
@@ -27,6 +28,7 @@ final class AccountCommands
         private readonly Provisioner $provisioner,
         private readonly PanelUsers $users,
         private readonly Localization $localization,
+        private readonly Packages $packages,
     ) {}
 
     public function list(Output $output, ?string $status = null): int
@@ -119,6 +121,26 @@ final class AccountCommands
         if ($counts !== []) {
             $output->line(\implode(', ', \array_map(static fn(string $k, int $v): string => "{$v} {$k}", \array_keys($counts), $counts)));
         }
+
+        return 0;
+    }
+
+    /**
+     * Give every account its package's quota and shell again: after an
+     * upgrade that changed what a package means (such as the jailed shell
+     * replacing the server's own in M7c).
+     */
+    public function reapply(Output $output): int
+    {
+        $n = 0;
+
+        foreach ($this->packages->visibleTo($this->root()) as $package) {
+            $this->provisioner->applyPackage($package);
+            $n++;
+        }
+
+        $counts = $this->provisioner->settleAll();
+        $output->line(\sprintf('%d package(s) applied.', $n) . ($counts === [] ? '' : ' ' . \implode(', ', \array_map(static fn(string $k, int $v): string => "{$v} {$k}", \array_keys($counts), $counts))));
 
         return 0;
     }
