@@ -47,14 +47,15 @@ final class Home
     /** @param 'admin'|'user' $area */
     private function dashboard(Request $request, Session $session, Identity $identity, string $area): Response
     {
-        $cards = $this->filters->apply('panel.dashboard', [], $area, $identity);
+        $range = (int) $request->query('range', 30);
+        $cards = $this->filters->apply('panel.dashboard', [], $area, $identity, $range);
         $cards = \array_values(\array_filter(
             \is_array($cards) ? $cards : [],
             static fn(mixed $card): bool => \is_array($card) && \is_string($card['template'] ?? null),
         ));
         \usort($cards, static fn(array $a, array $b): int => ($a['order'] ?? 100) <=> ($b['order'] ?? 100));
 
-        return $this->pages->render($request, $session, $identity, $area, '@Panel/dashboard', [
+        return $this->pages->render($request, $session, $identity, $area, 'dashboard', [
             'cards' => $cards,
         ], title: 'Panel.dashboard', active: 'dashboard');
     }

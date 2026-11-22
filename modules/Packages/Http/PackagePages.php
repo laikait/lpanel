@@ -116,7 +116,7 @@ final class PackagePages
             $rows[] = $row;
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Packages/index', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Packages/index', $extra + [
             'packages' => $rows,
             'show_owner' => $showOwner,
             'action' => $this->router->url('admin.packages.create'),
@@ -134,7 +134,7 @@ final class PackagePages
     {
         $accounts = $this->packages->inUse((int) $row['id']);
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Packages/edit', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Packages/edit', [
             'package' => $row,
             'old' => $values,
             'errors' => $errors,

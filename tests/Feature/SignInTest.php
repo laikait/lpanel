@@ -71,7 +71,7 @@ final class SignInTest extends TestCase
         self::assertSame(303, $signedIn->status());
         self::assertSame('/admin', $signedIn->header('Location'));
         self::assertSame(200, $dashboard->status());
-        self::assertStringContainsString('Welcome, Alice', $dashboard->body());
+        self::assertStringContainsString('Welcome back, Alice', $dashboard->body());
         self::assertSame('/admin/login', $out->header('Location'));
         self::assertSame(302, $after->status());
         self::assertSame(['auth.login', 'auth.logout'], $this->actions());

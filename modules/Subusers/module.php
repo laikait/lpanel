@@ -69,7 +69,7 @@ return static function (ModuleContext $module): void {
             $account = $subusers->accountOf($identity);
             $features = $account === null ? [] : array_values(array_intersect($subusers->grants((int) $identity->id), $subusers->packageFeatures($account)));
             $owner = (string) ($users->row((string) $identity->attribute('parent_id'))['username'] ?? '');
-            $cards[] = ['template' => '@Subusers/access-card', 'order' => 15, 'data' => ['features' => $features, 'owner' => $owner]];
+            $cards[] = ['template' => 'Subusers/access-card', 'order' => 15, 'data' => ['features' => $features, 'owner' => $owner]];
 
             return $cards;
         }, 15, 'Subusers', 3);

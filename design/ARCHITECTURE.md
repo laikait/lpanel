@@ -51,6 +51,50 @@ made of two programs and a small helper:
    own PHP-FPM pool. Home folders are 0711, `/proc` is mounted with `hidepid`,
    each account gets a private `/tmp`, and kernel quotas apply.
 
+## Templates
+
+What the panels look like is a **template**, not module code. Each panel has
+its own folder per template, holding everything it shows:
+
+```
+templates/admin/<name>/    the Admin panel (:7443)
+templates/user/<name>/     the User panel (:7444)
+    layout.twig auth.twig dashboard.twig
+    <Module>/…             every page of that module in this panel, and its cards
+    partials/              parts the pages share (stat tiles…)
+    errors/                403, 404, 503, error (standalone pages)
+    emails/                the emails' layout (and, in the User template, their wording)
+    assets/src/            Tailwind input: app.css imports base.css (components) and nova.css (the look)
+    assets/css/app.css     built output, committed; servers never build
+    assets/js, icons.svg, favicon.svg
+```
+
+The first template is **nova**: navy sidebar, blue accent (teal in the User
+panel), rounded cards, stat tiles with sparklines, gauge rings, a traffic
+chart. Modules hold their logic and `lang/` files and no templates: a page is
+named by path (`'Backups/restore'`), found in the active template first.
+
+- **Which template a panel uses** is the Panel module's `template` setting
+  (`admin` and `user`); every template in use is listed in
+  `config/templates.php`, which also maps `/admin` and `/panel` to their
+  templates for error pages raised before a route matched. `PanelPage` makes
+  the panel's template active for each page it renders.
+- **Why `user/`, not `panel/`:** the engine reserves each module's name as a
+  template folder, and the shell module is called Panel.
+- **Emails** render with no template active, so the Panel module registers
+  each template's folder as a namespace (`@AdminTemplate`, `@UserTemplate`);
+  `templates/emails/*` are one-line includes of the User template's.
+- **Dashboards** are cards other modules contribute (`panel.dashboard`),
+  optionally in a `slot` (`stat`, `server`, `traffic`, `activity`) the
+  template lays out; the bell lists what modules add to `panel.attention`.
+  Charts are drawn as inline SVG on the server (`spark()`, `gauge()`,
+  `chart()`), coloured by the template's tokens, with no script or library.
+- **Styling** is Tailwind v4 (standalone CLI, no Node). Its colours are the
+  template's CSS variables (`bg-surface`, `text-ink`, `border-line`,
+  `text-brand`…), so dark mode needs no per-element classes. After changing a
+  `.twig` or `src/*.css`, run `dist/themes/build.sh`; the bundle refuses a
+  stale stylesheet (`--check`).
+
 ## Panel (this repo)
 
 The panel is built on LPHP 3.2.0 modules, with one module per feature area

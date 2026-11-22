@@ -466,4 +466,5 @@ return [
     'check_lists_skipped' => 'Blocklists are checked for public IPv4 addresses only.',
     'check_lists_listed' => 'The address is on :lists. Mail to servers that use those lists is refused; see each list\'s site to ask for removal.',
     'check_lists_clear' => 'The address is not on any of the :count blocklists checked.',
+    'stat_mailboxes' => 'Mailboxes',
 ];

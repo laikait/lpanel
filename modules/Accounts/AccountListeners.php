@@ -7,6 +7,7 @@ namespace App\Modules\Accounts;
 use App\Engine\Auth\Authorizer;
 use App\Engine\Auth\Identity;
 use App\Engine\Routing\Router;
+use App\Modules\Panel\Ui\Tiles;
 use App\Modules\Identity\Kind;
 
 /**
@@ -31,7 +32,9 @@ final class AccountListeners
     public function dashboard(array $cards, string $area, Identity $identity): array
     {
         if ($area === 'admin' && $this->authorizer->allows($identity, 'accounts.manage')) {
-            $cards[] = ['template' => '@Accounts/admin-card', 'order' => 10, 'data' => [
+            $rows = $this->accounts->visibleTo($identity);
+            $cards[] = Tiles::stat('Accounts.stat_accounts', 'users', 'accent', \count($rows), \array_map(static fn(array $r): string => (string) $r['created_at'], $rows), $this->router->url('admin.accounts'), 1);
+            $cards[] = ['template' => 'Accounts/admin-card', 'order' => 10, 'data' => [
                 'counts' => $this->accounts->counts($identity),
                 'recent' => \array_map($this->view->enrich(...), \array_slice($this->accounts->visibleTo($identity), 0, 5)),
                 'link' => $this->router->url('admin.accounts'),
@@ -43,13 +46,34 @@ final class AccountListeners
             $account = $this->accountOf($identity);
 
             if ($account !== null) {
-                \array_unshift($cards, ['template' => '@Accounts/user-card', 'order' => 0, 'width' => 'full', 'data' => [
+                \array_unshift($cards, ['template' => 'Accounts/user-card', 'order' => 0, 'width' => 'full', 'data' => [
                     'account' => $this->view->enrich($account),
                 ]]);
             }
         }
 
         return $cards;
+    }
+
+    /**
+     * panel.attention: accounts that could not be made.
+     *
+     * @param list<array<string, mixed>> $items
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function attention(array $items, string $area, Identity $identity): array
+    {
+        if ($area === 'admin' && $this->authorizer->allows($identity, 'accounts.manage') && $this->accounts->counts($identity)[Accounts::FAILED] > 0) {
+            $items[] = [
+                'tone' => 'bad',
+                'title' => 'Accounts.attention_title',
+                'text' => 'Accounts.attention_failed',
+                'url' => $this->router->url('admin.accounts') . '?status=' . Accounts::FAILED,
+            ];
+        }
+
+        return $items;
     }
 
     public function packageInUse(int $count, int $packageId): int

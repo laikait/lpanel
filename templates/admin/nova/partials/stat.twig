@@ -1,0 +1,21 @@
+{# A dashboard stat tile: icon, total, label, trend and what was added. #}
+{% set tones = {
+    accent: 'bg-brand text-white',
+    ok: 'bg-ok text-white',
+    violet: 'bg-violet text-white',
+    warn: 'bg-warn text-white'
+} %}
+<a class="card group flex items-center gap-4 p-5 text-ink no-underline transition hover:-translate-y-0.5 hover:no-underline hover:shadow-[var(--shadow-lg)]" href="{{ url }}">
+    <span class="grid size-16 shrink-0 place-items-center rounded-2xl {{ tones[tone]|default(tones.accent) }} shadow-sm [&_.ic]:size-8">{{ icon(icon) }}</span>
+    <span class="min-w-0 flex-1">
+        <span class="block text-4xl font-extrabold leading-none tracking-tight">{{ value|number_format }}</span>
+        <span class="mt-1.5 block truncate text-[15px] text-ink-2">{{ label|local }}</span>
+    </span>
+    <span class="flex shrink-0 flex-col items-end gap-1">
+        <span class="hidden w-28 sm:block [&_svg]:h-11 [&_svg]:w-full">{{ spark(series, tone) }}</span>
+        <span class="inline-flex items-center gap-1 text-[13px] font-semibold {{ added > 0 ? 'text-ok' : 'text-ink-3' }}">
+            {% if added > 0 %}{{ icon('trending') }}+{{ added|number_format }}{% else %}0{% endif %}
+            <span class="font-normal text-ink-3">{{ 'Panel.stat_days'|local({days: days}) }}</span>
+        </span>
+    </span>
+</a>

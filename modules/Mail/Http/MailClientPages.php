@@ -69,7 +69,7 @@ final class MailClientPages
         $account = $this->account($identity);
         $box = $this->mailbox($account, $id);
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Mail/setup', [
+        return $this->pages->render($request, $session, $identity, 'user', 'Mail/setup', [
             'box' => $box,
             'settings' => $this->setup->settings($account, (string) $box['address']),
             'profile_url' => $this->router->url('user.mail.profile', ['id' => $box['id']]),
@@ -98,7 +98,7 @@ final class MailClientPages
         $account = $this->account($identity);
         $result = $this->checks->run($this->mail->domains((int) $account['id']));
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Mail/checks', $this->checkData($result) + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Mail/checks', $this->checkData($result) + [
             'tabs' => MailToolPages::userTabs($this->router),
             'tab' => 'checks',
             'area' => 'user',
@@ -114,7 +114,7 @@ final class MailClientPages
         $account = $username === '' ? null : $this->accounts->findByUsername($identity, $username);
         $result = $this->checks->run($account === null ? [] : $this->mail->domains((int) $account['id']));
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Mail/checks', $this->checkData($result) + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Mail/checks', $this->checkData($result) + [
             'tabs' => MailToolPages::adminTabs($this->router),
             'tab' => 'checks',
             'area' => 'admin',

@@ -70,7 +70,7 @@ final class DnsPages
             ];
         }
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Dns/zones', ['zones' => $rows], title: 'Dns.title', active: 'dns');
+        return $this->pages->render($request, $session, $identity, 'user', 'Dns/zones', ['zones' => $rows], title: 'Dns.title', active: 'dns');
     }
 
     public function zone(Request $request, Session $session, Identity $identity, string $id): Response
@@ -203,7 +203,7 @@ final class DnsPages
             'remove_url' => $z['account_id'] === null ? $this->router->url('admin.dns.zones.remove', ['id' => $z['id']]) : null,
         ], $this->zones->all());
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Dns/admin', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Dns/admin', $extra + [
             'look' => $look,
             'addresses' => $this->zones->addresses(),
             'nameservers' => $profile['nameservers'],
@@ -226,7 +226,7 @@ final class DnsPages
         $server = $this->zones->profile(DnsZones::SERVER);
         $look = $this->checks->lookup([], $profile['nameservers']);
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Dns/own', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Dns/own', $extra + [
             'look' => $look,
             'addresses' => $this->zones->addresses(),
             'nameservers' => $profile['nameservers'],
@@ -262,7 +262,7 @@ final class DnsPages
         ], $this->zones->records($id));
         $admin = $this->admin($request, $identity);
 
-        return $this->pages->render($request, $session, $identity, $area, '@Dns/zone', $extra + [
+        return $this->pages->render($request, $session, $identity, $area, 'Dns/zone', $extra + [
             'zone' => $zone,
             'account' => $account,
             'records' => $records,

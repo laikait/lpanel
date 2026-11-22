@@ -1,0 +1,14 @@
+{#
+ # Sent by Auth\EmailVerification. In scope: `link`, `name`, `hours`.
+ # Wrapped in the User panel template's email layout.
+ #}
+{% extends "@UserTemplate/emails/base.twig" %}
+
+{% block title %}Confirm your email address{% endblock %}
+
+{% block body %}
+    <p style="margin:0 0 14px;">Hello{{ name ? ' ' ~ name : '' }},</p>
+    <p style="margin:0 0 22px;">Please confirm this is your email address:</p>
+    <p style="margin:0 0 22px;"><a href="{{ link }}" style="display:inline-block;padding:12px 22px;border-radius:12px;background:#0d9488;color:#ffffff;font-weight:600;text-decoration:none;">Confirm my address</a></p>
+    <p style="margin:0;color:#46557a;font-size:14px;">The link works for {{ hours }} hours. If you did not create an account, ignore this email.</p>
+{% endblock %}

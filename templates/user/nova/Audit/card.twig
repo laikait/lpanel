@@ -1,0 +1,21 @@
+<section class="card h-full" aria-labelledby="act-title">
+    <div class="flex items-center justify-between gap-3 px-6 pt-5">
+        <h2 class="flex items-center gap-3 text-lg font-bold" id="act-title"><span class="text-brand">{{ icon('clock') }}</span>{{ 'Audit.recent'|local }}</h2>
+        <a class="text-sm font-semibold" href="{{ link }}">{{ 'Audit.view_all'|local }} →</a>
+    </div>
+    {% if entries is empty %}
+        <div class="empty">{{ icon('activity') }}<h3>{{ 'Audit.empty'|local }}</h3></div>
+    {% else %}
+        <ul class="m-0 list-none px-6 pb-4 pt-3">
+            {% for row in entries %}
+                <li class="flex items-start gap-3 border-t border-line py-3 first:border-t-0">
+                    <span class="mt-1.5 size-2.5 shrink-0 rounded-full ring-4 {{ row.outcome == 'ok' ? 'bg-brand ring-brand-soft' : (row.outcome == 'failed' ? 'bg-bad ring-bad-soft' : 'bg-warn ring-warn-soft') }}"></span>
+                    <span class="min-w-0 flex-1">
+                        <span class="block truncate font-medium">{{ row.action|replace({'.': ' · ', '_': ' '})|capitalize }}{% if row.subject %} <span class="font-semibold text-brand-ink">{{ row.subject }}</span>{% endif %}</span>
+                    </span>
+                    <span class="shrink-0 text-[13px] text-ink-3">{{ row.created_at|when }}</span>
+                </li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+</section>

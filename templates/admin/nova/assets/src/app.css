@@ -1,0 +1,41 @@
+/*
+ * "nova": the Admin panel's template. Built with the Tailwind v4 CLI
+ * (dist/themes/build.sh) into ../css/app.css, which is committed.
+ *
+ *   base.css   the shell and components every page uses (token driven)
+ *   nova.css   nova's look: navy sidebar, blue accent, rounded cards
+ *
+ * Utilities come from Tailwind, scanned from this template's .twig files.
+ * No preflight: base.css has its own resets.
+ */
+@layer theme, base, components, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "./base.css" layer(components);
+@import "./nova.css" layer(components);
+
+/* Tailwind's colours are the template's tokens, so utilities flip with dark mode. */
+@theme inline {
+    --color-page: var(--bg);
+    --color-surface: var(--surface);
+    --color-surface-2: var(--surface-2);
+    --color-line: var(--border);
+    --color-line-strong: var(--border-strong);
+    --color-ink: var(--text);
+    --color-ink-2: var(--text-2);
+    --color-ink-3: var(--text-3);
+    --color-brand: var(--accent);
+    --color-brand-soft: var(--accent-soft);
+    --color-brand-ink: var(--accent-text);
+    --color-ok: var(--ok);
+    --color-ok-soft: var(--ok-soft);
+    --color-warn: var(--warn);
+    --color-warn-soft: var(--warn-soft);
+    --color-bad: var(--bad);
+    --color-bad-soft: var(--bad-soft);
+    --color-info: var(--info);
+    --color-info-soft: var(--info-soft);
+    --color-violet: var(--violet);
+    --color-violet-soft: var(--violet-soft);
+    --radius-card: 16px;
+}

@@ -57,7 +57,7 @@ final class AccountPages
             $rows[] = $row;
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Accounts/index', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Accounts/index', [
             'accounts' => $rows,
             'counts' => $this->accounts->counts($identity),
             'search' => $search,
@@ -134,7 +134,7 @@ final class AccountPages
 
         $login = $this->users->row((string) $row['login_id']);
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Accounts/show', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Accounts/show', [
             'account' => $row,
             'login' => $login,
             'can' => $this->abilities($identity) + ['login_as' => $login !== null && $this->loginAs->may($identity, $login)],
@@ -258,7 +258,7 @@ final class AccountPages
             $packages[] = $package;
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Accounts/new', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Accounts/new', $extra + [
             'errors' => [],
             'old' => [],
             'agent_error' => null,

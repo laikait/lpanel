@@ -20,6 +20,39 @@ final class BackupListeners
     ) {}
 
     /**
+     * panel.attention: the last finished run did not back everything up.
+     *
+     * @param list<array<string, mixed>> $items
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function attention(array $items, string $area, Identity $identity): array
+    {
+        if ($area !== 'admin' || !$this->authorizer->allows($identity, 'server.backups')) {
+            return $items;
+        }
+
+        foreach ($this->runs->recent(5) as $run) {
+            if ($run['state'] === BackupRuns::RUNNING) {
+                continue;
+            }
+
+            if ($run['state'] !== BackupRuns::DONE) {
+                $items[] = [
+                    'tone' => $run['state'] === BackupRuns::FAILED ? 'bad' : 'warn',
+                    'title' => 'Backups.attention_title',
+                    'text' => $run['state'] === BackupRuns::FAILED ? 'Backups.attention_failed' : 'Backups.attention_partial',
+                    'url' => $this->router->url('admin.backups'),
+                ];
+            }
+
+            break;
+        }
+
+        return $items;
+    }
+
+    /**
      * accounts.show: the account's last backup, in the Admin panel.
      *
      * @param list<array<string, mixed>> $cards
@@ -34,7 +67,7 @@ final class BackupListeners
         }
 
         $username = (string) $account['username'];
-        $cards[] = ['template' => '@Backups/card', 'data' => [
+        $cards[] = ['template' => 'Backups/card', 'data' => [
             'backup_last' => $this->runs->lastFor($username),
             'backup_now_url' => $this->router->url('admin.backups.run'),
             'backup_username' => $username,

@@ -167,7 +167,7 @@ return static function (ModuleContext $module): void {
                 $reseller = $resellers->find($identity->id);
 
                 if ($reseller !== null) {
-                    $cards[] = ['template' => '@Resellers/card', 'order' => 5, 'width' => 'full', 'data' => ['r' => $reseller]];
+                    $cards[] = ['template' => 'Resellers/card', 'order' => 5, 'width' => 'full', 'data' => ['r' => $reseller]];
                 }
             }
 

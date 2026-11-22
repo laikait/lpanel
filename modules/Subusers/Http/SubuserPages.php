@@ -131,7 +131,7 @@ final class SubuserPages
             $rows[] = $row;
         }
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Subusers/index', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Subusers/index', $extra + [
             'subusers' => $rows,
             'offered' => $offered,
             'prefix' => (string) $identity->attribute('username') . '.',

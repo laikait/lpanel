@@ -1359,6 +1359,7 @@ echo "== restores"
 snap() { lpanel backup:snapshots "$1" ${2:+--destination=$2} | awk 'NR == 2 { print $1 }'; }
 t_rs_files()    { local s; s=$(snap shop7); [ -n "$s" ] || return 1
                   echo broken > /home/shop7/public_html/sftpup.txt && echo extra > /home/shop7/public_html/made-since.txt \
+                  && chown shop7: /home/shop7/public_html/made-since.txt \
                   && ln -sfn /etc /home/shop7/public_html/evil && chown -h shop7: /home/shop7/public_html/evil \
                   && lpanel backup:restore shop7 "$s" --paths=public_html --wait > /tmp/rs.out 2>&1; local r=$?; cat /tmp/rs.out >&2
                   [ $r = 0 ] && [ "$(cat /home/shop7/public_html/sftpup.txt)" = "over sftp" ] && [ "$(stat -c %U /home/shop7/public_html/sftpup.txt)" = shop7 ] \
@@ -1378,36 +1379,44 @@ t_rs_download() { lpanel backup:download shop7 "$(snap shop7)" --path=public_htm
                   && tar -tzf "$f" | grep -q 'public_html/sftpup.txt' \
                   && lpanel backup:download shop3 "$(snap shop3)" --database=shop3_data --wait >/dev/null 2>&1 \
                   && zcat /home/shop3/lpanel-backups/shop3_data-*.sql.gz | grep -q "INSERT INTO \`notes\`"; }
-t_rs_panel()    { signin "$ROOT_PASSWORD" >/dev/null; local s; s=$(snap shop7)
-                  curl -ks -b $jar -c $jar "https://127.0.0.1:7443/admin/backups/accounts/shop7?snapshot=$s" -o /tmp/rsp.html && grep -q 'public_html' /tmp/rsp.html \
-                  && [ "$(signin_as 7444 /panel shop7 Owner-Pass-Word-7)" = "303 https://127.0.0.1:7444/panel" ] \
-                  && curl -ks -b /tmp/jar2 -c /tmp/jar2 "https://127.0.0.1:7444/panel/backups?snapshot=$s&path=public_html" -o /tmp/rsu.html && grep -q 'sftpup.txt' /tmp/rsu.html \
-                  && echo broken > /home/shop7/public_html/sftpup.txt \
+# shop1 is on Starter, which has the backups feature (shop7's package does not).
+t_rs_panel()    { echo probe > /home/shop1/public_html/restore-probe.txt && chown shop1: /home/shop1/public_html/restore-probe.txt \
+                  && lpanel backup:run --accounts=shop1 --wait >/dev/null 2>&1 || return 1
+                  local s; s=$(snap shop1); signin "$ROOT_PASSWORD" >/dev/null
+                  curl -ks -b $jar -c $jar "https://127.0.0.1:7443/admin/backups/accounts/shop1?snapshot=$s" -o /tmp/rsp.html && grep -q 'public_html' /tmp/rsp.html \
+                  && [ "$(signin_as 7444 /panel shop1 Owner-Pass-Word-1)" = "303 https://127.0.0.1:7444/panel" ] \
+                  && curl -ks -b /tmp/jar2 -c /tmp/jar2 "https://127.0.0.1:7444/panel/backups?snapshot=$s&path=public_html" -o /tmp/rsu.html && grep -q 'restore-probe.txt' /tmp/rsu.html \
+                  && echo broken > /home/shop1/public_html/restore-probe.txt \
                   && curl -ks -b /tmp/jar2 -c /tmp/jar2 -o /dev/null --data-urlencode "_token=$(token /tmp/rsu.html)" -d "snapshot=$s" -d kind=files \
-                       -d 'paths[]=public_html/sftpup.txt' -d mode=place https://127.0.0.1:7444/panel/backups/restore \
-                  && for _ in $(seq 30); do lpanel backup:settle >/dev/null; [ "$(cat /home/shop7/public_html/sftpup.txt)" = "over sftp" ] && break; sleep 1; done \
-                  && [ "$(cat /home/shop7/public_html/sftpup.txt)" = "over sftp" ]; }
+                       -d 'paths[]=public_html/restore-probe.txt' -d mode=place https://127.0.0.1:7444/panel/backups/restore \
+                  && for _ in $(seq 30); do lpanel backup:settle >/dev/null; [ "$(cat /home/shop1/public_html/restore-probe.txt)" = probe ] && break; sleep 1; done \
+                  && [ "$(cat /home/shop1/public_html/restore-probe.txt)" = probe ] \
+                  && [ "$(signin_as 7444 /panel shop7 Owner-Pass-Word-7)" = "303 https://127.0.0.1:7444/panel" ] \
+                  && [ "$(curl -ks -b /tmp/jar2 -o /dev/null -w '%{http_code}' https://127.0.0.1:7444/panel/backups)" = 403 ]; }
 t_rs_api()      { local code; code=$(api -o /tmp/rsa.json -w '%{http_code}' "https://127.0.0.1:7443/admin/api/v1/accounts/shop7/backups/files?snapshot=$(snap shop7)&path=public_html") \
                   && [ "$code" = 200 ] && grep -q sftpup.txt /tmp/rsa.json \
                   && [ "$(api -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d "{\"snapshot\":\"$(snap shop7)\",\"kind\":\"files\",\"paths\":[\"../../etc\"]}" https://127.0.0.1:7443/admin/api/v1/accounts/shop7/backups/restores)" = 422 ]; }
 # The exit: an account that is gone, made again from its backup through a
 # destination added as another server would add it (with the repository's password).
 t_rs_moved()    { /usr/local/lpa/bin/lpa backup-password d1 | lpanel backup:destination-add moved local --path=/backup/lpanel --existing > /tmp/rsm.out 2>&1; cat /tmp/rsm.out >&2
-                  lpanel backup:accounts --destination=moved | grep -Eq '^shop3 +[0-9a-f]{8} .* yes$' \
+                  lpanel backup:accounts --destination=moved > /tmp/rsacc.out && grep -Eq '^shop3 +[0-9a-f]{8} .* yes$' /tmp/rsacc.out \
                   && ! { echo wrong-password | lpanel backup:destination-add moved2 local --path=/backup/lpanel --existing >/dev/null 2>&1; }; }
+active_shop3()  { lpanel accounts:list > /tmp/rsl.out 2>/dev/null; grep -Eq '^shop3 +three\.example\.test .*active' /tmp/rsl.out; }
 t_rs_recreate() { local s rex; s=$(snap shop3 moved); rex=$(mariadb -uroot -N lpanel -e "select id from panel_users where username='rex'")
                   lpanel accounts:terminate shop3 --yes >/dev/null && for _ in $(seq 60); do systemctl start lpanel-scheduler.service; getent passwd shop3 >/dev/null || break; sleep 1; done
                   ! getent passwd shop3 && ! mariadb -uroot -e 'use shop3_data' 2>/dev/null || return 1
-                  lpanel backup:recreate "$s" --destination=moved --dry-run | grep -q 'reseller rex' \
-                  && lpanel backup:recreate "$s" --destination=moved --wait > /tmp/rsr.out 2>&1; local r=$?; cat /tmp/rsr.out >&2; [ $r = 0 ] || return 1
+                  lpanel backup:recreate "$s" --destination=moved --dry-run > /tmp/rsdry.out && grep -q 'reseller rex' /tmp/rsdry.out \
+                  && lpanel backup:recreate "$s" --destination=moved --wait > /tmp/rsr.out 2>&1; local r=$?; cat /tmp/rsr.out >&2; [ $r = 0 ] || { tail -c 3000 /var/log/lpanel/*.log /usr/local/lpanel/system/Logs/* >&2 2>/dev/null; return 1; }
                   for _ in $(seq 30); do systemctl start lpanel-scheduler.service; says three.example.test "bool(false)" >/dev/null 2>&1 && break; sleep 1; done
-                  getent passwd shop3 >/dev/null && lpanel accounts:list | grep -Eq '^shop3 +three\.example\.test .*active' \
-                  && [ "$(mariadb -uroot -N lpanel -e "select owner_id from accounts where username='shop3'")" = "$rex" ] \
-                  && says three.example.test "bool(false)" \
-                  && [ "$(mariadb -ushop3_app "-p$DBPW" -N shop3_data -e 'select note from notes')" = kept ] \
-                  && python3 /tmp/imap.py imaps 127.0.0.1 sender@three.example.test "$MPW" | grep -q MESSAGES \
-                  && [ "$(signin_as 7444 /panel shop3 Owner-Pass-Word-3)" = "303 https://127.0.0.1:7444/panel" ] \
-                  && [ -z "$(find /home/shop3/public_html -user root -print -quit)" ]; }
+                  for _ in $(seq 60); do systemctl start lpanel-scheduler.service; active_shop3 && break; sleep 1; done
+                  local n=0; step() { n=$((n+1)); "$@" || { echo "step $n failed: $*" >&2; return 1; }; }
+                  step getent passwd shop3 >/dev/null && step active_shop3 \
+                  && step test "$(mariadb -uroot -N lpanel -e "select owner_id from accounts where username='shop3'")" = "$rex" \
+                  && step says three.example.test "bool(false)" \
+                  && step test "$(mariadb -ushop3_app "-p$DBPW" -N shop3_data -e 'select note from notes')" = kept \
+                  && step eval "python3 /tmp/imap.py imaps 127.0.0.1 sender@three.example.test '$MPW' | grep -q MESSAGES" \
+                  && step test "$(signin_as 7444 /panel shop3 Owner-Pass-Word-3)" = "303 https://127.0.0.1:7444/panel" \
+                  && step test -z "$(find /home/shop3/public_html -user root -print -quit)"; }
 t_rs_audit()    { local got; got=$(mariadb -uroot -N lpanel -e "select distinct concat(action, ':', outcome) from audit_log where action like 'backup.%' or (action = 'account.create' and details like '%restored%')" | tr '\n' ' '); echo "$got" >&2
                   for a in backup.restore:ok backup.restored:ok backup.download:ok backup.download_ready:ok backup.account_restore:ok account.create:ok; do echo "$got" | grep -q "$a" || return 1; done; }
 check "files go back in place, as the owner's; newer files stay; a link out of the home is not followed" t_rs_files

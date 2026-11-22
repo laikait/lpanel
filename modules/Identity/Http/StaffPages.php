@@ -114,7 +114,7 @@ final class StaffPages
             $staff[] = $row;
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Identity/staff', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Identity/staff', $extra + [
             'staff' => $staff,
             'action' => $this->router->url('admin.staff.create'),
             'min_password' => SecurityPage::MIN_PASSWORD,

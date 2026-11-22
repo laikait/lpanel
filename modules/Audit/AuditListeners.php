@@ -49,7 +49,8 @@ final class AuditListeners
         }
 
         $cards[] = [
-            'template' => '@Audit/card',
+            'template' => 'Audit/card',
+            'slot' => 'activity',
             'order' => 80,
             'data' => [
                 'entries' => $this->log->latestFor($identity->id),

@@ -102,7 +102,7 @@ final class SessionsTest extends TestCase
 
         self::assertSame('/admin', $back->header('Location'));
         self::assertStringNotContainsString('You are signed in as', $after);
-        self::assertStringContainsString('Welcome, root', $after);
+        self::assertStringContainsString('Welcome back, root', $after);
         self::assertSame(['auth.login_as', 'auth.login_as_end'], \array_values(\array_intersect(\array_column($this->auditRows(), 'action'), ['auth.login_as', 'auth.login_as_end'])));
     }
 

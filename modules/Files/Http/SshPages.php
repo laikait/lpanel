@@ -120,7 +120,7 @@ final class SshPages
             'delete_url' => $this->router->url('user.ssh.delete', ['id' => $k['id']]),
         ], $this->keys->keys($id));
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Files/ssh', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Files/ssh', $extra + [
             'account' => $account,
             'access' => $this->actions->access($account),
             'keys' => $keys,

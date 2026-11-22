@@ -1,0 +1,210 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Files.title'|local }}</h1>
+        <p>{{ 'Files.lead'|local }}</p>
+    </div>
+</div>
+{% include 'Files/tabs.twig' %}
+
+{% if readonly %}
+    <div class="alert alert-warning">{{ icon('pause') }}<p>{{ 'Files.suspended_text'|local }}</p></div>
+{% endif %}
+{% if error %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ error|local }}</p></div>
+{% endif %}
+
+<div class="card fm"{% if not readonly %} data-drop-upload="fm-upload-form" data-drop-text="{{ 'Files.drop_here'|local }}"{% endif %}>
+    <div class="fm-bar">
+        <nav class="fm-crumbs" aria-label="{{ 'Files.path_label'|local }}">
+            {% if up_url %}<a class="btn btn-sm btn-ghost btn-icon fm-up" href="{{ up_url }}" title="{{ 'Files.up'|local }}" aria-label="{{ 'Files.up'|local }}"><span class="flip-up">{{ icon('down') }}</span></a>{% endif %}
+            {% for c in crumbs %}
+                {% if not loop.first %}<span class="fm-sep" aria-hidden="true">/</span>{% endif %}
+                <a href="{{ c.url }}"{% if loop.last %} aria-current="page"{% endif %}>{% if loop.first %}{{ icon('folder') }}<span>{{ 'Files.home'|local }}</span>{% else %}{{ c.name }}{% endif %}</a>
+            {% endfor %}
+        </nav>
+        <div class="fm-tools">
+            <a class="btn btn-sm btn-ghost" href="{{ hidden_url }}">{{ hidden ? 'Files.hide_hidden'|local : 'Files.show_hidden'|local }}</a>
+            {% if not readonly %}
+            <details class="fm-pop">
+                <summary class="btn btn-sm">{{ icon('folder') }}<span class="hide-sm">{{ 'Files.new_folder'|local }}</span></summary>
+                <form class="fm-pop-panel" method="post" action="{{ urls.folder }}">
+                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                    <input type="hidden" name="dir" value="{{ path }}">
+                    <div class="field">
+                        <label for="fm-folder">{{ 'Files.folder_name'|local }}</label>
+                        <input class="input mono" id="fm-folder" name="name" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit">{{ icon('plus') }}{{ 'Files.make'|local }}</button>
+                </form>
+            </details>
+            <details class="fm-pop">
+                <summary class="btn btn-sm">{{ icon('file') }}<span class="hide-sm">{{ 'Files.new_file'|local }}</span></summary>
+                <form class="fm-pop-panel" method="post" action="{{ urls.file }}">
+                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                    <input type="hidden" name="dir" value="{{ path }}">
+                    <div class="field">
+                        <label for="fm-file">{{ 'Files.file_name'|local }}</label>
+                        <input class="input mono" id="fm-file" name="name" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="index.html" required>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit">{{ icon('plus') }}{{ 'Files.make'|local }}</button>
+                </form>
+            </details>
+            <details class="fm-pop">
+                <summary class="btn btn-sm btn-primary">{{ icon('upload') }}<span>{{ 'Files.upload'|local }}</span></summary>
+                <form class="fm-pop-panel" id="fm-upload-form" method="post" action="{{ urls.upload }}" enctype="multipart/form-data">
+                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                    <input type="hidden" name="dir" value="{{ path }}">
+                    <div class="field">
+                        <label for="fm-upload">{{ 'Files.upload_files'|local }}</label>
+                        <input class="input fm-file-input" type="file" id="fm-upload" name="files[]" multiple required>
+                        <div class="hint">{% if max_upload %}{{ 'Files.upload_hint'|local({size: max_upload|bytes}) }} {% endif %}<span class="hide-sm">{{ 'Files.upload_drop_hint'|local }}</span></div>
+                    </div>
+                    <label class="check"><input type="checkbox" name="overwrite" value="1"> {{ 'Files.overwrite'|local }}</label>
+                    <button class="btn btn-sm btn-primary fm-pop-submit" type="submit">{{ icon('upload') }}{{ 'Files.upload_button'|local }}</button>
+                </form>
+            </details>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if entries is empty %}
+        <div class="empty">{{ icon('folder') }}<h3>{{ 'Files.empty'|local }}</h3><p>{{ 'Files.empty_hint'|local }}</p></div>
+    {% else %}
+    <form id="fm-sel" method="post" action="{{ urls.delete }}" data-fm>
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <input type="hidden" name="dir" value="{{ path }}">
+        {% if not readonly %}
+        <div class="fm-selbar">
+            <span class="fm-count" data-fm-count data-none="{{ 'Files.none_selected'|local }}" data-some="{{ 'Files.selected'|local({n: '#'}) }}">{{ 'Files.none_selected'|local }}</span>
+            <details class="fm-pop">
+                <summary class="btn btn-sm btn-ghost" data-fm-needs="one">{{ icon('edit') }}<span class="hide-sm">{{ 'Files.rename'|local }}</span></summary>
+                <div class="fm-pop-panel">
+                    <div class="field">
+                        <label for="fm-rename">{{ 'Files.new_name'|local }}</label>
+                        <input class="input mono" id="fm-rename" name="new_name" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" data-fm-name>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit" formaction="{{ urls.rename }}">{{ 'Files.rename'|local }}</button>
+                </div>
+            </details>
+            <details class="fm-pop">
+                <summary class="btn btn-sm btn-ghost" data-fm-needs="any">{{ icon('move') }}<span class="hide-sm">{{ 'Files.move'|local }}</span></summary>
+                <div class="fm-pop-panel">
+                    <div class="field">
+                        <label for="fm-move">{{ 'Files.to_folder'|local }}</label>
+                        <input class="input mono" id="fm-move" name="move_to" maxlength="4096" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="/public_html">
+                        <div class="hint">{{ 'Files.to_hint'|local }}</div>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit" formaction="{{ urls.move }}">{{ 'Files.move'|local }}</button>
+                </div>
+            </details>
+            <details class="fm-pop">
+                <summary class="btn btn-sm btn-ghost" data-fm-needs="any">{{ icon('copy') }}<span class="hide-sm">{{ 'Files.copy'|local }}</span></summary>
+                <div class="fm-pop-panel">
+                    <div class="field">
+                        <label for="fm-copy">{{ 'Files.to_folder'|local }}</label>
+                        <input class="input mono" id="fm-copy" name="copy_to" maxlength="4096" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="/public_html">
+                        <div class="hint">{{ 'Files.to_hint'|local }}</div>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit" formaction="{{ urls.copy }}">{{ 'Files.copy'|local }}</button>
+                </div>
+            </details>
+            <details class="fm-pop">
+                <summary class="btn btn-sm btn-ghost" data-fm-needs="any">{{ icon('lock') }}<span class="hide-sm">{{ 'Files.chmod'|local }}</span></summary>
+                <div class="fm-pop-panel">
+                    <div class="field">
+                        <label for="fm-mode">{{ 'Files.mode'|local }}</label>
+                        <input class="input mono fm-mode" id="fm-mode" name="mode" maxlength="4" inputmode="numeric" pattern="0?[0-7]{3}" autocomplete="off" placeholder="644" data-fm-mode>
+                        <div class="hint">{{ 'Files.mode_hint'|local }}</div>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit" formaction="{{ urls.chmod }}">{{ 'Files.apply'|local }}</button>
+                </div>
+            </details>
+            <details class="fm-pop">
+                <summary class="btn btn-sm btn-ghost" data-fm-needs="any">{{ icon('archive') }}<span class="hide-sm">{{ 'Files.compress'|local }}</span></summary>
+                <div class="fm-pop-panel">
+                    <div class="field">
+                        <label for="fm-archive">{{ 'Files.archive_name'|local }}</label>
+                        <input class="input mono" id="fm-archive" name="archive" maxlength="255" autocomplete="off" autocapitalize="none" spellcheck="false" value="archive.zip">
+                        <div class="hint">{{ 'Files.archive_hint'|local }}</div>
+                    </div>
+                    <button class="btn btn-sm btn-primary" type="submit" formaction="{{ urls.compress }}">{{ 'Files.compress'|local }}</button>
+                </div>
+            </details>
+            <button class="btn btn-sm btn-ghost fm-danger" type="submit" formaction="{{ urls.delete }}" data-fm-needs="any" data-confirm="{{ 'Files.confirm_delete'|local }}">{{ icon('trash') }}<span class="hide-sm">{{ 'Files.delete'|local }}</span></button>
+        </div>
+        {% endif %}
+        <div class="table-wrap">
+            <table class="table fm-table">
+                <thead>
+                    <tr>
+                        <th class="fm-check">{% if not readonly %}<input type="checkbox" data-check-all="paths[]" aria-label="{{ 'Files.select_all'|local }}">{% endif %}</th>
+                        <th>{{ 'Files.name'|local }}</th>
+                        <th class="fm-col-size">{{ 'Files.size'|local }}</th>
+                        <th class="fm-col-time">{{ 'Files.modified'|local }}</th>
+                        <th class="fm-col-mode">{{ 'Files.permissions'|local }}</th>
+                        <th class="fm-col-tools"><span class="sr-only">{{ 'Files.more'|local }}</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for e in entries %}
+                    <tr class="{% if e.hidden %}is-hidden{% endif %}">
+                        <td class="fm-check">{% if not readonly and not e.protected %}<input type="checkbox" name="paths[]" value="{{ e.path }}" data-name="{{ e.name }}" data-mode="{{ e.mode }}" aria-label="{{ 'Files.select_name'|local({name: e.name}) }}">{% endif %}</td>
+                        <td>
+                            <div class="fm-name">
+                                <span class="fm-ic is-{{ e.icon }}">{{ icon(e.icon) }}</span>
+                                <div class="fm-name-text">
+                                    <a href="{{ e.open_url }}" title="{{ 'Files.open_name'|local({name: e.name}) }}">{{ e.name }}</a>
+                                    {% if e.type == 'link' %}
+                                        <div class="fm-sub">{% if e.outside %}<span class="badge warn">{{ 'Files.link_outside'|local }}</span>{% elseif e.broken %}<span class="badge bad">{{ 'Files.link_broken'|local }}</span>{% endif %} <span class="mono">→ {{ e.target }}</span></div>
+                                    {% elseif e.protected %}
+                                        <div class="fm-sub">{{ 'Files.kept_folder'|local }}</div>
+                                    {% endif %}
+                                    <div class="fm-sub fm-sub-sm">{% if not e.is_dir %}{{ e.size|bytes }} · {% endif %}{{ e.mtime_text }}</div>
+                                </div>
+                            </div>
+                        </td>
+                        <td class="fm-col-size nowrap muted">{{ e.is_dir ? '—' : e.size|bytes }}</td>
+                        <td class="fm-col-time nowrap muted">{{ e.mtime_text }}</td>
+                        <td class="fm-col-mode mono muted">{{ e.mode }}</td>
+                        <td class="fm-col-tools">
+                            <div class="fm-row-tools">
+                                {% if e.edit_url and not readonly %}<a class="btn btn-sm btn-ghost btn-icon" href="{{ e.edit_url }}" title="{{ 'Files.edit_name'|local({name: e.name}) }}" aria-label="{{ 'Files.edit_name'|local({name: e.name}) }}">{{ icon('edit') }}</a>{% endif %}
+                                {% if e.archive and not readonly %}
+                                <details class="fm-pop">
+                                    <summary class="btn btn-sm btn-ghost btn-icon" title="{{ 'Files.extract_name'|local({name: e.name}) }}" aria-label="{{ 'Files.extract_name'|local({name: e.name}) }}">{{ icon('archive') }}</summary>
+                                    <div class="fm-pop-panel">
+                                        <div class="field">
+                                            <label for="fx-{{ loop.index }}">{{ 'Files.extract_to'|local }}</label>
+                                            <input class="input mono" id="fx-{{ loop.index }}" form="fx-form-{{ loop.index }}" name="to" maxlength="4096" autocomplete="off" autocapitalize="none" spellcheck="false" value="/{{ path }}">
+                                            <div class="hint">{{ 'Files.extract_hint'|local }}</div>
+                                        </div>
+                                        <button class="btn btn-sm btn-primary" type="submit" form="fx-form-{{ loop.index }}">{{ 'Files.extract'|local }}</button>
+                                    </div>
+                                </details>
+                                {% endif %}
+                                {% if e.download_url %}<a class="btn btn-sm btn-ghost btn-icon" href="{{ e.download_url }}" title="{{ 'Files.download_name'|local({name: e.name}) }}" aria-label="{{ 'Files.download_name'|local({name: e.name}) }}">{{ icon('download') }}</a>{% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </form>
+    {% for e in entries %}{% if e.archive and not readonly %}
+        <form id="fx-form-{{ loop.index }}" class="fm-hidden-form" method="post" action="{{ urls.extract }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <input type="hidden" name="dir" value="{{ path }}">
+            <input type="hidden" name="path" value="{{ e.path }}">
+        </form>
+    {% endif %}{% endfor %}
+    <div class="fm-foot">
+        <span>{{ 'Files.items'|local({n: entry_count}) }}</span>
+        {% if truncated %}<span class="badge warn">{{ 'Files.truncated'|local }}</span>{% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

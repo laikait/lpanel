@@ -71,7 +71,7 @@ final class DnsListeners
             $zones[] = $zone + ['records' => \count($this->zones->records((int) $zone['id']))];
         }
 
-        $cards[] = ['template' => '@Dns/admin-card', 'data' => [
+        $cards[] = ['template' => 'Dns/admin-card', 'data' => [
             'zones' => $zones,
             'nameservers' => $zones === [] ? [] : $this->zones->nameserversFor($account['owner_id'] === null ? null : (int) $account['owner_id'], (string) $zones[0]['name']),
         ]];

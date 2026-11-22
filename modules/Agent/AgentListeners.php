@@ -38,7 +38,7 @@ final class AgentListeners
             $data = ['facts' => null, 'problem' => $e->getMessage()];
         }
 
-        \array_unshift($cards, ['template' => '@Agent/server-card', 'order' => 0, 'width' => 'full', 'data' => $data]);
+        \array_unshift($cards, ['template' => 'Agent/server-card', 'slot' => 'server', 'order' => 0, 'width' => 'full', 'data' => $data]);
 
         return $cards;
     }

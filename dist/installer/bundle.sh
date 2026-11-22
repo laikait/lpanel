@@ -20,6 +20,11 @@ out="dist/build/lpanel-${version}"
 rm -rf "$out"
 mkdir -p "$out/panel" "$out/bin" "$out/packaging"
 
+echo "== templates"
+# The templates' stylesheets are built with Tailwind and committed; the bundle
+# must not carry one that is out of date with the .twig files.
+dist/themes/build.sh --check
+
 echo "== panel code"
 # Everything the panel runs, nothing it does not: no tests, no design notes,
 # no agent sources, no local settings, no runtime state.

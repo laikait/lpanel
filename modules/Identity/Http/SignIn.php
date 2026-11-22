@@ -182,7 +182,7 @@ final class SignIn
 
     private function form(Request $request, Session $session, string $area, string $username = '', ?string $error = null, int $status = 200): Response
     {
-        return $this->pages->bare($request, $session, $area, '@Identity/login', [
+        return $this->pages->bare($request, $session, $area, 'Identity/login', [
             'action' => $this->router->url($area . '.login'),
             'username' => $username,
             'error' => $error,
@@ -191,7 +191,7 @@ final class SignIn
 
     private function codeForm(Request $request, Session $session, string $area, ?string $error = null, int $status = 200): Response
     {
-        return $this->pages->bare($request, $session, $area, '@Identity/code', [
+        return $this->pages->bare($request, $session, $area, 'Identity/code', [
             'action' => $this->router->url($area . '.login.code'),
             'back' => $this->router->url($area . '.login'),
             'error' => $error,

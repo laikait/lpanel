@@ -115,7 +115,7 @@ final class DomainPages
         $package = $this->packages->byId((int) $account['package_id']) ?? [];
         $web = $this->sync->stateOf((int) $account['id']);
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Web/domains', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Web/domains', $extra + [
             'account' => $account,
             'domains' => $rows,
             'sites' => \array_values(\array_filter($rows, static fn(array $d): bool => \in_array($d['kind'], [Domains::MAIN, Domains::ADDON], true))),

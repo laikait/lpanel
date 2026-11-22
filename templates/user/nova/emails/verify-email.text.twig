@@ -1,0 +1,9 @@
+{% autoescape false %}
+Hello{{ name ? ' ' ~ name : '' }},
+
+Please confirm this is your email address:
+
+{{ link }}
+
+The link works for {{ hours }} hours. If you did not create an account, ignore this email.
+{% endautoescape %}

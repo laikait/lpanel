@@ -1,0 +1,82 @@
+{% extends "layout.twig" %}
+
+{% macro row(c) %}
+    <li class="check-row is-{{ c.state }}">
+        <span class="check-icon">{{ icon({ok: 'check', warn: 'alert', bad: 'x', info: 'info'}[c.state]) }}</span>
+        <div class="check-body">
+            <div class="check-head">
+                <strong>{{ ('Mail.check_' ~ c.key)|local }}</strong>
+                <span class="sr-only">{{ ('Mail.check_state_' ~ c.state)|local }}</span>
+            </div>
+            <p>{{ c.text|local(c.args) }}</p>
+            {% if c.value %}<code class="check-value">{{ c.value }}</code>{% endif %}
+        </div>
+    </li>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Mail.title'|local }}</h1>
+        <p>{{ area == 'admin' ? 'Mail.checks_admin_lead'|local : 'Mail.checks_lead'|local }}</p>
+    </div>
+</div>
+{% include 'Mail/tabs.twig' %}
+
+{% if area == 'admin' %}
+<form class="filter-bar" method="get" action="{{ form_url }}" role="search">
+    <div class="field filter-bar-search">
+        <label class="sr-only" for="account">{{ 'Mail.checks_account'|local }}</label>
+        <span class="input-icon">{{ icon('user') }}<input class="input" id="account" name="account" value="{{ account }}" placeholder="{{ 'Mail.checks_account_placeholder'|local }}" autocomplete="off" spellcheck="false"></span>
+    </div>
+    <button class="btn" type="submit">{{ icon('search') }}{{ 'Mail.checks_run'|local }}</button>
+</form>
+{% if unknown_account %}<div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Mail.checks_no_account'|local({name: account}) }}</p></div>{% endif %}
+{% endif %}
+
+{% if error %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ error|local }}</p></div>
+{% else %}
+<div class="grid grid-3 check-summary">
+    <div class="card stat"><span class="stat-icon is-ok">{{ icon('check') }}</span><div><div class="stat-label">{{ 'Mail.checks_passed'|local }}</div><div class="stat-value">{{ counts.ok }}</div></div></div>
+    <div class="card stat"><span class="stat-icon is-warn">{{ icon('alert') }}</span><div><div class="stat-label">{{ 'Mail.checks_warnings'|local }}</div><div class="stat-value">{{ counts.warn }}</div></div></div>
+    <div class="card stat"><span class="stat-icon is-bad">{{ icon('x') }}</span><div><div class="stat-label">{{ 'Mail.checks_problems'|local }}</div><div class="stat-value">{{ counts.bad }}</div></div></div>
+</div>
+
+<div class="stack">
+    {% for d in domains %}
+    <section class="card">
+        <div class="card-head">
+            <div><h2 class="mono">{{ d.name }}</h2><p>{{ d.local ? 'Mail.checks_domain_lead'|local : 'Mail.checks_domain_elsewhere'|local }}</p></div>
+            <span class="badge {{ {ok: 'ok', warn: 'warn', bad: 'bad', info: 'plain'}[d.worst] }}">{{ ('Mail.checks_worst_' ~ d.worst)|local }}</span>
+        </div>
+        <ul class="check-list">
+            {% for c in d.checks %}{{ _self.row(c) }}{% endfor %}
+        </ul>
+    </section>
+    {% else %}
+        {% if area == 'user' %}<div class="card"><div class="empty">{{ icon('mail') }}<h3>{{ 'Mail.checks_no_domains'|local }}</h3></div></div>{% endif %}
+    {% endfor %}
+
+    <section class="card">
+        <div class="card-head">
+            <div><h2>{{ 'Mail.checks_server'|local }}</h2><p>{{ server.ip ? 'Mail.checks_server_lead'|local({ip: server.ip}) : 'Mail.checks_server_lead_noip'|local }}</p></div>
+        </div>
+        <ul class="check-list">
+            {% for c in server.checks %}{{ _self.row(c) }}{% endfor %}
+        </ul>
+        {% if server.lists %}
+        <div class="card-body check-lists-wrap">
+            <div class="check-lists-head">{{ 'Mail.checks_lists'|local }}</div>
+            <ul class="check-lists">
+                {% for l in server.lists %}
+                <li class="is-{{ l.state }}">{{ icon({ok: 'check', bad: 'x', info: 'info'}[l.state]) }}<span class="mono">{{ l.name }}</span><span class="sr-only">{{ ('Mail.check_list_' ~ l.state)|local }}</span></li>
+                {% endfor %}
+            </ul>
+            <p class="hint">{{ 'Mail.checks_lists_hint'|local }}</p>
+        </div>
+        {% endif %}
+    </section>
+</div>
+{% endif %}
+{% endblock %}

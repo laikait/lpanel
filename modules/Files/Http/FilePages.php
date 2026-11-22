@@ -70,7 +70,7 @@ final class FilePages
             $entries[] = $this->entry($path, $e);
         }
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Files/files', [
+        return $this->pages->render($request, $session, $identity, 'user', 'Files/files', [
             'account' => $account,
             'path' => $path,
             'shown' => '/' . $path,
@@ -143,7 +143,7 @@ final class FilePages
             ];
         }
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Files/usage', [
+        return $this->pages->render($request, $session, $identity, 'user', 'Files/usage', [
             'account' => $account,
             'path' => $path,
             'shown' => '/' . $path,
@@ -425,7 +425,7 @@ final class FilePages
         $r = $read->result;
         $content = $typed ?? (string) ($r['content'] ?? '');
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Files/edit', [
+        return $this->pages->render($request, $session, $identity, 'user', 'Files/edit', [
             'account' => $account,
             'path' => $path,
             'name' => FileManager::name($path),

@@ -1,0 +1,146 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Mail.title'|local }}</h1>
+        <p>{{ 'Mail.admin_lead'|local }}</p>
+    </div>
+</div>
+{% include 'Mail/tabs.twig' %}
+
+{% if info is null %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Mail.error_unreachable'|local }}</p></div>
+{% elseif not info.enabled %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Mail.off_text'|local }}</p></div>
+{% endif %}
+{% if failed %}
+    <div class="alert alert-error">{{ icon('alert') }}<p><strong>{{ 'Mail.failed_accounts'|local({n: failed|length}) }}</strong><br><span class="mono">{{ failed[0].error }}</span></p></div>
+{% endif %}
+{% if info and filtering.virus and not info.clamav.ready|default(false) %}
+    <div class="alert alert-info">{{ icon('clock') }}<p>{{ 'Mail.clamav_waiting'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-4 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('server') }}</span>
+        <div><div class="stat-label">Exim</div>
+            <div class="stat-value">{% if info and info.exim.running %}<span class="badge ok">{{ 'Mail.running'|local }}</span>{% else %}<span class="badge bad">{{ 'Mail.stopped'|local }}</span>{% endif %}</div>
+            <div class="stat-sub mono">{{ info.exim.version|default('—') }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('box') }}</span>
+        <div><div class="stat-label">Dovecot</div>
+            <div class="stat-value">{% if info and info.dovecot.running %}<span class="badge ok">{{ 'Mail.running'|local }}</span>{% else %}<span class="badge bad">{{ 'Mail.stopped'|local }}</span>{% endif %}</div>
+            <div class="stat-sub mono">{{ info.dovecot.version|default('—') }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('shield') }}</span>
+        <div><div class="stat-label">{{ 'Mail.filtering'|local }}</div>
+            <div class="stat-value">
+                {% if not filtering.spam %}<span class="badge plain">{{ 'Mail.off'|local }}</span>
+                {% elseif info and info.rspamd.running %}<span class="badge ok">{{ 'Mail.running'|local }}</span>
+                {% else %}<span class="badge bad">{{ 'Mail.stopped'|local }}</span>{% endif %}
+            </div>
+            <div class="stat-sub mono">{% if filtering.spam %}Rspamd {{ info.rspamd.version|default('') }}{% if filtering.virus %} · ClamAV {{ info.clamav.version|default('') }}{% endif %}{% else %}—{% endif %}</div></div>
+    </div>
+    <a class="card stat stat-link" href="{{ tabs[1].url }}">
+        <span class="stat-icon">{{ icon('clock') }}</span>
+        <div><div class="stat-label">{{ 'Mail.queue'|local }}</div><div class="stat-value">{{ info.queue|default(0) }}</div><div class="stat-sub">{{ 'Mail.queue_hint'|local }}</div></div>
+    </a>
+</div>
+
+<div class="grid grid-side">
+    <div class="card">
+        <div class="card-head"><div><h2>{{ 'Mail.domains'|local }}</h2><p>{{ 'Mail.all_domains_lead'|local }} {{ 'Mail.mailboxes_total'|local({n: mailboxes}) }}</p></div></div>
+        {% if domains is empty %}
+            <div class="empty">{{ icon('mail') }}<h3>{{ 'Mail.no_domains'|local }}</h3><p>{{ 'Mail.no_domains_admin_hint'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Mail.domain'|local }}</th>
+                <th class="hide-sm">{{ 'Mail.account'|local }}</th>
+                <th>{{ 'Mail.mailboxes'|local }}</th>
+                <th class="hide-sm">DKIM</th>
+            </tr></thead>
+            <tbody>
+            {% for d in domains %}
+                <tr>
+                    <td>
+                        <strong class="mono">{{ d.name }}</strong>
+                        {% if not d.local %}<span class="badge plain mail-badge">{{ 'Mail.delivered_elsewhere'|local }}</span>{% endif %}
+                        <div class="domain-sub show-sm mono">{{ d.username }}</div>
+                    </td>
+                    <td class="hide-sm mono">{{ d.username }}</td>
+                    <td>{{ d.mailboxes }}</td>
+                    <td class="hide-sm">{% if d.dkim %}<span class="badge ok">{{ 'Mail.dkim_ready'|local }}</span>{% else %}<span class="badge plain">{{ 'Mail.dkim_none'|local }}</span>{% endif %}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </div>
+
+    <div class="stack">
+        <form class="card" method="post" action="{{ filtering_url }}">
+            <div class="card-head"><div><h2>{{ 'Mail.filtering'|local }}</h2><p>{{ 'Mail.filtering_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <input type="hidden" name="spam" value="0">
+                <label class="switch-row">
+                    <span><strong>{{ 'Mail.spam_filtering'|local }}</strong><span class="hint">{{ 'Mail.spam_filtering_hint'|local }}</span></span>
+                    <input class="toggle" type="checkbox" name="spam" value="1"{% if filtering.spam %} checked{% endif %}>
+                </label>
+                <label class="switch-row">
+                    <span><strong>{{ 'Mail.virus_scanning'|local }}</strong><span class="hint">{{ 'Mail.virus_scanning_hint'|local }}</span></span>
+                    <input class="toggle" type="checkbox" name="virus" value="1"{% if filtering.virus %} checked{% endif %}>
+                </label>
+                <div class="field">
+                    <label for="reject">{{ 'Mail.reject_score'|local }}</label>
+                    <input class="input{% if filtering_error %} is-invalid{% endif %}" type="number" id="reject" name="reject" min="5" max="100" step="0.1" value="{{ old_reject ?? filtering.reject }}" required>
+                    {% if filtering_error %}<div class="error">{{ filtering_error|local }}</div>{% endif %}
+                    <div class="hint">{{ 'Mail.reject_hint'|local }}</div>
+                </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Mail.save'|local }}</button></div>
+        </form>
+
+        <form class="card" method="post" action="{{ settings_url }}">
+            <div class="card-head"><div><h2>{{ 'Mail.relay'|local }}</h2><p>{{ 'Mail.relay_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <div class="field">
+                    <label for="smarthost">{{ 'Mail.relay_host'|local }} <span class="muted">({{ 'Mail.optional'|local }})</span></label>
+                    <input class="input mono{% if error_field == 'smarthost' %} is-invalid{% endif %}" id="smarthost" name="smarthost" maxlength="260" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old_smarthost ?? smarthost }}" placeholder="smtp.example.net:587">
+                    {% if error_field == 'smarthost' %}<div class="error">{{ error|local }}</div>{% endif %}
+                    <div class="hint">{{ 'Mail.relay_hint'|local }}</div>
+                </div>
+                <div class="form-row">
+                    <div class="field">
+                        <label for="relay_user">{{ 'Mail.relay_user'|local }} <span class="muted">({{ 'Mail.optional'|local }})</span></label>
+                        <input class="input mono{% if error_field == 'relay_user' %} is-invalid{% endif %}" id="relay_user" name="relay_user" maxlength="256" autocomplete="off" autocapitalize="none" spellcheck="false" value="{{ old_relay_user ?? relay_user }}">
+                        {% if error_field == 'relay_user' %}<div class="error">{{ error|local }}</div>{% endif %}
+                    </div>
+                    <div class="field">
+                        <label for="relay_password">{{ 'Mail.relay_password'|local }}</label>
+                        <input class="input mono{% if error_field == 'relay_password' %} is-invalid{% endif %}" type="password" id="relay_password" name="relay_password" maxlength="256" autocomplete="new-password" placeholder="{{ relay_user ? 'Mail.relay_password_kept'|local : '' }}">
+                        {% if error_field == 'relay_password' %}<div class="error">{{ error|local }}</div>{% endif %}
+                    </div>
+                </div>
+                <div class="hint">{{ 'Mail.relay_login_hint'|local }}</div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Mail.save'|local }}</button></div>
+        </form>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Mail.ports'|local }}</h2><p>{{ 'Mail.ports_lead'|local({host: hostname}) }}</p></div></div>
+            <dl class="mail-client">
+                <dt>SMTP</dt><dd>25 · {{ 'Mail.port_mx'|local }}</dd>
+                <dt>{{ 'Mail.submission'|local }}</dt><dd>465 SSL/TLS · 587 STARTTLS</dd>
+                <dt>IMAP</dt><dd>993 SSL/TLS · 143 STARTTLS</dd>
+                <dt>POP3</dt><dd>995 SSL/TLS · 110 STARTTLS</dd>
+            </dl>
+        </section>
+    </div>
+</div>
+{% endblock %}

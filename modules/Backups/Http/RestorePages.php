@@ -147,7 +147,7 @@ final class RestorePages
             $names[(int) $d['id']] = (string) $d['name'];
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Backups/restore-overview', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Backups/restore-overview', [
             'destination' => $destination,
             'destinations' => $this->destinations->all(),
             'destination_names' => $names,
@@ -239,7 +239,7 @@ final class RestorePages
         $panelDbs = $this->restores->databases($accountId);
         $active = $this->restores->active($accountId);
 
-        return $this->pages->render($request, $session, $identity, $area, '@Backups/restore', $extra + [
+        return $this->pages->render($request, $session, $identity, $area, 'Backups/restore', $extra + [
             'area' => $area,
             'account' => $account,
             'destination' => $destination,
@@ -344,7 +344,7 @@ final class RestorePages
         $tables = \is_array($meta['tables'] ?? null) ? $meta['tables'] : [];
         $count = static fn(string $t): int => \is_array($tables[$t] ?? null) ? \count($tables[$t]) : 0;
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Backups/restore-plan', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Backups/restore-plan', $extra + [
             'destination' => $destination,
             'snapshot' => $snapshot,
             'plan' => $plan,

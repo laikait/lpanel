@@ -131,4 +131,7 @@ return [
     'error_package' => 'Choose one of the packages offered.',
     'error_confirm' => 'Type the account\'s username to confirm.',
     'login_as' => 'Log in as owner',
+    'stat_accounts' => 'Total accounts',
+    'attention_title' => 'Accounts',
+    'attention_failed' => 'An account could not be made. Open the list to see which.',
 ];

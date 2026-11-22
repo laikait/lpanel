@@ -1,0 +1,74 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Files.title'|local }}</h1>
+        <p>{{ 'Files.usage_lead'|local }}</p>
+    </div>
+</div>
+{% include 'Files/tabs.twig' %}
+
+{% if error %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ error|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-side">
+    <div class="card fm">
+        <div class="fm-bar">
+            <nav class="fm-crumbs" aria-label="{{ 'Files.path_label'|local }}">
+                {% for c in crumbs %}
+                    {% if not loop.first %}<span class="fm-sep" aria-hidden="true">/</span>{% endif %}
+                    <a href="{{ c.url }}"{% if loop.last %} aria-current="page"{% endif %}>{% if loop.first %}{{ icon('folder') }}<span>{{ 'Files.home'|local }}</span>{% else %}{{ c.name }}{% endif %}</a>
+                {% endfor %}
+            </nav>
+            <a class="btn btn-sm btn-ghost" href="{{ tab_urls.files }}">{{ icon('folder') }}<span class="hide-sm">{{ 'Files.browse'|local }}</span></a>
+        </div>
+        <div class="du-total">
+            <div>
+                <div class="stat-label">{{ 'Files.usage_total'|local }}</div>
+                <div class="stat-value">{{ total|bytes }}</div>
+            </div>
+            <div class="muted">{{ 'Files.usage_items'|local({n: items}) }}</div>
+        </div>
+        {% if truncated %}<div class="alert alert-info du-note">{{ icon('info') }}<p>{{ 'Files.usage_truncated'|local }}</p></div>{% endif %}
+        {% if rows is empty %}
+            <div class="empty">{{ icon('disk') }}<h3>{{ 'Files.usage_empty'|local }}</h3></div>
+        {% else %}
+        <ul class="du-rows">
+            {% for r in rows %}
+                <li class="du-row">
+                    <span class="fm-ic is-{{ r.type == 'dir' ? 'folder' : (r.type == 'link' ? 'link' : 'file') }}">{{ icon(r.type == 'dir' ? 'folder' : (r.type == 'link' ? 'link' : 'file')) }}</span>
+                    <div class="du-main">
+                        <div class="du-line">
+                            {% if r.url %}<a class="du-name" href="{{ r.url }}" title="{{ 'Files.look_inside'|local({name: r.name}) }}">{{ r.name }}</a>{% else %}<span class="du-name">{{ r.name }}</span>{% endif %}
+                            <span class="du-size">{{ r.bytes|bytes }}</span>
+                        </div>
+                        <div class="du-bar" role="img" aria-label="{{ r.percent }}%"><span style="width:{{ max(r.percent, 0.5) }}%"></span></div>
+                        <div class="du-sub">{{ r.percent }}%{% if r.type == 'dir' %} · {{ 'Files.usage_items'|local({n: r.items}) }}{% endif %}</div>
+                    </div>
+                    <a class="btn btn-sm btn-ghost btn-icon" href="{{ r.browse_url }}" title="{{ 'Files.browse_name'|local({name: r.name}) }}" aria-label="{{ 'Files.browse_name'|local({name: r.name}) }}">{{ icon('chevron') }}</a>
+                </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </div>
+
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Files.usage_account'|local }}</h2><p>{{ 'Files.usage_measured'|local }}</p></div></div>
+        <div class="card-body">
+            {% if quota %}
+                <div class="stat-value">{{ (quota.home + quota.databases)|bytes }}</div>
+                <div class="stat-sub">{{ quota.limit ? 'Files.usage_of'|local({limit: quota.limit|bytes}) : 'Files.usage_no_limit'|local }}</div>
+                {% if quota.percent is not null %}<div class="meter{% if quota.percent >= 95 %} is-bad{% elseif quota.percent >= 80 %} is-warn{% endif %}"><span style="width:{{ max(quota.percent, 1) }}%"></span></div>{% endif %}
+                <dl class="du-split">
+                    <dt>{{ 'Files.usage_home'|local }}</dt><dd>{{ quota.home|bytes }}</dd>
+                    <dt>{{ 'Files.usage_databases'|local }}</dt><dd>{{ quota.databases|bytes }}</dd>
+                </dl>
+            {% else %}
+                <p class="muted" style="margin:0">—</p>
+            {% endif %}
+        </div>
+    </section>
+</div>
+{% endblock %}

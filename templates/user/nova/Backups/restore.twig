@@ -1,0 +1,240 @@
+{% extends "layout.twig" %}
+
+{% macro size(b) %}{% if b >= 1073741824 %}{{ (b / 1073741824)|number_format(1) }} GB{% elseif b >= 1048576 %}{{ (b / 1048576)|number_format(1) }} MB{% elseif b >= 1024 %}{{ (b / 1024)|number_format(0) }} KB{% else %}{{ b }} B{% endif %}{% endmacro %}
+
+{% macro state(s) %}{% if s == 'done' %}<span class="badge ok">{{ 'Backups.state_done'|local }}</span>{% elseif s == 'running' or s == 'creating' %}<span class="badge info">{{ 'Backups.state_running'|local }}</span>{% else %}<span class="badge bad">{{ 'Backups.state_failed'|local }}</span>{% endif %}{% endmacro %}
+
+{% macro hidden(selected, path, destination, area, token) %}
+    <input type="hidden" name="_token" value="{{ token }}">
+    <input type="hidden" name="snapshot" value="{{ selected.id }}">
+    <input type="hidden" name="back_snapshot" value="{{ selected.short_id }}">
+    <input type="hidden" name="back_path" value="{{ path }}">
+    {% if area == 'admin' and destination %}<input type="hidden" name="destination" value="{{ destination.id }}">{% endif %}
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        {% if area == 'admin' %}<a class="back-link" href="{{ account_url }}">{{ icon('chevron') }}{{ account.username }}</a>{% endif %}
+        <h1>{{ area == 'admin' ? 'Backups.restore_account_title'|local({name: account.username}) : 'Backups.title'|local }}</h1>
+        <p>{{ (area == 'admin' ? 'Backups.restore_lead_admin' : 'Backups.restore_lead_user')|local }}</p>
+    </div>
+    {% if area == 'admin' and destinations|length > 1 %}
+    <form class="page-actions restore-dest" method="get" action="">
+        <label class="sr-only" for="r-dest">{{ 'Backups.destination'|local }}</label>
+        <select class="input" id="r-dest" name="destination" onchange="this.form.submit()">
+            {% for d in destinations %}<option value="{{ d.id }}"{% if destination and destination.id == d.id %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
+        </select>
+        <noscript><button class="btn" type="submit">{{ 'Backups.show'|local }}</button></noscript>
+    </form>
+    {% endif %}
+</div>
+
+{% if active %}
+    <div class="alert alert-info" data-reload="8">{{ icon('refresh') }}<p><strong>{{ ('Backups.active_' ~ active.kind)|local }}</strong> {{ 'Backups.active_text'|local }}</p></div>
+{% endif %}
+
+{% if destination is null %}
+    <section class="card"><div class="empty">{{ icon('archive') }}<h3>{{ 'Backups.restore_none_title'|local }}</h3><p>{{ (area == 'admin' ? 'Backups.restore_none_admin' : 'Backups.restore_none_user')|local }}</p></div></section>
+{% elseif snapshots_failed %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Backups.error_snapshots'|local }}</p></div>
+{% elseif snapshots is empty %}
+    <section class="card"><div class="empty">{{ icon('archive') }}<h3>{{ 'Backups.restore_no_snapshots_title'|local }}</h3><p>{{ 'Backups.restore_no_snapshots'|local }}</p></div></section>
+{% else %}
+<div class="grid grid-side restore-layout">
+    <div class="stack">
+    {% if selected is null %}
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.snapshots'|local }}</h2><p>{{ 'Backups.snapshots_pick'|local }}</p></div></div>
+            <div class="table-wrap"><table class="table">
+                <thead><tr><th>{{ 'Backups.taken'|local }}</th><th class="hide-sm" style="text-align:end">{{ 'Backups.files'|local }}</th><th style="text-align:end">{{ 'Backups.size'|local }}</th><th style="text-align:end"><span class="sr-only">{{ 'Backups.actions'|local }}</span></th></tr></thead>
+                <tbody>
+                {% for s in snapshots %}
+                    <tr>
+                        <td><strong>{{ s.time|date('Y-m-d H:i') }}</strong>{% if loop.first %} <span class="badge ok">{{ 'Backups.latest'|local }}</span>{% endif %}<div class="domain-sub mono">{{ s.short_id }}</div></td>
+                        <td class="hide-sm" style="text-align:end">{{ s.files|number_format }}</td>
+                        <td style="text-align:end">{{ _self.size(s.bytes) }}</td>
+                        <td style="text-align:end"><a class="btn btn-sm" href="{{ open_urls[s.id] }}">{{ icon('folder') }}{{ 'Backups.open'|local }}</a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        </section>
+    {% else %}
+        <section class="card">
+            <div class="card-head restore-head">
+                <div>
+                    <h2>{{ 'Backups.files_from'|local({at: selected.time|date('Y-m-d H:i')}) }}</h2>
+                    <nav class="restore-crumbs" aria-label="{{ 'Backups.folder'|local }}">
+                        <a href="{{ top_url }}">{{ icon('folder') }}{{ 'Backups.home'|local }}</a>
+                        {% for c in crumbs %}<span aria-hidden="true">/</span>{% if loop.last %}<span class="mono">{{ c.name }}</span>{% else %}<a class="mono" href="{{ c.url }}">{{ c.name }}</a>{% endif %}{% endfor %}
+                    </nav>
+                </div>
+            </div>
+            {% if listing_why %}
+                <div class="card-body"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p>{{ listing_why starts with 'Backups.' ? listing_why|local : listing_why }}</p></div></div>
+            {% elseif entries is empty %}
+                <div class="empty">{{ icon('folder') }}<h3>{{ 'Backups.folder_empty'|local }}</h3></div>
+            {% else %}
+            <form method="post" action="{{ restore_url }}" id="restore-files">
+                {{ _self.hidden(selected, path, destination, area, lp.token) }}
+                <input type="hidden" name="kind" value="files">
+                <div class="table-wrap"><table class="table restore-files">
+                    <thead><tr>
+                        <th class="restore-check"><span class="sr-only">{{ 'Backups.choose'|local }}</span></th>
+                        <th>{{ 'Backups.name'|local }}</th>
+                        <th class="hide-sm" style="text-align:end">{{ 'Backups.size'|local }}</th>
+                        <th class="hide-sm">{{ 'Backups.modified'|local }}</th>
+                    </tr></thead>
+                    <tbody>
+                    {% if up_url %}<tr><td></td><td colspan="3"><a href="{{ up_url }}" class="restore-up">{{ icon('chevron') }}..</a></td></tr>{% endif %}
+                    {% for e in entries %}
+                        <tr>
+                            <td class="restore-check"><input type="checkbox" name="paths[]" value="{{ e.path }}" id="rf-{{ loop.index }}" aria-label="{{ 'Backups.choose_name'|local({name: e.name}) }}"></td>
+                            <td class="restore-name">
+                                {% if e.type == 'dir' %}<a href="{{ e.url }}">{{ icon('folder') }}<span>{{ e.name }}</span></a>
+                                {% elseif e.type == 'symlink' %}<span class="muted">{{ icon('link') }}<span>{{ e.name }}</span></span>
+                                {% else %}<label for="rf-{{ loop.index }}">{{ icon('file') }}<span>{{ e.name }}</span></label>{% endif %}
+                            </td>
+                            <td class="hide-sm" style="text-align:end">{{ e.type == 'file' ? _self.size(e.size) : '' }}</td>
+                            <td class="hide-sm muted">{{ e.mtime|date('Y-m-d H:i') }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table></div>
+                {% if listing.truncated %}<p class="hint" style="padding:0 20px">{{ 'Backups.truncated'|local({n: entries|length}) }}</p>{% endif %}
+                <div class="card-foot restore-foot">
+                    <button class="btn btn-primary" type="submit" name="mode" value="place" data-confirm="{{ 'Backups.confirm_place'|local }}">{{ icon('refresh') }}{{ 'Backups.put_back'|local }}</button>
+                    <button class="btn" type="submit" name="mode" value="folder">{{ icon('folder') }}{{ 'Backups.put_in_folder'|local }}</button>
+                    <span class="hint">{{ 'Backups.put_hint'|local }}</span>
+                </div>
+            </form>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.databases'|local }}</h2><p>{{ 'Backups.databases_lead'|local }}</p></div></div>
+            {% if snapshot_databases is empty %}
+                <div class="card-body"><p class="muted" style="margin:0">{{ 'Backups.no_databases'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table">
+                <tbody>
+                {% for db in snapshot_databases %}
+                    <tr>
+                        <td class="restore-name">{{ icon('database') }}<span class="mono">{{ db }}</span>{% if db not in panel_databases %}<div class="domain-sub">{{ 'Backups.database_gone'|local }}</div>{% endif %}</td>
+                        <td class="db-actions-cell"><div class="db-actions">
+                            <form class="inline-form" method="post" action="{{ restore_url }}" data-confirm="{{ 'Backups.confirm_database'|local({name: db}) }}">
+                                {{ _self.hidden(selected, path, destination, area, lp.token) }}
+                                <input type="hidden" name="kind" value="database"><input type="hidden" name="databases[]" value="{{ db }}">
+                                <button class="btn btn-sm" type="submit"{% if db not in panel_databases or active %} disabled{% endif %}>{{ icon('refresh') }}<span class="hide-sm">{{ 'Backups.put_back_short'|local }}</span></button>
+                            </form>
+                            <form class="inline-form" method="post" action="{{ download_url }}">
+                                {{ _self.hidden(selected, path, destination, area, lp.token) }}
+                                <input type="hidden" name="database" value="{{ db }}">
+                                <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Backups.download_name'|local({name: db}) }}"{% if db not in panel_databases or active %} disabled{% endif %}>{{ icon('download') }}</button>
+                            </form>
+                        </div></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+
+        {% if mailboxes is not empty %}
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.mailboxes'|local }}</h2><p>{{ 'Backups.mailboxes_lead'|local }}</p></div></div>
+            <div class="table-wrap"><table class="table">
+                <tbody>
+                {% for m in mailboxes %}
+                    <tr>
+                        <td class="restore-name">{{ icon('mail') }}<span>{{ m.address }}</span></td>
+                        <td class="db-actions-cell"><div class="db-actions">
+                            <form class="inline-form" method="post" action="{{ restore_url }}" data-confirm="{{ 'Backups.confirm_mailbox'|local({name: m.address}) }}">
+                                {{ _self.hidden(selected, path, destination, area, lp.token) }}
+                                <input type="hidden" name="kind" value="mailbox"><input type="hidden" name="paths[]" value="{{ m.path }}">
+                                <button class="btn btn-sm" type="submit"{% if active %} disabled{% endif %}>{{ icon('refresh') }}<span class="hide-sm">{{ 'Backups.put_back_short'|local }}</span></button>
+                            </form>
+                        </div></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+        </section>
+        {% endif %}
+    {% endif %}
+    </div>
+
+    <div class="stack">
+        {% if selected %}
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.this_snapshot'|local }}</h2><p class="mono">{{ selected.short_id }}</p></div></div>
+            <div class="card-body">
+                <dl class="restore-facts">
+                    <div><dt>{{ 'Backups.taken'|local }}</dt><dd>{{ selected.time|date('Y-m-d H:i') }}</dd></div>
+                    <div><dt>{{ 'Backups.files'|local }}</dt><dd>{{ selected.files|number_format }}</dd></div>
+                    <div><dt>{{ 'Backups.size'|local }}</dt><dd>{{ _self.size(selected.bytes) }}</dd></div>
+                </dl>
+                <form method="post" action="{{ download_url }}" class="restore-action">
+                    {{ _self.hidden(selected, path, destination, area, lp.token) }}
+                    <input type="hidden" name="path" value="{{ path }}">
+                    <button class="btn btn-block" type="submit"{% if active %} disabled{% endif %}>{{ icon('download') }}{{ path == '' ? 'Backups.download_all'|local : 'Backups.download_folder'|local }}</button>
+                    <span class="hint">{{ 'Backups.download_hint'|local }}</span>
+                </form>
+                <form method="post" action="{{ restore_url }}" class="restore-action" data-confirm="{{ 'Backups.confirm_all'|local({name: account.username, at: selected.time|date('Y-m-d H:i')}) }}">
+                    {{ _self.hidden(selected, path, destination, area, lp.token) }}
+                    <input type="hidden" name="kind" value="account">
+                    <button class="btn btn-block btn-danger" type="submit"{% if active %} disabled{% endif %}>{{ icon('refresh') }}{{ 'Backups.put_all_back'|local }}</button>
+                    <span class="hint">{{ 'Backups.put_all_hint'|local }}</span>
+                </form>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.other_snapshots'|local }}</h2></div></div>
+            <ul class="restore-snaps">
+                {% for s in snapshots %}
+                    <li{% if s.id == selected.id %} class="is-current"{% endif %}><a href="{{ open_urls[s.id] }}"><span>{{ s.time|date('Y-m-d H:i') }}</span><span class="muted">{{ _self.size(s.bytes) }}</span></a></li>
+                {% endfor %}
+            </ul>
+        </section>
+        {% endif %}
+
+        <section class="card" id="restores">
+            <div class="card-head"><div><h2>{{ 'Backups.recent_restores'|local }}</h2></div></div>
+            {% if restores is empty %}
+                <div class="card-body"><p class="muted" style="margin:0">{{ 'Backups.no_restores'|local }}</p></div>
+            {% else %}
+            <ul class="restore-log">
+                {% for r in restores %}
+                    <li>
+                        <div class="restore-log-head">{{ _self.state(r.state) }} <strong>{{ ('Backups.kind_' ~ r.kind)|local }}</strong><span class="muted">{{ r.created_at|when }}</span></div>
+                        {% if r.summary %}<div class="domain-sub mono restore-log-what">{{ r.summary }}</div>{% endif %}
+                        {% if r.state == 'done' and r.kind == 'download' %}
+                            <div class="domain-sub">{{ 'Backups.download_ready'|local({file: r.result.file}) }}{% if files_url %} <a href="{{ files_url }}">{{ 'Backups.open_files'|local }}</a>{% endif %}</div>
+                        {% elseif r.state == 'done' %}
+                            <div class="domain-sub">{% if r.kind == 'database' %}{{ 'Backups.restored_as_was'|local }}{% else %}{{ 'Backups.restored_files'|local({n: r.result.files|default(0)}) }}{% if r.result.folder|default('') %} · {{ 'Backups.restored_into'|local({folder: r.result.folder}) }}{% endif %}{% if r.result.databases|default([]) is not empty %} · {{ 'Backups.restored_databases'|local({list: r.result.databases|join(', ')}) }}{% endif %}{% endif %}</div>
+                        {% elseif r.state == 'failed' %}
+                            <div class="domain-sub backup-error">{{ r.error starts with 'Backups.' ? r.error|local : r.error }}</div>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.how'|local }}</h2></div></div>
+            <div class="card-body">
+                <ul class="ssh-facts">
+                    <li>{{ icon('refresh') }}<span>{{ 'Backups.how_place'|local }}</span></li>
+                    <li>{{ icon('folder') }}<span>{{ 'Backups.how_folder'|local }}</span></li>
+                    <li>{{ icon('database') }}<span>{{ 'Backups.how_database'|local }}</span></li>
+                    <li>{{ icon('download') }}<span>{{ 'Backups.how_download'|local }}</span></li>
+                </ul>
+            </div>
+        </section>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

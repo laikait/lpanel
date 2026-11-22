@@ -1,0 +1,15 @@
+{# This month's bandwidth. Needs: bw (Bandwidth::usage). #}
+<div class="stat bw-stat">
+    <span class="stat-icon">{{ icon('activity') }}</span>
+    <div style="flex:1">
+        <div class="stat-label">{{ 'Web.bandwidth_month'|local }}</div>
+        <div class="stat-value">{{ bw.used|bytes }}</div>
+        <div class="stat-sub">{{ bw.limit ? 'Web.bandwidth_of'|local({limit: bw.limit|bytes, percent: bw.percent}) : 'Web.bandwidth_unlimited'|local }}</div>
+        {% if bw.limit %}<div class="meter{% if bw.percent >= 100 %} is-bad{% elseif bw.percent >= 80 %} is-warn{% endif %}"><span style="width:{{ bw.percent }}%"></span></div>{% endif %}
+    </div>
+</div>
+{% if bw.limited %}
+    <div class="card-body" style="padding-top:0"><div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p>{{ 'Web.bandwidth_limited'|local }}</p></div></div>
+{% elseif bw.over %}
+    <div class="card-body" style="padding-top:0"><div class="alert alert-warning" style="margin:0">{{ icon('alert') }}<p>{{ 'Web.bandwidth_over_warn'|local }}</p></div></div>
+{% endif %}

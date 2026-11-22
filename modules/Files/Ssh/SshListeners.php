@@ -45,7 +45,7 @@ final class SshListeners
      */
     public function accountShow(array $cards, array $account, Identity $identity): array
     {
-        $cards[] = ['template' => '@Files/ssh-card', 'data' => [
+        $cards[] = ['template' => 'Files/ssh-card', 'data' => [
             'ssh_access' => $this->actions->access($account),
             'ssh_keys' => $this->keys->keys((int) $account['id']),
             'ssh_state' => $this->sync->stateOf((int) $account['id']),

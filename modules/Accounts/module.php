@@ -138,6 +138,7 @@ return static function (ModuleContext $module): void {
 
     $module->onBoot(static function (AccountListeners $listeners, HookEngine $hooks, FilterEngine $filters): void {
         $filters->add('panel.dashboard', [$listeners, 'dashboard'], 10, 'Accounts', 3);
+        $filters->add('panel.attention', [$listeners, 'attention'], 10, 'Accounts', 3);
         $filters->add('packages.in_use', [$listeners, 'packageInUse'], 10, 'Accounts', 2);
         $hooks->add('packages.updated', [$listeners, 'packageUpdated'], 10, 'Accounts', 1);
     });

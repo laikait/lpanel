@@ -188,7 +188,7 @@ final class ResellerPages
             $rows[] = $row;
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Resellers/index', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Resellers/index', $extra + [
             'resellers' => $rows,
             'action' => $this->router->url('admin.resellers.create'),
             'acl' => Resellers::ACL,
@@ -210,7 +210,7 @@ final class ResellerPages
             $urls[$action] = $this->router->url('admin.resellers.' . $action, ['id' => $reseller['id']]);
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Resellers/show', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Resellers/show', $extra + [
             'reseller' => $reseller,
             'urls' => $urls,
             'acl' => Resellers::ACL,

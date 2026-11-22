@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Modules\Mail;
 
 use App\Engine\Auth\Authorizer;
+use App\Engine\Database\ConnectionManager;
+use App\Modules\Panel\Ui\Tiles;
 use App\Engine\Auth\Identity;
 use App\Engine\Routing\Router;
 use App\Modules\Accounts\Accounts;
@@ -24,6 +26,7 @@ final class MailListeners
         private readonly Authorizer $authorizer,
         private readonly Router $router,
         private readonly MailHosts $hosts,
+        private readonly ConnectionManager $connections,
     ) {}
 
     /**
@@ -125,7 +128,7 @@ final class MailListeners
      */
     public function accountShow(array $cards, array $account, Identity $identity): array
     {
-        $cards[] = ['template' => '@Mail/admin-card', 'data' => [
+        $cards[] = ['template' => 'Mail/admin-card', 'data' => [
             'mailboxes' => $this->mail->mailboxes((int) $account['id']),
             'forwarders' => \count($this->mail->forwarders((int) $account['id'])),
             'mail_domains' => $this->mail->domains((int) $account['id']),
@@ -144,6 +147,13 @@ final class MailListeners
      */
     public function dashboard(array $cards, string $area, Identity $identity): array
     {
+        if ($area === 'admin' && $this->authorizer->allows($identity, 'system.view')) {
+            $dates = \array_map(static fn(array $r): string => (string) $r['created_at'], $this->connections->connection()->table('mail_boxes')->get());
+            $cards[] = Tiles::stat('Mail.stat_mailboxes', 'mail', 'violet', \count($dates), $dates, $this->router->url('admin.mail'), 3);
+
+            return $cards;
+        }
+
         if ($area !== 'user' || !$this->authorizer->allows($identity, 'feature.email')) {
             return $cards;
         }
@@ -154,7 +164,7 @@ final class MailListeners
             return $cards;
         }
 
-        $cards[] = ['template' => '@Mail/user-card', 'order' => 35, 'data' => [
+        $cards[] = ['template' => 'Mail/user-card', 'order' => 35, 'data' => [
             'mailboxes' => $this->mail->mailboxes((int) $account['id']),
             'link' => $this->router->url('user.mail'),
         ]];

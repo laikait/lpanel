@@ -356,4 +356,9 @@ return [
     'ssl_primary_invalid' => 'Choose Let\'s Encrypt or ZeroSSL.',
     'ssl_zerossl_needs_eab' => 'ZeroSSL needs its EAB key id and HMAC key.',
     'ssl_host_autossl' => 'AutoSSL for the hostname too',
+    'stat_domains' => 'Active domains',
+    'traffic_title' => 'Traffic overview',
+    'traffic_lead' => 'Data served by every site, by day.',
+    'traffic_total' => ':amount in the last :days days',
+    'traffic_none' => 'No traffic measured yet.',
 ];

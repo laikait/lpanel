@@ -41,12 +41,28 @@ no agent, the sites stay "waiting for the server", which is expected.
 `dev:seed`, `dev:seed-hosting` and the `dev` root verifier refuse to work
 unless `APP_ENV=local`.
 
+## Templates (look and feel)
+
+```bash
+dist/themes/build.sh           # build every template's CSS with Tailwind (downloads the CLI once, checks its checksum)
+dist/themes/build.sh --check   # fail if a committed app.css is stale (the bundle runs this)
+```
+
+A new template is a copy of `templates/admin/nova` and `templates/user/nova`
+under another name: rename, change `template` in `modules/Panel/module.php`
+(or the setting that overrides it), list both in `config/templates.php`, and
+rebuild. A new page goes in both templates (only the panel that renders it).
+Colours are tokens in `assets/src/nova.css`; Tailwind sees them as `bg-surface`,
+`text-ink`, `border-line`, `text-brand`… Pages that need a component use the
+shared classes in `base.css` (`.card`, `.btn`, `.table`, `.badge`) or Tailwind
+utilities.
+
 ## Modules
 
 | Module | Holds |
 |---|---|
 | `Shared` | DataSource binding, `/health` |
-| `Panel` | the two shells (`@Panel/shell`, `@Panel/auth`), CSS/JS/icons, `PanelPage`, dashboards, the `panel.nav` and `panel.dashboard` filters |
+| `Panel` | `PanelPage` (renders each page in its panel's template), the chart helpers, dashboards, the `panel.nav`, `panel.dashboard` and `panel.attention` filters; the templates themselves are in `templates/admin/<name>` and `templates/user/<name>` |
 | `Audit` | `audit_log`, `AuditLog::record()`, audit pages, sign-in failure listeners |
 | `Identity` | `panel_users`, sign-in/out, two-factor, root via authd, staff, tiers and roles (all role lists live here), API tokens |
 | `Agent` | `AgentClient` (signed requests to lpa), `AgentKey`, `agent:*` commands, the server card |
@@ -263,7 +279,7 @@ It needs about 2 GB of memory and 10 GB of disk. Any of these will do:
 - Instance listeners are registered in `onBoot()`, because
   `[Class::class, 'method']` means a static call.
 - The CSP forbids inline scripts. Behaviour goes in
-  `modules/Panel/assets/js/panel.js`.
+  `templates/admin/nova/assets/js/panel.js (and the same in templates/user/nova)`.
 - `insert($row)` returns the new id only as `insert($row, 'id')`. An update
   or delete without a `where()` is refused; use `updateAll()` when every row
   is meant.

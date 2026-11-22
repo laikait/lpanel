@@ -171,6 +171,9 @@ final class FakeServer
     /** @var array<string, string> account => why its backup fails */
     public array $backupFail = [];
 
+    /** @var array<string, mixed>|null what system.facts answers; null: the agent cannot be asked */
+    public ?array $facts = null;
+
     /** @var bool when true, backup.destination cannot reach the destination */
     public bool $backupUnreachable = false;
 
@@ -286,7 +289,7 @@ final class FakeServer
         ]];
         $answers['php.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->phpInfo()];
         $answers['web.traffic'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['accounts' => (object) $this->traffic, 'more' => false]];
-        $answers['system.facts'] = FakeAgent::unavailable();
+        $answers['system.facts'] = fn(): array => $this->facts === null ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->facts];
         $answers['dns.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['enabled' => true, 'running' => true, 'version' => '4.9.4', 'zones' => \count($this->zones)]];
         $answers['dns.lookup'] = fn(array $args): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
             'hosts' => (object) \array_combine((array) $args['hosts'], \array_map(fn(string $h): array => [

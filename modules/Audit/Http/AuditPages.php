@@ -48,7 +48,7 @@ final class AuditPages
             'outcome' => \is_string($outcome) ? $outcome : null,
         ], \is_numeric($page) ? (int) $page : 1);
 
-        return $this->pages->render($request, $session, $identity, $area, '@Audit/log', $result + [
+        return $this->pages->render($request, $session, $identity, $area, 'Audit/log', $result + [
             'everyone' => $everyone,
             'q' => \is_string($q) ? $q : '',
             'outcome' => \is_string($outcome) ? $outcome : '',

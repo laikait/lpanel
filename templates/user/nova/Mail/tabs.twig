@@ -1,0 +1,6 @@
+{# The Email pages' tabs. Needs: tabs (key, label, url), tab (the current key). #}
+<nav class="page-tabs" aria-label="{{ 'Mail.title'|local }}">
+    {% for t in tabs %}
+        <a href="{{ t.url }}"{% if t.key == tab %} aria-current="page"{% endif %}>{{ t.label|local }}</a>
+    {% endfor %}
+</nav>

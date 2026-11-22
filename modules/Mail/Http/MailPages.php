@@ -291,7 +291,7 @@ final class MailPages
             }
         }
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Mail/mail', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Mail/mail', $extra + [
             'account' => $account,
             'domains' => $domains,
             'main_domain' => $main ?? ($domains[0] ?? null),
@@ -373,7 +373,7 @@ final class MailPages
 
         $all = $this->mail->all();
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Mail/admin', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Mail/admin', $extra + [
             'info' => $info,
             'domains' => $all,
             'mailboxes' => \array_sum(\array_map(static fn(array $d): int => (int) $d['mailboxes'], $all)),

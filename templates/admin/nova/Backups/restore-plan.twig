@@ -1,0 +1,79 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <a class="back-link" href="{{ overview_url }}">{{ icon('chevron') }}{{ 'Backups.restore_title'|local }}</a>
+        <h1>{{ plan ? 'Backups.plan_heading'|local({name: plan.username}) : 'Backups.plan_title'|local }}</h1>
+        <p>{{ 'Backups.plan_lead'|local({destination: destination.name}) }}</p>
+    </div>
+</div>
+
+{% if plan is null %}
+    <div class="alert alert-error">{{ icon('alert') }}
+        <div>
+            <p><strong>{{ (why ?: 'Backups.import_problems') starts with 'Backups.' ? (why ?: 'Backups.import_problems')|local : why }}</strong></p>
+            {% if problems is not empty %}<ul class="restore-problems">{% for p in problems %}<li>{{ p[0]|local(p[1]) }}</li>{% endfor %}</ul>{% endif %}
+        </div>
+    </div>
+{% endif %}
+
+{% if plan %}
+<div class="grid grid-side restore-layout">
+    <form class="card" method="post" action="{{ recreate_url }}" data-confirm="{{ 'Backups.confirm_recreate'|local({name: plan.username}) }}">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <input type="hidden" name="destination" value="{{ destination.id }}">
+        <input type="hidden" name="snapshot" value="{{ plan.snapshot.id|default(snapshot) }}">
+        <div class="card-head"><div><h2>{{ 'Backups.plan_what'|local }}</h2><p>{{ 'Backups.plan_from'|local({at: plan.snapshot.time|default('')|date('Y-m-d H:i')}) }}</p></div></div>
+        <div class="card-body">
+            <dl class="restore-facts">
+                <div><dt>{{ 'Backups.account'|local }}</dt><dd class="mono">{{ plan.username }}</dd></div>
+                <div><dt>{{ 'Backups.main_domain'|local }}</dt><dd>{{ plan.domain }}</dd></div>
+                <div><dt>{{ 'Backups.reseller'|local }}</dt><dd>{{ plan.owner_username ?: 'Backups.administrator'|local }}</dd></div>
+            </dl>
+            <dl class="restore-plan-grid">
+                <div><dt>{{ 'Backups.count_domains'|local }}</dt><dd>{{ counts.domains }}</dd></div>
+                <div><dt>{{ 'Backups.count_mailboxes'|local }}</dt><dd>{{ counts.mailboxes }}</dd></div>
+                <div><dt>{{ 'Backups.count_databases'|local }}</dt><dd>{{ counts.databases }}</dd></div>
+                <div><dt>{{ 'Backups.count_zones'|local }}</dt><dd>{{ counts.zones }}</dd></div>
+                <div><dt>{{ 'Backups.count_ftp'|local }}</dt><dd>{{ counts.ftp }}</dd></div>
+                <div><dt>{{ 'Backups.count_keys'|local }}</dt><dd>{{ counts.keys }}</dd></div>
+            </dl>
+            <div class="field" style="margin-top:18px">
+                <label for="p-package">{{ 'Backups.package'|local }}</label>
+                <select class="input" id="p-package" name="package_id">
+                    <option value="0">{{ plan.make_package ? 'Backups.package_made'|local({name: plan.package_name}) : 'Backups.package_same'|local({name: plan.package_name}) }}</option>
+                    {% for p in packages %}{% if p.id != plan.package_id %}<option value="{{ p.id }}">{{ p.name }}</option>{% endif %}{% endfor %}
+                </select>
+                <div class="hint">{{ 'Backups.package_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Backups.make_again_button'|local({name: plan.username}) }}</button></div>
+    </form>
+
+    <div class="stack">
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.plan_notes'|local }}</h2></div></div>
+            <div class="card-body">
+                <ul class="ssh-facts">
+                    <li>{{ icon('check') }}<span>{{ 'Backups.plan_note_login'|local }}</span></li>
+                    <li>{{ icon('check') }}<span>{{ 'Backups.plan_note_data'|local }}</span></li>
+                    <li>{{ icon('lock') }}<span>{{ 'Backups.plan_note_ssl'|local }}</span></li>
+                    <li>{{ icon('globe') }}<span>{{ 'Backups.plan_note_dns'|local }}</span></li>
+                </ul>
+            </div>
+        </section>
+        {% if others|length > 1 %}
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.other_snapshots'|local }}</h2></div></div>
+            <ul class="restore-snaps">
+                {% for s in others %}
+                    <li{% if s.id == plan.snapshot.id|default('') %} class="is-current"{% endif %}><a href="{{ s.url }}"><span>{{ s.time|date('Y-m-d H:i') }}</span><span class="muted mono">{{ s.short_id }}</span></a></li>
+                {% endfor %}
+            </ul>
+        </section>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

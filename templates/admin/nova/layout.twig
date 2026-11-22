@@ -1,0 +1,135 @@
+{#
+ # nova: the signed-in shell. Pages extend it:
+ #   {% extends "layout.twig" %}
+ #   {% block content %}…{% endblock %}
+ # PanelPage passes the shell's data as `lp`.
+ #}
+<!DOCTYPE html>
+<html lang="{{ lp.lang }}" dir="{{ lp.dir }}"{% if lp.theme != 'auto' %} data-theme="{{ lp.theme }}"{% endif %}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{% block title %}{{ lp.title|local }}{% endblock %} · {{ lp.brand }}</title>
+<link rel="icon" href="{{ view.asset().template('admin/nova', 'favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ view.asset().template('admin/nova', 'css/app.css') }}">
+</head>
+<body class="area-{{ lp.area }}">
+<div class="shell" data-shell>
+    <aside class="side" id="side">
+        <a class="side-brand" href="{{ lp.nav[0].items[0].url|default('#') }}">
+            {{ icon('logo') }}
+            <span>{{ lp.brand }}</span>
+        </a>
+        <nav class="side-nav" aria-label="{{ 'Panel.main_menu'|local }}">
+            {% for section in lp.nav %}
+                <div class="side-section">
+                    {% if section.label %}<div class="side-section-label">{{ section.label|local }}</div>{% endif %}
+                    {% for item in section.items %}
+                        <a class="side-link{% if item.key == lp.active %} is-active{% endif %}" href="{{ item.url }}" title="{{ item.label|local }}"{% if item.key == lp.active %} aria-current="page"{% endif %}>
+                            {{ icon(item.icon) }}<span>{{ item.label|local }}</span>
+                        </a>
+                    {% endfor %}
+                </div>
+            {% endfor %}
+        </nav>
+        <div class="side-foot">
+            <button class="side-collapse" type="button" data-collapse aria-label="{{ 'Panel.collapse_menu'|local }}">{{ icon('chevron') }}<span>{{ 'Panel.collapse_menu'|local }}</span></button>
+            <div class="side-version mt-2 px-3 text-xs text-[color:var(--side-muted)]">{{ lp.brand }} {{ lp.version }}</div>
+        </div>
+    </aside>
+    <div class="scrim" data-nav-toggle></div>
+
+    <div class="main">
+        <header class="top">
+            <button class="icon-btn menu-toggle" type="button" data-nav-toggle aria-controls="side" aria-label="{{ 'Panel.open_menu'|local }}">{{ icon('menu') }}</button>
+            <button class="search-trigger" type="button" data-search-open aria-haspopup="dialog">
+                {{ icon('search') }}<span class="hint-text">{{ 'Panel.search_placeholder'|local }}</span><kbd>Ctrl + K</kbd>
+            </button>
+            <div class="top-spacer"></div>
+            {% block top_actions %}{% endblock %}
+            <div class="account">
+                <button class="icon-btn" type="button" data-dropdown="attention-menu" aria-haspopup="true" aria-expanded="false" aria-label="{{ 'Panel.notifications'|local }}">
+                    {{ icon('bell') }}{% if lp.attention %}<span class="dot">{{ lp.attention|length }}</span>{% endif %}
+                </button>
+                <div class="dropdown is-wide" id="attention-menu">
+                    <div class="flex items-center justify-between border-b border-line px-4 py-3">
+                        <strong>{{ 'Panel.notifications'|local }}</strong>
+                        {% if lp.attention %}<span class="badge bad plain">{{ lp.attention|length }}</span>{% endif %}
+                    </div>
+                    {% if lp.attention is empty %}
+                        <p class="m-0 px-4 py-8 text-center text-ink-3">{{ 'Panel.all_clear'|local }}</p>
+                    {% else %}
+                        <ul class="m-0 max-h-96 list-none overflow-y-auto p-1">
+                            {% for a in lp.attention %}
+                                <li><a class="!items-start !rounded-xl !p-3" href="{{ a.url }}">
+                                    <span class="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg {{ a.tone == 'bad' ? 'bg-bad-soft text-bad' : (a.tone == 'warn' ? 'bg-warn-soft text-warn' : 'bg-info-soft text-info') }}">{{ icon(a.tone == 'bad' ? 'alert' : 'info') }}</span>
+                                    <span class="min-w-0"><span class="block font-semibold">{{ a.title|local }}</span><span class="block text-[13px] text-ink-3">{{ a.text|local }}</span></span>
+                                </a></li>
+                            {% endfor %}
+                        </ul>
+                    {% endif %}
+                </div>
+            </div>
+            <div class="account">
+                <button class="account-btn" type="button" data-dropdown="account-menu" aria-haspopup="true" aria-expanded="false">
+                    <span class="avatar">{{ lp.me.initials }}</span>
+                    <span class="account-name">{{ lp.me.name }}<small>{{ ('Panel.kind_' ~ lp.me.kind)|local }}</small></span>
+                    {{ icon('down') }}
+                </button>
+                <div class="dropdown" id="account-menu">
+                    <a href="{{ lp.security }}">{{ icon('shield') }}{{ 'Panel.security'|local }}</a>
+                    <hr>
+                    <form method="post" action="{{ lp.logout }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <button type="submit">{{ icon('logout') }}{{ 'Panel.sign_out'|local }}</button>
+                    </form>
+                </div>
+            </div>
+            <button class="icon-btn" type="button" data-theme-toggle aria-label="{{ 'Panel.toggle_theme'|local }}" title="{{ 'Panel.toggle_theme'|local }}">{{ icon('moon') }}</button>
+        </header>
+
+        {% if lp.me.impersonator %}
+            <form class="impersonating" method="post" action="{{ lp.end_impersonation }}" role="status">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                {{ icon('user') }}
+                <p>{{ 'Panel.impersonating'|local({me: lp.me.username, by: lp.me.impersonator}) }}</p>
+                <button class="btn btn-sm" type="submit">{{ (lp.area == 'admin' ? 'Panel.impersonating_return' : 'Panel.impersonating_end')|local }}</button>
+            </form>
+        {% endif %}
+        <main class="content" id="content">
+            {% for notice in lp.notices %}
+                <div class="alert alert-{{ notice.kind }}" role="status">
+                    {{ icon(notice.kind == 'success' ? 'check' : (notice.kind == 'info' ? 'info' : 'alert')) }}
+                    <p>{{ notice.message|local }}</p>
+                </div>
+            {% endfor %}
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+</div>
+
+<div id="search" class="fixed inset-0 z-50 flex items-start justify-center bg-black/45 p-4 pt-[12vh]" role="dialog" aria-modal="true" aria-label="{{ 'Panel.search'|local }}" hidden>
+    <div class="w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-lg)]">
+        <div class="flex items-center gap-3 border-b border-line px-4">
+            <span class="text-ink-3">{{ icon('search') }}</span>
+            <input class="h-14 w-full border-0 bg-transparent text-base text-ink outline-none placeholder:text-ink-3" type="search" data-search-input placeholder="{{ 'Panel.search_placeholder'|local }}" autocomplete="off" aria-label="{{ 'Panel.search'|local }}">
+            <kbd class="rounded-md border border-line px-1.5 py-0.5 text-xs text-ink-3">Esc</kbd>
+        </div>
+        <ul class="m-0 max-h-[50vh] list-none overflow-y-auto p-2">
+            {% for section in lp.nav %}{% for item in section.items %}
+                <li data-search-item data-search-text="{{ (item.label|local ~ ' ' ~ (section.label ? section.label|local : ''))|lower }}">
+                    <a class="flex items-center gap-3 rounded-xl px-3 py-2.5 text-ink no-underline hover:bg-surface-2 hover:no-underline focus:bg-surface-2" href="{{ item.url }}">
+                        <span class="grid size-8 place-items-center rounded-lg bg-brand-soft text-brand-ink">{{ icon(item.icon) }}</span>
+                        <span class="font-medium">{{ item.label|local }}</span>
+                        {% if section.label %}<span class="ms-auto text-xs text-ink-3">{{ section.label|local }}</span>{% endif %}
+                    </a>
+                </li>
+            {% endfor %}{% endfor %}
+        </ul>
+        <p class="m-0 hidden px-4 pb-6 pt-2 text-center text-ink-3" data-search-empty>{{ 'Panel.search_none'|local }}</p>
+    </div>
+</div>
+<script type="module" src="{{ view.asset().template('admin/nova', 'js/panel.js') }}"></script>
+</body>
+</html>

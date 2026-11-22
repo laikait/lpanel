@@ -1,0 +1,48 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+{% set stats = cards|filter(c => c.slot|default('') == 'stat') %}
+{% set server = cards|filter(c => c.slot|default('') == 'server') %}
+{% set traffic = cards|filter(c => c.slot|default('') == 'traffic') %}
+{% set activity = cards|filter(c => c.slot|default('') == 'activity') %}
+{% set rest = cards|filter(c => c.slot|default('') == '') %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Panel.dashboard'|local }}</h1>
+        <p>{{ 'Panel.welcome_back'|local({name: lp.me.name}) }}</p>
+    </div>
+</div>
+
+{% if stats %}
+    <div class="mb-6 grid gap-5 sm:grid-cols-2 2xl:grid-cols-4">
+        {% for card in stats %}{{ view.render(card.template, card.data|default({})|merge({lp: lp}))|raw }}{% endfor %}
+    </div>
+{% endif %}
+{% if server %}
+    <div class="mb-6 grid gap-5 lg:grid-cols-5">
+        {% for card in server %}{{ view.render(card.template, card.data|default({})|merge({lp: lp}))|raw }}{% endfor %}
+    </div>
+{% endif %}
+{% if traffic or activity %}
+    <div class="mb-6 grid gap-5 lg:grid-cols-5">
+        {% for card in traffic %}<div class="lg:col-span-3">{{ view.render(card.template, card.data|default({})|merge({lp: lp}))|raw }}</div>{% endfor %}
+        {% for card in activity %}<div class="{{ traffic ? 'lg:col-span-2' : 'lg:col-span-5' }}">{{ view.render(card.template, card.data|default({})|merge({lp: lp}))|raw }}</div>{% endfor %}
+    </div>
+{% endif %}
+
+{% if cards is empty %}
+    <div class="card"><div class="empty">
+        {{ icon('gauge') }}
+        <h3>{{ 'Panel.dashboard_empty'|local }}</h3>
+        <p>{{ 'Panel.dashboard_empty_text'|local }}</p>
+    </div></div>
+{% elseif rest %}
+    <div class="grid grid-2">
+        {% for card in rest %}
+            <div{% if card.width|default('half') == 'full' %} style="grid-column: 1 / -1"{% endif %}>
+                {{ view.render(card.template, card.data|default({})|merge({lp: lp}))|raw }}
+            </div>
+        {% endfor %}
+    </div>
+{% endif %}
+{% endblock %}

@@ -64,7 +64,7 @@ final class PhpVersionPages
 
         $jobs = \array_map(static fn(array $j): array => $j + ['label' => WebSync::phpLabel((string) $j['version'])], $this->php->jobs());
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Web/php-versions', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Web/php-versions', [
             'reachable' => $info !== null,
             'installed' => \array_reverse($installed),
             'available' => \array_reverse($available),

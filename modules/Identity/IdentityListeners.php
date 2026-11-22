@@ -130,7 +130,7 @@ final class IdentityListeners
         }
 
         $cards[] = [
-            'template' => '@Identity/card',
+            'template' => 'Identity/card',
             'order' => 20,
             'data' => [
                 'two_factor' => $this->twoFactor->isEnabled($account),

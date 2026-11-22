@@ -1,0 +1,372 @@
+{% extends "layout.twig" %}
+
+{% macro err(errors, key) %}{% if errors[key] is defined %}<div class="error">{{ errors[key]|local }}</div>{% endif %}{% endmacro %}
+
+{% macro state(s) %}{% if s == 'done' %}<span class="badge ok">{{ 'Backups.state_done'|local }}</span>{% elseif s == 'running' %}<span class="badge info">{{ 'Backups.state_running'|local }}</span>{% elseif s == 'partial' %}<span class="badge warn">{{ 'Backups.state_partial'|local }}</span>{% else %}<span class="badge bad">{{ 'Backups.state_failed'|local }}</span>{% endif %}{% endmacro %}
+
+{% macro size(b) %}{% if b >= 1073741824 %}{{ (b / 1073741824)|number_format(1) }} GB{% elseif b >= 1048576 %}{{ (b / 1048576)|number_format(1) }} MB{% elseif b >= 1024 %}{{ (b / 1024)|number_format(0) }} KB{% else %}{{ b }} B{% endif %}{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Backups.title'|local }}</h1>
+        <p>{{ 'Backups.lead'|local }}</p>
+    </div>
+    <form class="page-actions" method="post" action="{{ run_url }}" data-confirm="{{ 'Backups.confirm_run_all'|local({n: accounts}) }}">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <a class="btn" href="{{ overview_url }}">{{ icon('refresh') }}{{ 'Backups.restore'|local }}</a>
+        <button class="btn btn-primary" type="submit"{% if running or settings.destination_id == 0 or accounts == 0 %} disabled{% endif %}>{{ icon('archive') }}{{ 'Backups.run_all'|local }}</button>
+    </form>
+</div>
+
+{% if running %}
+    <div class="alert alert-info backup-progress" data-reload="10">{{ icon('refresh') }}
+        <div>
+            <p><strong>{{ 'Backups.running_title'|local }}</strong>
+            {% if progress and progress.running %}{{ 'Backups.running_text'|local({current: progress.current ?: '…', done: progress.done + 1, total: progress.total}) }}{% else %}{{ 'Backups.running_text_short'|local({n: running.accounts}) }}{% endif %}</p>
+            {% if progress and progress.running and progress.total > 0 %}<div class="meter"><span style="width:{{ ((progress.done / progress.total) * 100)|round }}%"></span></div>{% endif %}
+        </div>
+    </div>
+{% endif %}
+{% if destinations is empty %}
+    <div class="alert alert-info">{{ icon('info') }}<p>{{ 'Backups.no_destinations_text'|local }}</p></div>
+{% elseif not settings.enabled %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Backups.schedule_off_text'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-4 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('clock') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Backups.schedule'|local }}</div>
+            <div class="stat-value">{{ settings.enabled ? 'Backups.daily_at'|local({time: settings.time}) : 'Backups.off'|local }}</div>
+            <div class="stat-sub">{{ next ? 'Backups.next_at'|local({at: next}) : 'Backups.by_hand'|local }}</div>
+        </div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('archive') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Backups.last_run'|local }}</div>
+            {% if last %}
+                <div class="stat-value">{{ last.ok }} / {{ last.accounts }}</div>
+                <div class="stat-sub">{{ _self.state(last.state) }}</div>
+                <div class="stat-sub">{{ last.finished_at ? last.finished_at|when : '' }}</div>
+            {% else %}
+                <div class="stat-value">—</div><div class="stat-sub">{{ 'Backups.never'|local }}</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('server') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Backups.destinations'|local }}</div>
+            <div class="stat-value">{{ destinations|length }}</div>
+            <div class="stat-sub">{{ settings.destination_id ? destination_names[settings.destination_id]|default('—') : 'Backups.none_chosen'|local }}</div>
+        </div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('shield') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Backups.kept'|local }}</div>
+            <div class="stat-value">{{ settings.keep_daily }} · {{ settings.keep_weekly }} · {{ settings.keep_monthly }}</div>
+            <div class="stat-sub">{{ 'Backups.kept_sub'|local }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-side backup-layout" style="margin-bottom:20px">
+    <div class="stack">
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.destinations'|local }}</h2><p>{{ 'Backups.destinations_lead'|local }}</p></div></div>
+            {% if destinations is empty %}
+                <div class="empty">{{ icon('server') }}<h3>{{ 'Backups.no_destinations'|local }}</h3><p>{{ 'Backups.no_destinations_hint'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr>
+                    <th>{{ 'Backups.destination'|local }}</th>
+                    <th class="hide-sm">{{ 'Backups.snapshots'|local }}</th>
+                    <th style="text-align:end"><span class="sr-only">{{ 'Backups.actions'|local }}</span></th>
+                </tr></thead>
+                <tbody>
+                {% for d in destinations %}
+                    <tr>
+                        <td class="backup-dest-cell">
+                            <div class="backup-dest"><strong>{{ d.name }}</strong> <span class="badge plain">{{ ('Backups.type_' ~ d.type)|local }}</span>{% if d.in_use %} <span class="badge ok">{{ 'Backups.in_use'|local }}</span>{% endif %}</div>
+                            <div class="domain-sub mono backup-where">{{ d.where }}</div>
+                            {% if d.checked_at %}<div class="domain-sub">{{ 'Backups.checked'|local({at: d.checked_at|when}) }}</div>{% endif %}
+                            {% if d.public_key %}
+                                <div class="backup-key"><span class="hint">{{ 'Backups.authorize_key'|local }}</span>
+                                    <div class="backup-key-row"><code class="mono">{{ d.public_key }}</code><button class="btn btn-sm btn-ghost" type="button" data-copy="{{ d.public_key }}" data-copied="{{ 'Backups.copied'|local }}" aria-label="{{ 'Backups.copy_key'|local }}">{{ icon('copy') }}</button></div>
+                                </div>
+                            {% endif %}
+                        </td>
+                        <td class="hide-sm backup-snap-col">{{ d.snapshots }}</td>
+                        <td class="db-actions-cell">
+                            <div class="db-actions">
+                                <details class="db-more">
+                                    <summary class="btn btn-sm btn-ghost" aria-label="{{ 'Backups.change_name'|local({name: d.name}) }}">{{ icon('edit') }}<span class="hide-sm">{{ 'Backups.change'|local }}</span></summary>
+                                    <form class="db-panel" method="post" action="{{ d.change_url }}">
+                                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                                        <div class="field">
+                                            <label for="dn-{{ d.id }}">{{ 'Backups.name'|local }}</label>
+                                            <input class="input" id="dn-{{ d.id }}" name="name" maxlength="64" value="{{ d.name }}" required>
+                                        </div>
+                                        {% if d.type in ['s3', 'b2'] %}
+                                        <div class="field">
+                                            <label for="da-{{ d.id }}">{{ ('Backups.access_key_' ~ d.type)|local }}</label>
+                                            <input class="input mono" id="da-{{ d.id }}" name="access_key" autocomplete="off" placeholder="{{ 'Backups.unchanged'|local }}">
+                                        </div>
+                                        <div class="field">
+                                            <label for="ds-{{ d.id }}">{{ ('Backups.secret_key_' ~ d.type)|local }}</label>
+                                            <input class="input mono" type="password" id="ds-{{ d.id }}" name="secret_key" autocomplete="new-password" placeholder="{{ 'Backups.unchanged'|local }}">
+                                        </div>
+                                        {% endif %}
+                                        <div class="hint" style="margin-bottom:10px">{{ 'Backups.change_hint'|local }}</div>
+                                        <button class="btn btn-sm btn-primary" type="submit">{{ 'Backups.save_check'|local }}</button>
+                                    </form>
+                                </details>
+                                <form class="inline-form" method="post" action="{{ d.remove_url }}" data-confirm="{{ 'Backups.confirm_remove'|local({name: d.name, id: d.id}) }}">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Backups.remove_name'|local({name: d.name}) }}"{% if d.in_use %} disabled title="{{ 'Backups.error_in_use'|local }}"{% endif %}>{{ icon('trash') }}</button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.runs'|local }}</h2><p>{{ 'Backups.runs_lead'|local }}</p></div></div>
+            {% if runs is empty %}
+                <div class="empty">{{ icon('archive') }}<h3>{{ 'Backups.no_runs'|local }}</h3><p>{{ 'Backups.no_runs_hint'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr>
+                    <th>{{ 'Backups.started'|local }}</th>
+                    <th>{{ 'Backups.outcome'|local }}</th>
+                    <th class="hide-sm">{{ 'Backups.where_to'|local }}</th>
+                </tr></thead>
+                <tbody>
+                {% for r in runs %}
+                    <tr>
+                        <td class="backup-when">{{ r.started_at ? r.started_at|when : '—' }}<div class="domain-sub">{{ ('Backups.kind_' ~ r.kind)|local }}{% if r.started_by and r.kind == 'manual' %} · {{ r.started_by }}{% endif %}</div></td>
+                        <td>
+                            {{ _self.state(r.state) }}
+                            <span class="backup-count">{{ 'Backups.accounts_ok'|local({ok: r.ok, n: r.accounts}) }}</span>
+                            {% if r.error %}<div class="domain-sub backup-error">{{ r.error starts with 'Backups.' ? r.error|local : r.error }}</div>{% endif %}
+                            {% set failures = r.results|filter(x => not x.ok) %}
+                            {% if failures is not empty %}
+                                <details class="backup-failures"><summary>{{ 'Backups.failures'|local({n: failures|length}) }}</summary>
+                                    <ul>{% for f in failures %}<li><strong>{{ f.username }}</strong>: <span class="mono">{{ f.error }}</span></li>{% endfor %}</ul>
+                                </details>
+                            {% endif %}
+                        </td>
+                        <td class="hide-sm">{{ destination_names[r.destination_id]|default('—') }}{% if r.pruned %}<div class="domain-sub">{{ 'Backups.pruned'|local }}</div>{% endif %}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+
+        <section class="card" id="snapshots">
+            <div class="card-head"><div><h2>{{ 'Backups.account_snapshots'|local }}</h2><p>{{ 'Backups.account_snapshots_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <form class="backup-lookup" method="get" action="{{ page_url }}#snapshots">
+                    <label class="sr-only" for="snap-account">{{ 'Backups.account'|local }}</label>
+                    <input class="input mono" id="snap-account" name="account" maxlength="16" autocapitalize="none" spellcheck="false" placeholder="username" value="{{ snapshot_account }}">
+                    <button class="btn" type="submit"{% if settings.destination_id == 0 %} disabled{% endif %}>{{ icon('search') }}{{ 'Backups.show'|local }}</button>
+                </form>
+                {% if snapshot_account and snapshots is same as(false) %}
+                    <div class="alert alert-error" style="margin-bottom:0">{{ icon('alert') }}<p>{{ 'Backups.error_snapshots'|local }}</p></div>
+                {% elseif snapshot_account and snapshots is null %}
+                    <p class="muted" style="margin:12px 0 0">{{ 'Backups.no_such_account'|local }}</p>
+                {% elseif snapshot_account and snapshots is empty %}
+                    <p class="muted" style="margin:12px 0 0">{{ 'Backups.no_snapshots'|local({name: snapshot_account}) }}</p>
+                {% endif %}
+            </div>
+            {% if snapshots %}
+            <div class="table-wrap"><table class="table">
+                <thead><tr><th>{{ 'Backups.snapshot'|local }}</th><th>{{ 'Backups.taken'|local }}</th><th class="hide-sm" style="text-align:end">{{ 'Backups.files'|local }}</th><th style="text-align:end">{{ 'Backups.size'|local }}</th><th style="text-align:end"><span class="sr-only">{{ 'Backups.actions'|local }}</span></th></tr></thead>
+                <tbody>
+                {% for s in snapshots %}
+                    <tr>
+                        <td class="mono">{{ s.short_id }}</td>
+                        <td>{{ s.time|date('Y-m-d H:i') }}</td>
+                        <td class="hide-sm" style="text-align:end">{{ s.files|number_format }}</td>
+                        <td style="text-align:end">{{ _self.size(s.bytes) }}</td>
+                        <td style="text-align:end"><a class="btn btn-sm btn-ghost" href="{{ snapshot_restore_url }}?snapshot={{ s.short_id }}" aria-label="{{ 'Backups.restore'|local }} {{ s.short_id }}">{{ icon('refresh') }}<span class="hide-sm">{{ 'Backups.restore'|local }}</span></a></td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="stack">
+        <form class="card" method="post" action="{{ settings_url }}">
+            <div class="card-head"><div><h2>{{ 'Backups.schedule'|local }}</h2><p>{{ 'Backups.schedule_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <input type="hidden" name="enabled" value="0">
+                <label class="switch-row">
+                    <span><strong>{{ 'Backups.every_day'|local }}</strong><span class="hint">{{ 'Backups.every_day_hint'|local }}</span></span>
+                    <input class="toggle" type="checkbox" name="enabled" value="1"{% if settings_form.enabled %} checked{% endif %}>
+                </label>
+                <div class="form-row">
+                    <div class="field">
+                        <label for="b-time">{{ 'Backups.time'|local }}</label>
+                        <input class="input mono{% if settings_errors.time is defined %} is-invalid{% endif %}" type="time" id="b-time" name="time" value="{{ settings_form.time }}" required>
+                        {{ _self.err(settings_errors, 'time') }}
+                    </div>
+                    <div class="field">
+                        <label for="b-dest">{{ 'Backups.destination'|local }}</label>
+                        <select class="input{% if settings_errors.destination_id is defined %} is-invalid{% endif %}" id="b-dest" name="destination_id">
+                            <option value="0">{{ 'Backups.none_chosen'|local }}</option>
+                            {% for d in destinations %}<option value="{{ d.id }}"{% if settings_form.destination_id == d.id %} selected{% endif %}>{{ d.name }}</option>{% endfor %}
+                        </select>
+                        {{ _self.err(settings_errors, 'destination_id') }}
+                    </div>
+                </div>
+                <span class="label">{{ 'Backups.keep'|local }}</span>
+                <div class="backup-keep">
+                    {% for k in ['keep_daily', 'keep_weekly', 'keep_monthly'] %}
+                        <div class="field">
+                            <label for="b-{{ k }}">{{ ('Backups.' ~ k)|local }}</label>
+                            <input class="input{% if settings_errors[k] is defined %} is-invalid{% endif %}" type="number" min="0" max="365" id="b-{{ k }}" name="{{ k }}" value="{{ settings_form[k] }}" required>
+                        </div>
+                    {% endfor %}
+                </div>
+                {{ _self.err(settings_errors, 'keep_daily') }}{{ _self.err(settings_errors, 'keep_weekly') }}{{ _self.err(settings_errors, 'keep_monthly') }}
+                <div class="field" style="margin-top:4px">
+                    <label for="b-prune">{{ 'Backups.prune_day'|local }}</label>
+                    <select class="input" id="b-prune" name="prune_day">
+                        {% for d in 0..6 %}<option value="{{ d }}"{% if settings_form.prune_day == d %} selected{% endif %}>{{ ('Backups.day_' ~ d)|local }}</option>{% endfor %}
+                    </select>
+                    <div class="hint">{{ 'Backups.prune_hint'|local }}</div>
+                </div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Backups.save'|local }}</button></div>
+        </form>
+
+        <form class="card" method="post" action="{{ add_url }}" data-show-from="type">
+            <div class="card-head"><div><h2>{{ 'Backups.add'|local }}</h2><p>{{ 'Backups.add_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                {% if add_why %}<div class="alert alert-error" style="margin-top:0">{{ icon('alert') }}<p><strong>{{ 'Backups.add_failed'|local }}</strong><br>{{ add_why starts with 'Backups.' ? add_why|local : add_why }}</p></div>{% endif %}
+                <div class="field">
+                    <span class="label">{{ 'Backups.type'|local }}</span>
+                    <div class="segmented backup-types" role="radiogroup" aria-label="{{ 'Backups.type'|local }}">
+                        {% for t in types %}<label><input type="radio" name="type" value="{{ t }}"{% if add_old.type|default('local') == t %} checked{% endif %}>{{ ('Backups.type_' ~ t)|local }}</label>{% endfor %}
+                    </div>
+                    {% for t in types %}<div class="hint" data-show-for="{{ t }}">{{ ('Backups.type_hint_' ~ t)|local }}</div>{% endfor %}
+                </div>
+                <div class="field">
+                    <label for="a-name">{{ 'Backups.name'|local }}</label>
+                    <input class="input{% if add_errors.name is defined %} is-invalid{% endif %}" id="a-name" name="name" maxlength="64" value="{{ add_old.name|default('') }}" placeholder="offsite" required>
+                    {{ _self.err(add_errors, 'name') }}
+                </div>
+                <div data-show-for="sftp">
+                    <div class="form-row backup-host-row">
+                        <div class="field">
+                            <label for="a-host">{{ 'Backups.host'|local }}</label>
+                            <input class="input mono{% if add_errors.host is defined %} is-invalid{% endif %}" id="a-host" name="host" value="{{ add_old.host|default('') }}" autocapitalize="none" spellcheck="false" placeholder="backup.example.net">
+                            {{ _self.err(add_errors, 'host') }}
+                        </div>
+                        <div class="field">
+                            <label for="a-port">{{ 'Backups.port'|local }}</label>
+                            <input class="input mono{% if add_errors.port is defined %} is-invalid{% endif %}" id="a-port" name="port" inputmode="numeric" value="{{ add_old.port|default('22') }}">
+                            {{ _self.err(add_errors, 'port') }}
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="a-user">{{ 'Backups.user'|local }}</label>
+                        <input class="input mono{% if add_errors.user is defined %} is-invalid{% endif %}" id="a-user" name="user" value="{{ add_old.user|default('') }}" autocapitalize="none" spellcheck="false">
+                        {{ _self.err(add_errors, 'user') }}
+                    </div>
+                </div>
+                <div class="field" data-show-for="local sftp">
+                    <label for="a-path">{{ 'Backups.folder'|local }}</label>
+                    <input class="input mono{% if add_errors.path is defined %} is-invalid{% endif %}" id="a-path" name="path" value="{{ add_old.path|default('') }}" autocapitalize="none" spellcheck="false" placeholder="/backup/lpanel">
+                    {{ _self.err(add_errors, 'path') }}
+                    <div class="hint" data-show-for="local">{{ 'Backups.folder_hint_local'|local }}</div>
+                </div>
+                <div data-show-for="s3">
+                    <div class="field">
+                        <label for="a-endpoint">{{ 'Backups.endpoint'|local }}</label>
+                        <input class="input mono{% if add_errors.endpoint is defined %} is-invalid{% endif %}" id="a-endpoint" name="endpoint" value="{{ add_old.endpoint|default('') }}" autocapitalize="none" spellcheck="false" placeholder="s3.eu-central-1.wasabisys.com">
+                        {{ _self.err(add_errors, 'endpoint') }}
+                        <div class="hint">{{ 'Backups.endpoint_hint'|local }}</div>
+                    </div>
+                    <div class="form-row">
+                        <div class="field">
+                            <label for="a-region">{{ 'Backups.region'|local }} <span class="muted">({{ 'Backups.optional'|local }})</span></label>
+                            <input class="input mono" id="a-region" name="region" value="{{ add_old.region|default('') }}" autocapitalize="none" spellcheck="false" placeholder="eu-central-1">
+                            {{ _self.err(add_errors, 'region') }}
+                        </div>
+                        <div class="field">
+                            <label for="a-scheme">{{ 'Backups.scheme'|local }}</label>
+                            <select class="input" id="a-scheme" name="scheme">
+                                <option value="https"{% if add_old.scheme|default('https') == 'https' %} selected{% endif %}>HTTPS</option>
+                                <option value="http"{% if add_old.scheme|default('') == 'http' %} selected{% endif %}>HTTP</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div data-show-for="s3 b2">
+                    <div class="form-row">
+                        <div class="field">
+                            <label for="a-bucket">{{ 'Backups.bucket'|local }}</label>
+                            <input class="input mono{% if add_errors.bucket is defined %} is-invalid{% endif %}" id="a-bucket" name="bucket" value="{{ add_old.bucket|default('') }}" autocapitalize="none" spellcheck="false">
+                            {{ _self.err(add_errors, 'bucket') }}
+                        </div>
+                        <div class="field">
+                            <label for="a-prefix">{{ 'Backups.prefix'|local }} <span class="muted">({{ 'Backups.optional'|local }})</span></label>
+                            <input class="input mono{% if add_errors.prefix is defined %} is-invalid{% endif %}" id="a-prefix" name="prefix" value="{{ add_old.prefix|default('') }}" autocapitalize="none" spellcheck="false" placeholder="server1">
+                            {{ _self.err(add_errors, 'prefix') }}
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label for="a-access">{{ 'Backups.access_key'|local }}</label>
+                        <input class="input mono{% if add_errors.access_key is defined %} is-invalid{% endif %}" id="a-access" name="access_key" autocomplete="off" autocapitalize="none" spellcheck="false">
+                        {{ _self.err(add_errors, 'access_key') }}
+                    </div>
+                    <div class="field">
+                        <label for="a-secret">{{ 'Backups.secret_key'|local }}</label>
+                        <input class="input mono{% if add_errors.secret_key is defined %} is-invalid{% endif %}" type="password" id="a-secret" name="secret_key" autocomplete="new-password">
+                        {{ _self.err(add_errors, 'secret_key') }}
+                        <div class="hint">{{ 'Backups.secret_hint'|local }}</div>
+                    </div>
+                </div>
+                <div class="hint" data-show-for="sftp">{{ 'Backups.sftp_hint'|local }}</div>
+                <details class="backup-existing"{% if add_errors.password is defined or add_why == 'Backups.error_password_wrong' %} open{% endif %}>
+                    <summary>{{ 'Backups.existing_summary'|local }}</summary>
+                    <div class="field">
+                        <label for="a-password">{{ 'Backups.existing_password'|local }}</label>
+                        <input class="input mono{% if add_errors.password is defined %} is-invalid{% endif %}" type="password" id="a-password" name="password" autocomplete="off" spellcheck="false">
+                        {{ _self.err(add_errors, 'password') }}
+                        <div class="hint">{{ 'Backups.existing_hint'|local }}</div>
+                    </div>
+                </details>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Backups.add_button'|local }}</button></div>
+        </form>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Backups.what'|local }}</h2><p>{{ 'Backups.what_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <ul class="ssh-facts">
+                    <li>{{ icon('check') }}<span>{{ 'Backups.what_home'|local }}</span></li>
+                    <li>{{ icon('check') }}<span>{{ 'Backups.what_db'|local }}</span></li>
+                    <li>{{ icon('check') }}<span>{{ 'Backups.what_meta'|local }}</span></li>
+                    <li>{{ icon('lock') }}<span>{{ 'Backups.what_encrypted'|local }}</span></li>
+                </ul>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}

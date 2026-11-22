@@ -104,7 +104,7 @@ final class MailToolPages
         $account = $this->account($identity);
         $spam = $this->mail->spam((int) $account['id']);
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Mail/spam', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Mail/spam', $extra + [
             'old' => [
                 'junk_on' => $spam['junk'] > 0, 'junk' => self::score($spam['junk'] ?: Mailboxes::SPAM_DEFAULTS['junk']),
                 'delete_on' => $spam['delete'] > 0, 'delete' => self::score($spam['delete'] ?: 150),
@@ -135,7 +135,7 @@ final class MailToolPages
         $search = \trim((string) $request->query('q', ''));
         [$list, $error] = $this->queue->list($search);
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Mail/queue', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Mail/queue', [
             'list' => $list,
             'error' => $error,
             'search' => $search,
@@ -154,7 +154,7 @@ final class MailToolPages
             throw HttpException::notFound();
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Mail/queue-message', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Mail/queue-message', [
             'id' => $id,
             'message' => $message,
             'error' => $error,
@@ -198,7 +198,7 @@ final class MailToolPages
         $days = (int) $request->query('days', '7');
         [$result, $error] = $this->queue->track($username, $search, $status, $days);
 
-        return $this->pages->render($request, $session, $identity, $area, '@Mail/track', [
+        return $this->pages->render($request, $session, $identity, $area, 'Mail/track', [
             'result' => $result,
             'error' => $error,
             'search' => $search,

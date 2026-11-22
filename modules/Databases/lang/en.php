@@ -138,4 +138,5 @@ return [
     'kill_refused' => 'That connection could not be ended (only an account\'s can).',
     'all_databases' => 'All databases',
     'all_databases_lead' => 'Every account\'s databases and the space they take.',
+    'stat_databases' => 'Databases',
 ];

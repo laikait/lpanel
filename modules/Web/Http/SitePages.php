@@ -224,7 +224,7 @@ final class SitePages
         $parent = $domain['parent_id'] === null ? null : $this->domains->find((int) $account['id'], (int) $domain['parent_id']);
         $inUse = \array_values(\array_filter(\array_map(static fn(array $d): string => (string) ($d['php'] ?? ''), $this->domains->forAccount((int) $account['id']))));
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Web/site', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Web/site', $extra + [
             'account' => $account,
             'domain' => $domain,
             'parent' => $parent,
@@ -282,7 +282,7 @@ final class SitePages
             $directives[] = ['name' => $name, 'field' => self::field($name), 'kind' => $d['kind'], 'choices' => $d['choices'] ?? []];
         }
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Web/php', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Web/php', $extra + [
             'cards' => $cards,
             'directives' => $directives,
             'zones' => \timezone_identifiers_list(),

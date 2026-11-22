@@ -952,16 +952,39 @@ downloads; S3 tested against MinIO).
   problem needs.
 - **Tests:** Go (restores in place and into a folder, links and other
   accounts' snapshots refused, databases, listings, downloads, another
-  server's password; the real restic with `LPA_RESTIC=1`); PHP 176;
+  server's password; the real restic with `LPA_RESTIC=1`); PHP 177;
   `tests/e2e/install.sh` (files, folder, database, mailbox, downloads, the
   panels, the API, and a terminated account made again through the
   repository added as another server would add it): `WEB=apache`
-  E2E8B_APACHE checks, `WEB=nginx` E2E8B_NGINX, `WEB=hybrid` E2E8B_HYBRID;
-  `tests/e2e/agent.sh` E2E8B_AGENT.
+  295 checks, `WEB=nginx` 296, `WEB=hybrid` 300;
+  `tests/e2e/agent.sh` 37.
 - **Not yet:** S3 against a real store in the tests (MinIO no longer
   publishes binaries or images; another S3 server is to be chosen),
   `restic check` on a schedule, certificates and sub-users in snapshots,
   the panel's own database and settings in a server snapshot.
+
+### Templates: "nova" (2026-11-20)
+
+Not a numbered milestone: the panels' look moved out of the modules.
+
+- **Templates in folders:** `templates/admin/<name>/` and
+  `templates/user/<name>/` hold the layout, every page, the errors, the
+  emails' layout and the assets; modules keep logic and language only. The
+  first template is nova (the design the project owner supplied: navy
+  sidebar, blue accent, stat tiles, gauges, traffic chart); the User panel
+  is the same with a teal accent.
+- **Tailwind v4** from the standalone CLI (`dist/themes/build.sh`); colours
+  are the template's tokens; built CSS is committed and the bundle checks it.
+- **Shell:** collapsible sidebar, search (Ctrl+K) over the menu, a bell fed by
+  `panel.attention` (a failed backup, accounts that could not be made),
+  light/dark.
+- **Admin dashboard:** tiles (accounts, domains, mailboxes, databases, each
+  with its month's growth), resource gauges and server overview from the
+  agent's facts, traffic by day (7, 30 or 90 days, from `web_traffic`) and
+  recent activity from the audit log: real data only.
+- **Not yet:** the User panel's own dashboard widgets, and pages rewritten in
+  utilities instead of the shared component classes (they take nova's look
+  from the tokens).
 
 ### M9: Security
 - Firewall manager, IP and country lists.

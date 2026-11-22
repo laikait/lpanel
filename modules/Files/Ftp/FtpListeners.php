@@ -48,7 +48,7 @@ final class FtpListeners
      */
     public function accountShow(array $cards, array $account, Identity $identity): array
     {
-        $cards[] = ['template' => '@Files/ftp-card', 'data' => [
+        $cards[] = ['template' => 'Files/ftp-card', 'data' => [
             'ftp_users' => $this->users->users((int) $account['id']),
             'ftp_state' => $this->sync->stateOf((int) $account['id']),
         ]];

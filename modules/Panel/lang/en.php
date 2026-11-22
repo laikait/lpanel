@@ -44,4 +44,13 @@ return [
     'auth_user_point1' => 'Domains, SSL and PHP versions',
     'auth_user_point2' => 'Mailboxes and databases',
     'auth_user_point3' => 'Backups you can restore yourself',
+    'collapse_menu' => 'Collapse sidebar',
+    'search' => 'Search',
+    'search_placeholder' => 'Search anything…',
+    'search_none' => 'Nothing matches that.',
+    'notifications' => 'Notifications',
+    'all_clear' => 'Nothing needs your attention.',
+    'welcome_back' => 'Welcome back, :name! Here is how things stand.',
+    'stat_days' => 'in :days days',
+    'day_short' => 'D',
 ];

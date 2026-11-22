@@ -221,7 +221,7 @@ final class DatabasePages
         $hosts = \array_map(fn(array $h): array => $h + ['delete_url' => $this->router->url('user.databases.hosts.delete', ['id' => $h['id']])], $this->databases->hosts($id));
         $limit = (int) ($package['databases'] ?? 0);
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Databases/databases', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Databases/databases', $extra + [
             'account' => $account,
             'prefix' => Databases::prefix($account),
             'max_db' => Databases::MAX_DATABASE - \strlen(Databases::prefix($account)),
@@ -296,7 +296,7 @@ final class DatabasePages
 
         $all = $this->databases->all();
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Databases/admin', [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Databases/admin', [
             'info' => $info,
             'processes' => \array_map(fn(array $p): array => $p + ['kill_url' => $this->router->url('admin.databases.kill', ['id' => (int) ($p['id'] ?? 0)])], $processes ?? []),
             'processes_known' => $processes !== null,

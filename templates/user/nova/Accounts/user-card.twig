@@ -1,0 +1,38 @@
+{% set a = account %}
+{% set inode_limit = a.package.inodes|default(0) %}
+{% set inode_pct = (inode_limit and a.inodes_used is not null) ? min(100, (a.inodes_used / inode_limit * 100)|round) : null %}
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ a.domain }}</h2><p>{{ 'Accounts.your_package'|local({name: a.package_name}) }}</p></div>
+        {% include "Accounts/status.twig" with {a: a} %}
+    </div>
+    {% if a.status == 'creating' %}
+        <div class="card-body"><div class="alert alert-info" style="margin:0">{{ icon('clock') }}<p>{{ 'Accounts.being_set_up'|local }}</p></div></div>
+    {% endif %}
+    <div class="grid gap-px bg-line sm:grid-cols-3">
+        <div class="flex items-center gap-4 bg-surface p-5">
+            {% if a.disk_percent is not null %}{{ gauge(a.disk_percent, '', 88) }}{% else %}<span class="stat-icon">{{ icon('disk') }}</span>{% endif %}
+            <div class="min-w-0">
+                <div class="stat-label">{{ 'Accounts.disk'|local }}</div>
+                <div class="stat-value">{{ a.disk_used_bytes is null ? '—' : a.disk_total_bytes|bytes }}</div>
+                <div class="stat-sub">{{ a.disk_limit_bytes ? 'Accounts.limit_of'|local({limit: a.disk_limit_bytes|bytes}) : 'Accounts.unlimited'|local }}{% if a.db_used_bytes|default(0) > 0 %} · {{ 'Accounts.incl_databases'|local({size: a.db_used_bytes|bytes}) }}{% endif %}</div>
+            </div>
+        </div>
+        <div class="flex items-center gap-4 bg-surface p-5">
+            {% if inode_pct is not null %}{{ gauge(inode_pct, '', 88) }}{% else %}<span class="stat-icon">{{ icon('folder') }}</span>{% endif %}
+            <div class="min-w-0">
+                <div class="stat-label">{{ 'Accounts.files'|local }}</div>
+                <div class="stat-value">{{ a.inodes_used is null ? '—' : a.inodes_used|number_format }}</div>
+                <div class="stat-sub">{{ inode_limit ? 'Accounts.limit_of'|local({limit: inode_limit|number_format}) : 'Accounts.unlimited'|local }}</div>
+            </div>
+        </div>
+        <div class="flex items-center gap-4 bg-surface p-5">
+            <span class="stat-icon">{{ icon('globe') }}</span>
+            <div class="min-w-0">
+                <div class="stat-label">{{ 'Accounts.home'|local }}</div>
+                <div class="stat-value mono break-all" style="font-size:15px">{{ a.home ?: '—' }}</div>
+                <div class="stat-sub">{{ 'Accounts.web_root'|local }}</div>
+            </div>
+        </div>
+    </div>
+</div>

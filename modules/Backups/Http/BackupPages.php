@@ -161,7 +161,7 @@ final class BackupPages
             }
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Backups/backups', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Backups/backups', $extra + [
             'settings' => $settings,
             'settings_form' => $settings,
             'settings_errors' => [],

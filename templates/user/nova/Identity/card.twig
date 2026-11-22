@@ -1,0 +1,22 @@
+<div class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Identity.your_login'|local }}</h2><p>{{ 'Identity.your_login_lead'|local }}</p></div>
+        <a class="btn btn-sm" href="{{ link }}">{{ 'Identity.manage'|local }}</a>
+    </div>
+    <div class="card-body">
+        <div class="stat" style="padding:0 0 16px">
+            <span class="stat-icon">{{ icon('shield') }}</span>
+            <div>
+                <div class="stat-label">{{ 'Identity.two_factor'|local }}</div>
+                <div class="stat-value" style="font-size:16px">
+                    {% if two_factor %}<span class="badge ok">{{ 'Identity.on'|local }}</span>{% else %}<span class="badge warn">{{ 'Identity.off'|local }}</span>{% endif %}
+                </div>
+                {% if not two_factor %}<div class="stat-sub">{{ 'Identity.two_factor_advice'|local }}</div>{% endif %}
+            </div>
+        </div>
+        <dl class="facts">
+            <dt>{{ 'Identity.signed_in'|local }}</dt><dd>{{ last_login_at|when|default('—') }} <span class="muted">UTC</span></dd>
+            <dt>{{ 'Identity.from'|local }}</dt><dd class="mono">{{ last_login_ip|default('—') }}</dd>
+        </dl>
+    </div>
+</div>

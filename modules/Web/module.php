@@ -382,6 +382,7 @@ return static function (ModuleContext $module): void {
 
     $module->onBoot(static function (WebListeners $listeners, HookEngine $hooks, FilterEngine $filters): void {
         $hooks->add('accounts.changed', [$listeners, 'accountChanged'], 10, 'Web', 2);
+        $filters->add('panel.dashboard', [$listeners, 'adminDashboard'], 21, 'Web', 4);
         $hooks->add('packages.updated', [$listeners, 'packageUpdated'], 10, 'Web', 1);
         $filters->add('accounts.domain_taken', [$listeners, 'domainTaken'], 10, 'Web', 2);
         $filters->add('accounts.show', [$listeners, 'accountShow'], 10, 'Web', 3);

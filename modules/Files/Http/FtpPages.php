@@ -138,7 +138,7 @@ final class FtpPages
             'kill_url' => $this->router->url('user.ftp.kill', ['pid' => (int) ($s['pid'] ?? 0)]),
         ], $info['sessions'] ?? []);
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Files/ftp', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Files/ftp', $extra + [
             'account' => $account,
             'users' => $users,
             'domains' => $this->actions->domainsOf($account),
@@ -225,7 +225,7 @@ final class FtpPages
             'kill_url' => $this->router->url('admin.ftp.kill', ['pid' => (int) ($s['pid'] ?? 0)]),
         ], $info['sessions'] ?? []);
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Files/ftp-admin', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Files/ftp-admin', $extra + [
             'info' => $info,
             'sessions' => $sessions,
             'settings' => $this->settings->get(),

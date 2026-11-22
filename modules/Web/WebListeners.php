@@ -6,7 +6,9 @@ namespace App\Modules\Web;
 
 use App\Engine\Auth\Authorizer;
 use App\Engine\Auth\Identity;
+use App\Engine\Database\ConnectionManager;
 use App\Engine\Routing\Router;
+use App\Modules\Panel\Ui\Tiles;
 use App\Modules\Subusers\Subusers;
 
 /**
@@ -21,7 +23,58 @@ final class WebListeners
         private readonly Authorizer $authorizer,
         private readonly Router $router,
         private readonly Bandwidth $bandwidth,
+        private readonly ConnectionManager $connections,
     ) {}
+
+    /**
+     * panel.dashboard (Admin panel): how many domains there are, and the
+     * server's traffic by day.
+     *
+     * @param list<array<string, mixed>> $cards
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function adminDashboard(array $cards, string $area, Identity $identity, int $range = 30): array
+    {
+        if ($area !== 'admin' || !$this->authorizer->allows($identity, 'system.view')) {
+            return $cards;
+        }
+
+        $db = $this->connections->connection();
+        $dates = \array_map(static fn(array $r): string => (string) $r['created_at'], $db->table('domains')->get());
+        $cards[] = Tiles::stat('Web.stat_domains', 'globe', 'ok', \count($dates), $dates, $this->router->url('admin.accounts'), 2);
+
+        $range = \in_array($range, [7, 30, 90], true) ? $range : 30;
+        $today = new \DateTimeImmutable('today', new \DateTimeZone('UTC'));
+        $from = $today->modify('-' . ($range - 1) . ' days');
+        $perDay = [];
+
+        foreach ($db->table('web_traffic')->where('day', '>=', $from->format('Y-m-d'))->get() as $row) {
+            $perDay[(string) $row['day']] = ($perDay[(string) $row['day']] ?? 0) + (int) $row['bytes'];
+        }
+
+        $points = [];
+        $max = 0;
+
+        for ($i = 0; $i < $range; $i++) {
+            $day = $from->modify('+' . $i . ' days');
+            $bytes = $perDay[$day->format('Y-m-d')] ?? 0;
+            $max = \max($max, $bytes);
+            $points[] = ['day' => $day, 'bytes' => $bytes];
+        }
+
+        [$divisor, $unit] = $max >= 1_073_741_824 ? [1_073_741_824, ' GB'] : ($max >= 1_048_576 ? [1_048_576, ' MB'] : [1024, ' KB']);
+        $cards[] = ['template' => 'Web/traffic-card', 'slot' => 'traffic', 'order' => 20, 'data' => [
+            'points' => \array_map(static fn(array $p): array => ['label' => $p['day']->format('M j'), 'value' => \round($p['bytes'] / $divisor, 2)], $points),
+            'unit' => $unit,
+            'total' => \array_sum(\array_column($points, 'bytes')),
+            'range' => $range,
+            'ranges' => [7, 30, 90],
+            'base' => $this->router->url('admin.dashboard'),
+        ]];
+
+        return $cards;
+    }
 
     /**
      * accounts.changed: a new account gets its main site; suspending turns
@@ -81,7 +134,7 @@ final class WebListeners
             return $cards;
         }
 
-        $cards[] = ['template' => '@Web/user-card', 'order' => 20, 'data' => [
+        $cards[] = ['template' => 'Web/user-card', 'order' => 20, 'data' => [
             'domains' => \array_slice($this->domains->forAccount((int) $account['id']), 0, 6),
             'link' => $this->router->url('user.domains'),
             'bandwidth' => $this->bandwidth->usage($account),
@@ -101,7 +154,7 @@ final class WebListeners
      */
     public function accountShow(array $cards, array $account, Identity $identity): array
     {
-        $cards[] = ['template' => '@Web/admin-card', 'data' => [
+        $cards[] = ['template' => 'Web/admin-card', 'data' => [
             'domains' => $this->domains->forAccount((int) $account['id']),
             'web' => $this->sync->stateOf((int) $account['id']),
             'bandwidth' => $this->bandwidth->usage($account),

@@ -1,0 +1,82 @@
+{% extends "layout.twig" %}
+
+{% macro err(errors, key) %}{% if errors[key] is defined %}<div class="error">{{ errors[key]|local }}</div>{% endif %}{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Mail.title'|local }}</h1>
+        <p>{{ 'Mail.spam_lead'|local }}</p>
+    </div>
+</div>
+{% include 'Mail/tabs.twig' %}
+
+{% if not filtering %}
+    <div class="alert alert-warning">{{ icon('info') }}<p>{{ 'Mail.spam_server_off'|local }}</p></div>
+{% endif %}
+
+<form method="post" action="{{ save_url }}">
+    <input type="hidden" name="_token" value="{{ lp.token }}">
+    <div class="grid grid-side">
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Mail.spam_filing'|local }}</h2><p>{{ 'Mail.spam_filing_lead'|local({reject: reject}) }}</p></div></div>
+            <div class="card-body">
+                <div class="spam-step">
+                    <label class="switch-row">
+                        <span><strong>{{ 'Mail.spam_junk'|local }}</strong><span class="hint">{{ 'Mail.spam_junk_hint'|local }}</span></span>
+                        <input class="toggle" type="checkbox" name="junk_on" value="1"{% if old.junk_on %} checked{% endif %}>
+                    </label>
+                    <div class="field spam-score">
+                        <label for="junk">{{ 'Mail.spam_from_score'|local }}</label>
+                        <input class="input{% if errors.junk is defined %} is-invalid{% endif %}" type="number" id="junk" name="junk" min="0.1" max="100" step="0.1" value="{{ old.junk }}">
+                        {{ _self.err(errors, 'junk') }}
+                    </div>
+                </div>
+                <div class="spam-step">
+                    <label class="switch-row">
+                        <span><strong>{{ 'Mail.spam_delete'|local }}</strong><span class="hint">{{ 'Mail.spam_delete_hint'|local }}</span></span>
+                        <input class="toggle" type="checkbox" name="delete_on" value="1"{% if old.delete_on %} checked{% endif %}>
+                    </label>
+                    <div class="field spam-score">
+                        <label for="delete">{{ 'Mail.spam_from_score'|local }}</label>
+                        <input class="input{% if errors.delete is defined %} is-invalid{% endif %}" type="number" id="delete" name="delete" min="0.1" max="100" step="0.1" value="{{ old.delete }}">
+                        {{ _self.err(errors, 'delete') }}
+                    </div>
+                </div>
+                {% set likely = (600 / (reject * 10) * 10)|round(1) %}
+                <div class="spam-scale" aria-hidden="true">
+                    <span class="spam-scale-bar"></span>
+                    <span class="spam-scale-labels">
+                        <span>0 · {{ 'Mail.spam_scale_clean'|local }}</span>
+                        <span class="spam-scale-mid" style="--at: {{ likely }}%">6 · {{ 'Mail.spam_scale_likely'|local }}</span>
+                        <span>{{ reject }} · {{ 'Mail.spam_scale_refused'|local }}</span>
+                    </span>
+                </div>
+                <p class="hint">{{ 'Mail.spam_score_hint'|local }}</p>
+            </div>
+        </section>
+
+        <div class="stack">
+            <section class="card">
+                <div class="card-head"><div><h2>{{ 'Mail.spam_allow'|local }}</h2><p>{{ 'Mail.spam_allow_lead'|local }}</p></div></div>
+                <div class="card-body">
+                    <label class="sr-only" for="allow">{{ 'Mail.spam_allow'|local }}</label>
+                    <textarea class="input mono{% if errors.allow is defined %} is-invalid{% endif %}" id="allow" name="allow" rows="5" spellcheck="false" autocapitalize="none" placeholder="boss@partner.com&#10;@trusted-supplier.com">{{ old.allow }}</textarea>
+                    {{ _self.err(errors, 'allow') }}
+                    <div class="hint">{{ 'Mail.spam_list_hint'|local({max: max_senders}) }}</div>
+                </div>
+            </section>
+            <section class="card">
+                <div class="card-head"><div><h2>{{ 'Mail.spam_block'|local }}</h2><p>{{ 'Mail.spam_block_lead'|local }}</p></div></div>
+                <div class="card-body">
+                    <label class="sr-only" for="block">{{ 'Mail.spam_block'|local }}</label>
+                    <textarea class="input mono{% if errors.block is defined %} is-invalid{% endif %}" id="block" name="block" rows="5" spellcheck="false" autocapitalize="none" placeholder="newsletter@pushy-shop.com&#10;@spammy-domain.example">{{ old.block }}</textarea>
+                    {{ _self.err(errors, 'block') }}
+                    <div class="hint">{{ 'Mail.spam_list_hint'|local({max: max_senders}) }}</div>
+                </div>
+            </section>
+        </div>
+    </div>
+    <div class="form-actions"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Mail.save'|local }}</button></div>
+</form>
+{% endblock %}

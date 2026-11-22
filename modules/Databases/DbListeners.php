@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace App\Modules\Databases;
 
 use App\Engine\Auth\Authorizer;
+use App\Engine\Database\ConnectionManager;
+use App\Modules\Panel\Ui\Tiles;
 use App\Engine\Auth\Identity;
 use App\Engine\Routing\Router;
 use App\Modules\Subusers\Subusers;
@@ -20,6 +22,7 @@ final class DbListeners
         private readonly Subusers $subusers,
         private readonly Authorizer $authorizer,
         private readonly Router $router,
+        private readonly ConnectionManager $connections,
     ) {}
 
     /**
@@ -52,7 +55,7 @@ final class DbListeners
      */
     public function accountShow(array $cards, array $account, Identity $identity): array
     {
-        $cards[] = ['template' => '@Databases/admin-card', 'data' => [
+        $cards[] = ['template' => 'Databases/admin-card', 'data' => [
             'databases' => $this->databases->databases((int) $account['id']),
             'users' => $this->databases->users((int) $account['id']),
             'hosts' => $this->databases->hosts((int) $account['id']),
@@ -71,6 +74,13 @@ final class DbListeners
      */
     public function dashboard(array $cards, string $area, Identity $identity): array
     {
+        if ($area === 'admin' && $this->authorizer->allows($identity, 'system.view')) {
+            $dates = \array_map(static fn(array $r): string => (string) $r['created_at'], $this->connections->connection()->table('db_databases')->get());
+            $cards[] = Tiles::stat('Databases.stat_databases', 'database', 'warn', \count($dates), $dates, $this->router->url('admin.databases'), 4);
+
+            return $cards;
+        }
+
         if ($area !== 'user' || !$this->authorizer->allows($identity, 'feature.databases')) {
             return $cards;
         }
@@ -81,7 +91,7 @@ final class DbListeners
             return $cards;
         }
 
-        $cards[] = ['template' => '@Databases/user-card', 'order' => 30, 'data' => [
+        $cards[] = ['template' => 'Databases/user-card', 'order' => 30, 'data' => [
             'databases' => $this->databases->databases((int) $account['id']),
             'link' => $this->router->url('user.databases'),
         ]];

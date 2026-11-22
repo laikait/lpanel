@@ -234,5 +234,6 @@ return static function (ModuleContext $module): void {
 
     $module->onBoot(static function (BackupListeners $listeners, FilterEngine $filters): void {
         $filters->add('accounts.show', [$listeners, 'accountShow'], 30, 'Backups', 3);
+        $filters->add('panel.attention', [$listeners, 'attention'], 30, 'Backups', 3);
     });
 };

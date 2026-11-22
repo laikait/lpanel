@@ -1,0 +1,65 @@
+{% if facts is null %}
+<div class="card lg:col-span-5">
+    <div class="card-head"><div><h2>{{ 'Agent.this_server'|local }}</h2><p>{{ 'Agent.live_from_agent'|local }}</p></div><span class="badge bad">{{ 'Agent.not_reachable'|local }}</span></div>
+    <div class="card-body">
+        <div class="alert alert-warning" style="margin:0">{{ icon('alert') }}<p><strong>{{ 'Agent.unreachable_title'|local }}</strong><br>{{ problem }}</p></div>
+        <p class="muted" style="margin:12px 0 0">{{ 'Agent.unreachable_hint'|local }}</p>
+    </div>
+</div>
+{% else %}
+{% set mem_used = facts.memory.total_bytes - facts.memory.available_bytes %}
+{% set mem_pct = percent(mem_used, facts.memory.total_bytes) %}
+{% set load_pct = percent(facts.load.one, facts.cpus) %}
+{% set root = facts.disks|filter(d => d.mount == '/')|first|default(facts.disks|first) %}
+{% set disk_pct = root ? percent(root.used_bytes, root.total_bytes) : 0 %}
+<section class="card lg:col-span-3" aria-labelledby="res-title">
+    <div class="flex items-center justify-between px-6 pt-5">
+        <h2 class="flex items-center gap-3 text-lg font-bold" id="res-title"><span class="text-brand">{{ icon('server') }}</span>{{ 'Agent.resource_usage'|local }}</h2>
+    </div>
+    <div class="grid grid-cols-1 gap-6 px-6 pb-6 pt-4 sm:grid-cols-3">
+        <div class="flex flex-col items-center gap-2">
+            {{ gauge(load_pct, 'accent') }}
+            <div class="font-semibold">{{ 'Agent.cpu_usage'|local }}</div>
+            <div class="text-center text-[13px] text-ink-3">{{ 'Agent.load_sub'|local({five: facts.load.five|number_format(2), fifteen: facts.load.fifteen|number_format(2), cpus: facts.cpus}) }}</div>
+        </div>
+        <div class="flex flex-col items-center gap-2">
+            {{ gauge(mem_pct, 'ok') }}
+            <div class="font-semibold">{{ 'Agent.memory_usage'|local }}</div>
+            <div class="text-center text-[13px] text-ink-3">{{ 'Agent.of'|local({used: mem_used|bytes, total: facts.memory.total_bytes|bytes}) }}</div>
+        </div>
+        <div class="flex flex-col items-center gap-2">
+            {{ gauge(disk_pct, 'violet') }}
+            <div class="font-semibold">{{ 'Agent.disk_usage'|local }}</div>
+            <div class="text-center text-[13px] text-ink-3">{% if root %}{{ 'Agent.free'|local({free: root.available_bytes|bytes}) }}{% else %}—{% endif %}</div>
+        </div>
+    </div>
+    {% if facts.disks|length > 1 %}
+        <ul class="m-0 list-none border-t border-line px-6 py-3">
+            {% for d in facts.disks %}
+                {% set p = percent(d.used_bytes, d.total_bytes) %}
+                <li class="flex items-center gap-4 py-2 text-[14px]">
+                    <span class="w-28 shrink-0 truncate font-mono text-ink-2">{{ d.mount }}</span>
+                    <span class="meter m-0 flex-1 {{ p >= 90 ? 'is-bad' : (p >= 80 ? 'is-warn' : '') }}"><span style="width:{{ p }}%"></span></span>
+                    <span class="w-28 shrink-0 text-end text-ink-3">{{ d.used_bytes|bytes }} / {{ d.total_bytes|bytes }}</span>
+                </li>
+            {% endfor %}
+        </ul>
+    {% endif %}
+</section>
+<section class="card lg:col-span-2" aria-labelledby="ov-title">
+    <div class="flex items-center justify-between gap-3 px-6 pt-5">
+        <h2 class="flex items-center gap-3 text-lg font-bold" id="ov-title"><span class="text-brand">{{ icon('activity') }}</span>{{ 'Agent.overview'|local }}</h2>
+        <span class="flex items-center gap-2"><span class="badge plain">{{ 'Agent.agent_version'|local({version: facts.agent.version}) }}</span><span class="badge ok">{{ 'Agent.online'|local }}</span></span>
+    </div>
+    <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-8 gap-y-3 px-6 pb-6 pt-5 text-[15px]">
+        <dt class="text-ink-2">{{ 'Agent.hostname'|local }}</dt><dd class="m-0 break-all font-medium">{{ facts.hostname }}</dd>
+        <dt class="text-ink-2">{{ 'Agent.uptime'|local }}</dt><dd class="m-0 font-medium">{{ facts.uptime_seconds|duration }}</dd>
+        <dt class="text-ink-2">{{ 'Agent.load_average'|local }}</dt><dd class="m-0 font-medium">{{ facts.load.one|number_format(2) }}, {{ facts.load.five|number_format(2) }}, {{ facts.load.fifteen|number_format(2) }}</dd>
+        <dt class="text-ink-2">{{ 'Agent.system'|local }}</dt><dd class="m-0 font-medium">{{ facts.os.pretty_name|default(facts.os.id) }}</dd>
+        <dt class="text-ink-2">{{ 'Agent.kernel'|local|capitalize }}</dt><dd class="m-0 font-medium">{{ facts.kernel }}</dd>
+    </dl>
+    {% if facts.problems|default([]) is not empty %}
+        <div class="card-foot" style="justify-content:flex-start"><span class="badge warn">{{ 'Agent.partial'|local }}</span><span class="muted">{{ facts.problems|join('; ') }}</span></div>
+    {% endif %}
+</section>
+{% endif %}

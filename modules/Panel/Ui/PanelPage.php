@@ -15,6 +15,7 @@ use App\Engine\Routing\Router;
 use App\Engine\Security\Csrf;
 use App\Engine\Session\Session;
 use App\Engine\Template\TemplateManager;
+use App\Engine\Template\ThemeRegistry;
 
 /**
  * Renders a page inside the Admin panel or User panel shell.
@@ -41,7 +42,21 @@ final class PanelPage
         private readonly FilterEngine $filters,
         private readonly Localization $localization,
         private readonly Config $config,
+        private readonly ThemeRegistry $themes,
     ) {}
+
+    /**
+     * The template a panel renders with: "admin/nova" for the Admin panel,
+     * "user/nova" for the User panel (templates/<that>/).
+     *
+     * @param 'admin'|'user' $area
+     */
+    public function themeOf(string $area): string
+    {
+        $name = (string) $this->config->get('Panel.template.' . $area, 'nova');
+
+        return ($area === 'admin' ? 'admin/' : 'user/') . $name;
+    }
 
     /**
      * A page inside the shell.
@@ -67,9 +82,37 @@ final class PanelPage
             'logout' => $this->router->url($area . '.logout'),
             'security' => $this->router->url($area . '.security'),
             'end_impersonation' => $identity->attribute('impersonator') !== null ? $this->endImpersonation($area) : '',
+            'attention' => $this->attention($identity, $area),
         ];
 
         return $this->respond($template, $data, $shell, $status);
+    }
+
+    /**
+     * What needs this person's attention, for the bell: modules add items
+     * through the `panel.attention` filter ($items, $area, Identity), each
+     * ['tone' => 'bad'|'warn'|'info', 'title' => text, 'text' => text,
+     * 'url' => link]. Titles and texts are language keys or plain text.
+     *
+     * @return list<array{tone: string, title: string, text: string, url: string}>
+     */
+    private function attention(Identity $identity, string $area): array
+    {
+        $items = $this->filters->apply('panel.attention', [], $area, $identity);
+        $out = [];
+
+        foreach (\is_array($items) ? $items : [] as $item) {
+            if (\is_array($item) && \is_string($item['title'] ?? null) && \is_string($item['url'] ?? null)) {
+                $out[] = [
+                    'tone' => \in_array($item['tone'] ?? null, ['bad', 'warn', 'info'], true) ? $item['tone'] : 'info',
+                    'title' => $item['title'],
+                    'text' => \is_string($item['text'] ?? null) ? $item['text'] : '',
+                    'url' => $item['url'],
+                ];
+            }
+        }
+
+        return \array_slice($out, 0, 20);
     }
 
     /**
@@ -121,6 +164,9 @@ final class PanelPage
      */
     private function respond(string $template, array $data, array $shell, int $status): Response
     {
+        // Every panel page is rendered in its panel's template, whichever
+        // route chose to render it.
+        $this->themes->use($this->themeOf($shell['area'] === 'admin' ? 'admin' : 'user'));
         $html = $this->templates->render($template, ['lp' => $shell] + $data);
 
         return (new Response($html))

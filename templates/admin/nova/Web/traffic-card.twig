@@ -1,0 +1,18 @@
+<section class="card h-full" aria-labelledby="traffic-title">
+    <div class="flex flex-wrap items-center justify-between gap-3 px-6 pt-5">
+        <h2 class="flex items-center gap-3 text-lg font-bold" id="traffic-title"><span class="text-brand">{{ icon('bars') }}</span>{{ 'Web.traffic_title'|local }}</h2>
+        <nav class="inline-flex rounded-xl bg-surface-2 p-1" aria-label="{{ 'Web.traffic_title'|local }}">
+            {% for r in ranges %}
+                <a class="rounded-lg px-3.5 py-1.5 text-[13px] font-semibold no-underline hover:no-underline {{ r == range ? 'bg-brand text-white shadow-sm' : 'text-ink-2 hover:text-ink' }}" href="{{ base }}?range={{ r }}"{% if r == range %} aria-current="true"{% endif %}>{{ r }}{{ 'Panel.day_short'|local }}</a>
+            {% endfor %}
+        </nav>
+    </div>
+    <div class="px-3 pb-4 pt-2 sm:px-5">
+        {% if total > 0 %}
+            {{ chart(points, 'accent', unit) }}
+            <p class="m-0 px-3 text-[13px] text-ink-3">{{ 'Web.traffic_total'|local({amount: total|bytes, days: range}) }}</p>
+        {% else %}
+            <div class="empty">{{ icon('bars') }}<h3>{{ 'Web.traffic_none'|local }}</h3></div>
+        {% endif %}
+    </div>
+</section>

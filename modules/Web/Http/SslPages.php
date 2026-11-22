@@ -146,7 +146,7 @@ final class SslPages
             ];
         }
 
-        return $this->pages->render($request, $session, $identity, 'user', '@Web/ssl', $extra + [
+        return $this->pages->render($request, $session, $identity, 'user', 'Web/ssl', $extra + [
             'account' => $account,
             'sites' => $rows,
             'busy' => $busy,
@@ -312,7 +312,7 @@ final class SslPages
         }, $this->ssl->recentOrders(12));
         $running = \array_filter($orders, static fn(array $o): bool => $o['state'] === AutoSsl::RUNNING);
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Web/ssl-admin', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Web/ssl-admin', $extra + [
             'settings' => $settings,
             'authorities' => $this->ssl->authorities(),
             'reachable' => $host !== null,

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Tests\Feature;
 
+use App\Engine\Cli\Output;
 use App\Engine\Core\Application;
 use App\Modules\Accounts\Provisioner;
 use App\Modules\Backups\BackupRestores;
 use App\Modules\Backups\BackupRuns;
+use App\Modules\Backups\Commands\BackupCommands;
 use App\Modules\Identity\ApiTokens;
 use App\Modules\Identity\PanelUsers;
 use App\Tests\Support\Browser;
@@ -207,6 +209,55 @@ final class RestoreTest extends TestCase
         self::assertSame('f00dfeedf00dfeed', $this->server->backupDestinations['d' . $this->json($added)['data']['id']]['password']);
         $everything = \json_encode([$this->db()->table('backup_destinations')->get(), $this->auditRows()], \JSON_THROW_ON_ERROR);
         self::assertStringNotContainsString('f00dfeedf00dfeed', $everything);
+    }
+
+    public function test_the_command_line_restores_too(): void
+    {
+        $commands = $this->app->container()->get(BackupCommands::class);
+        $short = \substr(FakeServer::snapshotId(0, 'shop'), 0, 8);
+        $run = function (string $method, mixed ...$args) use ($commands): array {
+            $out = \fopen('php://memory', 'w+') ?: throw new \RuntimeException();
+            $err = \fopen('php://memory', 'w+') ?: throw new \RuntimeException();
+            $code = $commands->{$method}(new Output($out, $err), ...$args);
+            \rewind($out);
+            \rewind($err);
+
+            return [$code, (string) \stream_get_contents($out) . (string) \stream_get_contents($err)];
+        };
+
+        [$code, $text] = $run('accounts');
+        self::assertSame(0, $code, $text);
+        self::assertMatchesRegularExpression('/^shop +[0-9a-f]{8} .* yes?$/m', $text);
+
+        [$code, $text] = $run('files', 'shop', $short);
+        self::assertSame(0, $code, $text);
+        self::assertStringContainsString('public_html/', $text);
+        self::assertStringContainsString('shop_wp', $text);
+
+        [$code, $text] = $run('restore', 'shop', $short, 'public_html', null, null, false, true, null, true);
+        self::assertSame(0, $code, $text);
+        self::assertStringContainsString('done', $text);
+
+        [$code, $text] = $run('restore', 'shop', $short, null, 'info@shop.example.com', null, false, false, null, true);
+        self::assertSame(0, $code, $text);
+        [$code, $text] = $run('restore', 'shop', $short, null, null, null, true, false, null, true);
+        self::assertSame(0, $code, $text);
+        [$code, $text] = $run('download', 'shop', $short, 'public_html', null, null, true);
+        self::assertSame(0, $code, $text);
+        [$code, $text] = $run('restores');
+        self::assertSame(0, $code, $text);
+        self::assertStringContainsString('download', $text);
+        [$code, $text] = $run('settle');
+        self::assertSame(0, $code, $text);
+
+        // An account that is here cannot be made again; a dry run says why.
+        [$code, $text] = $run('recreate', FakeServer::snapshotId(0, 'blog'), null, null, true);
+        self::assertSame(1, $code);
+        self::assertStringContainsString('in use', $text);
+
+        // Another server's repository, by its password.
+        [$code, $text] = $run('add', 'old', 'local', '/mnt/old', null, null, null, null, null, null, null, null, true);
+        self::assertSame(1, $code, 'the password comes on standard input');
     }
 
     // -------------------------------------------------------------------------

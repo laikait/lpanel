@@ -175,6 +175,9 @@ return [
     'error_no_accounts' => 'There are no accounts to back up.',
     'error_lost' => 'The server did not take the run.',
     'error_all_failed' => 'No account could be backed up.',
+    'attention_title' => 'Backups',
+    'attention_failed' => 'The last backup failed for every account.',
+    'attention_partial' => 'The last backup did not finish for every account.',
     'error_snapshots' => 'The destination could not be asked for its snapshots.',
     'error_password_wrong' => 'That password does not open the repository there. Check it with lpa backup-password on the server that made it.',
 

@@ -71,7 +71,7 @@ final class TokenPages
             $tokens[] = $row;
         }
 
-        return $this->pages->render($request, $session, $identity, 'admin', '@Identity/tokens', $extra + [
+        return $this->pages->render($request, $session, $identity, 'admin', 'Identity/tokens', $extra + [
             'tokens' => $tokens,
             'action' => $this->router->url('admin.tokens.create'),
             'lifetimes' => self::LIFETIMES,

@@ -187,7 +187,7 @@ final class SecurityPage
         $enrolment = $session->get(self::ENROLMENT);
         $base = $area . '.security';
 
-        return $this->pages->render($request, $session, $identity, $area, '@Identity/security', $extra + [
+        return $this->pages->render($request, $session, $identity, $area, 'Identity/security', $extra + [
             'row' => $row,
             'is_root' => $this->kind($identity) === Kind::Root,
             'two_factor' => $this->twoFactor->isEnabled($account),

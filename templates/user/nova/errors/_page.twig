@@ -1,0 +1,28 @@
+{#
+ # nova's error page: standalone (no shell, no session), so it renders for any
+ # status, signed in or not. Included by 403, 404, 503 and error.
+ # In scope: `error` (an ErrorDocument), `home`, `view`; and from the includer:
+ # `heading`, `text`.
+ #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>{{ error.status }} {{ error.title }} · LPanel</title>
+<link rel="icon" href="{{ view.asset().template('user/nova', 'favicon.svg') }}" type="image/svg+xml">
+<link rel="stylesheet" href="{{ view.asset().template('user/nova', 'css/app.css') }}">
+</head>
+<body class="area-user">
+<main class="grid min-h-screen place-items-center bg-page p-6">
+    <section class="card w-full max-w-lg p-10 text-center">
+        <div class="mx-auto mb-6 grid size-14 place-items-center rounded-2xl bg-brand text-white [&_.ic]:size-7">{{ icon('logo') }}</div>
+        <p class="m-0 text-7xl font-extrabold leading-none tracking-tight text-brand">{{ error.status }}</p>
+        <h1 class="mt-4 text-2xl font-extrabold">{{ heading }}</h1>
+        <p class="mx-auto mt-3 max-w-sm text-ink-2">{{ text|default(error.message) }}</p>
+        <p class="mt-8 mb-0"><a class="btn btn-primary" href="{{ home|default('/') }}">{{ icon('gauge') }}Back to the dashboard</a></p>
+    </section>
+</main>
+</body>
+</html>
