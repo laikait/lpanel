@@ -164,6 +164,12 @@ final class FakeServer
         'ports' => [['port' => '22', 'proto' => 'tcp', 'sources' => []], ['port' => '80', 'proto' => 'tcp', 'sources' => []], ['port' => '7443', 'proto' => 'tcp', 'sources' => []]],
         'allow' => [], 'deny' => [], 'countries' => [], 'nets' => ['CN' => ['203.0.113.0/24'], 'RU' => ['198.51.100.0/24']], 'keep' => [22, 7443, 7444],
     ];
+    /** @var array{hidepid: bool, links: bool, refuse: bool} what the server has for isolation; refuse makes isolation.apply fail */
+    public array $isolation = ['hidepid' => false, 'links' => false, 'refuse' => false];
+
+    /** @var list<array<string, mixed>> what each isolation.apply was asked */
+    public array $isolationApplied = [];
+
     /** @var array{available: bool, server: string, rules: string, paranoia: int} what waf.info answers */
     public array $waf = ['available' => true, 'server' => 'apache', 'rules' => '3.3.5', 'paranoia' => 1];
 
@@ -222,7 +228,7 @@ final class FakeServer
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
-        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries', 'waf.settings'] as $op) {
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries', 'waf.settings', 'isolation.apply'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -301,6 +307,7 @@ final class FakeServer
             'cached' => \array_map(fn(string $c): array => ['code' => $c, 'v4' => \count($this->fw['nets'][$c] ?? []), 'v6' => 0, 'fetched' => '2026-11-23T00:00:00Z'], $this->fw['countries']),
             'rules' => $this->fw['allow'] !== [] || $this->fw['deny'] !== [] || $this->fw['countries'] !== [], 'keep' => $this->fw['keep'],
         ]];
+        $answers['isolation.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->isolationInfo()];
         $answers['waf.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
             'available' => $this->waf['available'], 'server' => $this->waf['server'], 'rules' => $this->waf['rules'], 'paranoia' => $this->waf['paranoia'],
         ]];
@@ -432,6 +439,22 @@ final class FakeServer
         return \count(\array_filter($this->executed, static fn(string $e): bool => $e === $op));
     }
 
+    /** @return array<string, mixed> */
+    private function isolationInfo(): array
+    {
+        $v = $this->isolation['links'] ? [1, 1, 2, 2] : [1, 1, 2, 1];
+        $links = [];
+
+        foreach (['fs.protected_symlinks' => 1, 'fs.protected_hardlinks' => 1, 'fs.protected_regular' => 2, 'fs.protected_fifos' => 2] as $name => $want) {
+            $links[] = ['name' => $name, 'value' => $v[\count($links)], 'want' => $want];
+        }
+
+        return [
+            'hidepid' => $this->isolation['hidepid'], 'mode' => $this->isolation['hidepid'] ? 'invisible' : '0', 'hidepid_kept' => $this->isolation['hidepid'],
+            'links' => $links, 'links_ok' => $this->isolation['links'], 'links_kept' => $this->isolation['links'],
+        ];
+    }
+
     /**
      * @param array<string, mixed> $args
      *
@@ -513,6 +536,18 @@ final class FakeServer
 
         if (\str_starts_with($op, 'firewall.')) {
             return $this->runFirewall($op, $args);
+        }
+
+        if ($op === 'isolation.apply') {
+            if ($this->isolation['refuse']) {
+                return ['status' => 'failed', 'error' => ['code' => 'isolation_proc', 'message' => '/proc could not hide other users\' processes: permission denied']];
+            }
+
+            $this->isolation['hidepid'] = (bool) $args['hidepid'];
+            $this->isolation['links'] = (bool) $args['links'];
+            $this->isolationApplied[] = $args;
+
+            return ['status' => 'done', 'result' => $this->isolationInfo()];
         }
 
         if ($op === 'waf.settings') {

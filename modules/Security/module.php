@@ -13,12 +13,16 @@ use App\Modules\Security\BruteForce\BruteForce;
 use App\Modules\Security\BruteForce\Listeners;
 use App\Modules\Security\Commands\BruteForceCommands;
 use App\Modules\Security\Commands\FirewallCommands;
+use App\Modules\Security\Commands\IsolationCommands;
 use App\Modules\Security\Firewall\Entries;
 use App\Modules\Security\Firewall\Firewall;
 use App\Modules\Security\Http\BruteForceApi;
 use App\Modules\Security\Http\BruteForcePages;
 use App\Modules\Security\Http\FirewallApi;
 use App\Modules\Security\Http\FirewallPages;
+use App\Modules\Security\Http\IsolationApi;
+use App\Modules\Security\Http\IsolationPages;
+use App\Modules\Security\Isolation\Isolation;
 
 /**
  * Security: the firewall (ports, allow and deny lists, blocked countries) now;
@@ -49,6 +53,10 @@ return static function (ModuleContext $module): void {
         $services->bind(BruteForcePages::class);
         $services->bind(BruteForceApi::class);
         $services->bind(BruteForceCommands::class);
+        $services->singleton(Isolation::class);
+        $services->bind(IsolationPages::class);
+        $services->bind(IsolationApi::class);
+        $services->bind(IsolationCommands::class);
     });
 
     $module->access(static function (AccessCollector $access): void {
@@ -73,6 +81,16 @@ return static function (ModuleContext $module): void {
             $routes->get('', [BruteForcePages::class, 'index'])->name('');
             $routes->post('', [BruteForcePages::class, 'save'])->name('.save');
         }, name: 'admin.bruteforce', meta: ['can' => 'server.firewall']);
+
+        $routes->group('/admin/security/isolation', static function (RouteCollector $routes): void {
+            $routes->get('', [IsolationPages::class, 'index'])->name('');
+            $routes->post('', [IsolationPages::class, 'save'])->name('.save');
+        }, name: 'admin.isolation', meta: ['can' => 'server.firewall']);
+
+        $routes->group('/admin/api/v1/isolation', static function (RouteCollector $routes): void {
+            $routes->get('', [IsolationApi::class, 'show'])->name('');
+            $routes->put('', [IsolationApi::class, 'update'])->name('.update');
+        }, name: 'api.isolation', meta: ['can' => 'server.firewall', 'csrf' => false, 'rate_limit' => '60/1m']);
 
         $routes->group('/admin/api/v1/bruteforce', static function (RouteCollector $routes): void {
             $routes->get('', [BruteForceApi::class, 'show'])->name('');
@@ -122,6 +140,14 @@ return static function (ModuleContext $module): void {
             ->describe('Send the lists and countries to the server again, as the panel has them.');
         $commands->add('firewall:expire', [FirewallCommands::class, 'expire'])
             ->describe('End the blocked addresses whose time has passed.');
+        $commands->add('isolation:status', [IsolationCommands::class, 'status'])
+            ->describe('Show account isolation: what was chosen and what the server has.');
+        $commands->add('isolation:set', [IsolationCommands::class, 'set'])
+            ->describe('Change account isolation.')
+            ->option('hidepid', 'on or off: hide other people\'s processes in /proc.')
+            ->option('links', 'on or off: the kernel\'s protection of links and files in /tmp.');
+        $commands->add('isolation:sync', [IsolationCommands::class, 'sync'])
+            ->describe('Send the isolation settings to the server again, as the panel has them.');
         $commands->add('bruteforce:status', [BruteForceCommands::class, 'status'])
             ->describe('Show brute-force blocking: its settings, the busiest addresses, the latest blocks.');
         $commands->add('bruteforce:set', [BruteForceCommands::class, 'set'])
@@ -148,6 +174,7 @@ return static function (ModuleContext $module): void {
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_security', 'key' => 'firewall', 'label' => 'Security.fw_title', 'icon' => 'shield', 'route' => 'admin.firewall', 'can' => 'server.firewall', 'order' => 80];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_security', 'key' => 'bruteforce', 'label' => 'Security.bf_title', 'icon' => 'lock', 'route' => 'admin.bruteforce', 'can' => 'server.firewall', 'order' => 82];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_security', 'key' => 'isolation', 'label' => 'Security.iso_title', 'icon' => 'users', 'route' => 'admin.isolation', 'can' => 'server.firewall', 'order' => 86];
 
         return $items;
     });

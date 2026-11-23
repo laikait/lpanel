@@ -1,0 +1,73 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Security.iso_title'|local }}</h1>
+        <p>{{ 'Security.iso_lead'|local }}</p>
+    </div>
+</div>
+
+{% if info is null %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Security.iso_error_unreachable'|local }}</p></div>
+{% elseif (settings.hidepid and not info.hidepid) or (settings.links and not info.links_ok) %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Security.iso_drift'|local }}</p></div>
+{% endif %}
+
+<div class="mb-6 grid gap-5 sm:grid-cols-2">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('users') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Security.iso_tile_proc'|local }}</div>
+            <div class="stat-value">{% if info %}<span class="badge {{ info.hidepid ? 'ok' : 'warn' }}">{{ (info.hidepid ? 'Security.iso_hidden' : 'Security.iso_visible')|local }}</span>{% else %}—{% endif %}</div>
+            <div class="stat-sub">{{ 'Security.iso_tile_proc_sub'|local }}</div>
+        </div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('lock') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Security.iso_tile_links'|local }}</div>
+            <div class="stat-value">{% if info %}<span class="badge {{ info.links_ok ? 'ok' : 'warn' }}">{{ (info.links_ok ? 'Security.iso_protected' : 'Security.iso_not_protected')|local }}</span>{% else %}—{% endif %}</div>
+            <div class="stat-sub">{{ 'Security.iso_tile_links_sub'|local }}</div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-side" style="margin-bottom:20px;align-items:start">
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Security.iso_already'|local }}</h2><p>{{ 'Security.iso_already_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <ul class="m-0 grid list-none gap-3 p-0">
+                {% for k in ['user', 'home', 'php', 'tmp', 'ssh'] %}
+                    <li class="flex gap-3">{{ icon('check') }}<span>{{ ('Security.iso_have_' ~ k)|local }}</span></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% if info and info.links %}
+        <div class="table-wrap" style="border-top:1px solid var(--border)"><table class="table">
+            <tbody>
+            {% for l in info.links %}
+                <tr><td class="mono">{{ l.name }}</td><td style="text-align:end"><span class="badge {{ l.value >= l.want ? 'ok' : 'warn' }}">{{ l.value }}</span></td></tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </section>
+
+    <form class="card" method="post" action="{{ save_url }}">
+        <div class="card-head"><div><h2>{{ 'Security.iso_settings'|local }}</h2><p>{{ 'Security.iso_settings_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label class="inline-flex items-center gap-2"><input type="checkbox" name="hidepid" value="1"{% if settings.hidepid %} checked{% endif %}>{{ 'Security.iso_hidepid'|local }}</label>
+                <div class="hint">{{ 'Security.iso_hidepid_hint'|local }}</div>
+            </div>
+            <div class="field" style="margin:0">
+                <label class="inline-flex items-center gap-2"><input type="checkbox" name="links" value="1"{% if settings.links %} checked{% endif %}>{{ 'Security.iso_links'|local }}</label>
+                <div class="hint">{{ 'Security.iso_links_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Security.iso_save'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

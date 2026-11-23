@@ -33,6 +33,7 @@ import (
 	"lpa/internal/files"
 	"lpa/internal/firewall"
 	"lpa/internal/ftp"
+	"lpa/internal/isolation"
 	"lpa/internal/journal"
 	"lpa/internal/mail"
 	"lpa/internal/mysql"
@@ -192,6 +193,9 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	ops.FTP(reg, ftps)
 	ops.Firewall(reg, fw)
 	ops.AuthLog(reg, authlog.Default())
+	iso := &isolation.Manager{Run: sysexec.Exec{}, Log: log}
+	iso.Defaults()
+	ops.Isolation(reg, iso)
 	ops.SSH(reg, keys)
 	ops.Backup(reg, backups)
 	self, err := os.Executable()

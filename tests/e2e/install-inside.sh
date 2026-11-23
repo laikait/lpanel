@@ -135,7 +135,8 @@ t_user()      { getent passwd shop1 | grep -q ':lpanel account:/home/shop1:' && 
 t_quota()     { ! runuser -u shop1 -- dd if=/dev/zero of=/home/shop1/public_html/f bs=1M count=10 2>/tmp/dd; grep -q "Disk quota exceeded" /tmp/dd; }
 t_usage()     { lpanel accounts:usage && [ "$(mariadb -uroot -N lpanel -e "select disk_used_bytes from accounts where username='shop1'")" -gt 2000000 ]; }
 t_owner_in()  { [ "$(signin_as 7444 /panel shop1 Owner-Pass-Word-1)" = "303 https://127.0.0.1:7444/panel" ]; }
-t_owner_sees() { curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel | grep -q "shop.example.test"; }
+t_owner_sees() { local code; code=$(curl -ks -b /tmp/jar2 -o /tmp/owner-dash.html -w '%{http_code}' https://127.0.0.1:7444/panel)
+                 grep -q "shop.example.test" /tmp/owner-dash.html \n                     || { echo "dashboard: HTTP $code, $(wc -c < /tmp/owner-dash.html) bytes"; grep -o '<title>[^<]*' /tmp/owner-dash.html; head -c 400 /tmp/owner-dash.html; tail -n 8 /var/log/lpanel/*.log 2>/dev/null | cut -c1-300; return 1; }; }
 check "lpanel packages:create" t_pkg
 check "lpanel accounts:create" t_create
 check "the account is active" t_active
@@ -174,9 +175,11 @@ post() { # page-with-the-form url field=value... -> status and Location
     curl -ks -b $both -c $both -o /dev/null -w '%{http_code} %{redirect_url}' --data-urlencode "_token=$tok" "${args[@]}" "$url"
 }
 t_both_in()   { rm -f $both
-                post https://127.0.0.1:7443/admin/login https://127.0.0.1:7443/admin/login username=root "password=$ROOT_PASSWORD" >/dev/null
-                post https://127.0.0.1:7444/panel/login https://127.0.0.1:7444/panel/login username=shop1 password=Owner-Pass-Word-1 >/dev/null
-                curl -ks -b $both https://127.0.0.1:7443/admin | grep -q "Welcome back, root" && curl -ks -b $both https://127.0.0.1:7444/panel | grep -q "shop.example.test"; }
+                local r1 r2
+                r1=$(post https://127.0.0.1:7443/admin/login https://127.0.0.1:7443/admin/login username=root "password=$ROOT_PASSWORD")
+                r2=$(post https://127.0.0.1:7444/panel/login https://127.0.0.1:7444/panel/login username=shop1 password=Owner-Pass-Word-1)
+                curl -ks -b $both https://127.0.0.1:7443/admin > /tmp/both-admin.html; curl -ks -b $both https://127.0.0.1:7444/panel > /tmp/both-panel.html
+                grep -q "Welcome back, root" /tmp/both-admin.html && grep -q "shop.example.test" /tmp/both-panel.html \n                    || { echo "admin login: $r1; panel login: $r2"; grep -o '<title>[^<]*' /tmp/both-admin.html /tmp/both-panel.html; grep -ao 'alert[^>]*>[^<]*<p>[^<]*' /tmp/both-admin.html /tmp/both-panel.html | head -3; return 1; }; }
 t_two_cookies() { grep -q lpanel_admin $both && grep -q lpanel_user $both; }
 SHOP1_LOGIN=$(mariadb -uroot -N lpanel -e "select login_id from accounts where username='shop1'")
 t_login_as()  { local out; out=$(post https://127.0.0.1:7443/admin "https://127.0.0.1:7443/admin/login-as/$SHOP1_LOGIN"); echo "$out"
@@ -1465,6 +1468,46 @@ t_bf_page() {
 check "brute-force blocking counts each failed sign-in in the logs once, from the real agent" t_bf_read
 check "brute-force status shows the limit and the busiest address" t_bf_status
 check "the brute-force page is served" t_bf_page
+
+# Account isolation (M9d): the installer turned it on, and everything above
+# ran with other users' processes hidden in /proc. Here: an account sees only
+# its own processes, root sees all, the units survive, and it can be switched
+# off and on again.
+procs_of() { runuser -u "$1" -- ps -e --no-headers 2>/dev/null | wc -l; }
+t_iso_on() {
+    lpanel isolation:status > /tmp/iso1.out 2>&1
+    local why=""
+    grep -q "hidepid): chosen on, server on, kept across reboots" /tmp/iso1.out || why="$why status-hidepid;"
+    grep -q "Link protections: chosen on, server on, kept across reboots" /tmp/iso1.out || why="$why status-links;"
+    grep -q "hidepid=" /proc/self/mounts || why="$why mount;"
+    systemctl is-enabled --quiet lpanel-hidepid.service || why="$why unit;"
+    [ "$(sysctl -n fs.protected_symlinks fs.protected_hardlinks fs.protected_regular fs.protected_fifos | tr '\n' ' ')" = "1 1 2 2 " ] || why="$why sysctl;"
+    [ -z "$why" ] || { echo "not as expected:$why"; cat /tmp/iso1.out; grep ' /proc ' /proc/self/mounts; return 1; }
+}
+t_iso_hidden() {
+    # root sees dozens of processes, an account its own ps and little else
+    [ "$(ps -e --no-headers | wc -l)" -ge 15 ] && [ "$(procs_of shop1)" -le 4 ]
+}
+t_iso_services() {
+    for u in lpa lpanel-nginx lpanel-php-fpm mariadb; do systemctl is-active --quiet $u || { echo "$u is not running"; return 1; }; done
+    lpanel accounts:list > /dev/null
+}
+t_iso_off_on() {
+    lpanel isolation:set --hidepid=off --links=off > /tmp/iso2.out 2>&1 || { cat /tmp/iso2.out; return 1; }
+    [ "$(procs_of shop1)" -ge 15 ] || { echo "still hidden: $(procs_of shop1)"; return 1; }
+    [ ! -e /etc/systemd/system/lpanel-hidepid.service ] && [ ! -e /etc/sysctl.d/90-lpanel-isolation.conf ] || return 1
+    [ "$(sysctl -n fs.protected_fifos)" = 1 ] || return 1
+    lpanel isolation:set --hidepid=on --links=on > /tmp/iso3.out 2>&1 || { cat /tmp/iso3.out; return 1; }
+    [ "$(procs_of shop1)" -le 4 ] && [ "$(sysctl -n fs.protected_fifos)" = 2 ] && systemctl is-enabled --quiet lpanel-hidepid.service
+}
+t_iso_pool_tmp() {
+    grep -q 'env\[TMPDIR\] = /home/shop1/tmp' /etc/opt/remi/php83/php-fpm.d/lpanel-shop1.conf
+}
+check "account isolation is on: hidepid and the link protections, kept across reboots" t_iso_on
+check "an account sees only its own processes, root sees all" t_iso_hidden
+check "the services still run with /proc hidden" t_iso_services
+check "isolation switches off and on again" t_iso_off_on
+check "PHP pools give programs the account's own temporary folder" t_iso_pool_tmp
 
 # The web application firewall (ModSecurity with the Core Rule Set) lives in
 # Apache, so on the apache and hybrid stacks the real thing is tried: an

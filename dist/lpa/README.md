@@ -145,6 +145,8 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `firewall.info` | read-only | firewalld's state, the zones, the open ports (and which service opens each), the allow and deny lists, the blocked countries and what is cached |
 | `firewall.port` | change | `{action: open\|close, port, proto, sources?, protect?}`: open a port, limit it to some addresses, or close it |
 | `firewall.lists` | change | `{allow, deny, protect?}`: the allow list and the deny list, whole |
+| `isolation.info` | read-only | whether /proc hides other users' processes (and the unit that keeps it), the kernel's four link protections and their values |
+| `isolation.apply` | change | `{hidepid, links}`: both settings, whole |
 | `waf.info` | read-only | whether Apache has ModSecurity loaded, the Core Rule Set's version, the paranoia level |
 | `waf.settings` | change | `{paranoia}`: how strict the Core Rule Set is, 1 to 4 (global; written, tested with `httpd -t`, reloaded) |
 | `waf.events` | read-only | `{cursors}`: what the rules said about requests, one event per request, from each account's error log since its cursor |
@@ -587,6 +589,32 @@ host only, at most 4 MB, every line a network of the right family, or the
 list is not kept); a country that cannot be fetched changes nothing. Error
 codes: `firewall_off`, `firewall_kept`, `firewall_lockout`, `firewall_fetch`,
 `firewall_toomany`.
+
+### Account isolation (`isolation.*`)
+
+Accounts are already apart by user and group, each with a home that can be
+passed through but not listed, a site folder private to the account and the web
+server (0750), a PHP pool of their own with sessions, uploads and temporary
+files in the account's folder (and `TMP`, `TMPDIR`, `TEMP` for programs a
+script starts), links followed only to files the same owner made
+(`SymLinksIfOwnerMatch`, nginx `disable_symlinks if_not_owner`) and, for SSH, a
+jail with its own processes and `/tmp`. M9d adds the two things the accounts
+still share, the system's `/proc` and the kernel's rules for links:
+
+- **hidepid**: `/proc` is remounted `hidepid=2,gid=0`: a process of an account
+  sees only its own, not other command lines (which may hold passwords); root
+  sees all. `lpanel-hidepid.service` (a oneshot with `ExecStop` back to 0)
+  makes it survive a reboot; `mount` is the only tool added for it. Turning it
+  off removes the unit and remounts `hidepid=0`.
+- **links**: `/etc/sysctl.d/90-lpanel-isolation.conf` sets
+  `fs.protected_symlinks=1`, `protected_hardlinks=1`, `protected_regular=2`,
+  `protected_fifos=2` and is loaded with `sysctl -p`. Turning it off removes the
+  file and sets the distribution's values (1, 1, 2, 1) again at once.
+
+`isolation.info` reports the state the kernel has now (`hidepid` and the mode
+the mount shows, `links_ok` when each value is at least as strict as wanted)
+and whether LPanel's files are there. Error codes: `isolation_proc` (the mount
+failed), `isolation_sysctl`.
 
 ### Web application firewall (`waf.*`, a site's `waf` in `web.apply`)
 

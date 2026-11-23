@@ -707,6 +707,15 @@ runuser -u lpanel -- $PHP "$PANEL/laika" mail:sync --all >/dev/null || note "som
 runuser -u lpanel -- $PHP "$PANEL/laika" ftp:settings --apply >/dev/null && note "Pure-FTPd runs with LPanel's settings" \
     || note "FAILED: Pure-FTPd did not start; see Admin panel, FTP, and journalctl -u pure-ftpd"
 runuser -u lpanel -- $PHP "$PANEL/laika" ftp:sync --all >/dev/null || note "some accounts' FTP logins are not on the server yet; ftp:settle retries them every minute"
+# Account isolation (M9d): other people's processes hidden in /proc and the
+# kernel's link protections, on unless the Admin panel turned them off. A shell
+# outside the SSH jail keeps its temporary files in the account's own folder.
+cat > /etc/profile.d/lpanel-tmp.sh <<'PROFILE'
+# LPanel: temporary files of an account's shell go in the account's own folder.
+if [ "$(id -u)" -ge 1000 ] && [ -d "$HOME/tmp" ] && [ -w "$HOME/tmp" ]; then export TMPDIR="$HOME/tmp"; fi
+PROFILE
+runuser -u lpanel -- $PHP "$PANEL/laika" isolation:sync >/dev/null && note "account isolation: other users' processes hidden, links protected" \
+    || note "account isolation is not in force; see Admin panel, Security, Account isolation"
 # SSH: every account's keys, then each account's shell as its package says
 # (accounts made before M7c had the server's own shell; now the jail).
 runuser -u lpanel -- $PHP "$PANEL/laika" ssh:sync --all >/dev/null || note "some accounts' SSH keys are not on the server yet; ssh:settle retries them every minute"

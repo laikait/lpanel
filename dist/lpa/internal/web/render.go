@@ -242,6 +242,12 @@ func (m *Manager) renderPool(a ApplyArgs, home, version string) []byte {
 	for _, k := range []string{"session.save_path", "upload_tmp_dir", "sys_temp_dir"} {
 		fmt.Fprintf(&b, "php_admin_value[%s] = %s/tmp\n", k, home)
 	}
+	// Programs a script starts (exec, system) use the account's own folder
+	// too, not the shared /tmp where another account could plant a link or
+	// read what is left.
+	for _, k := range []string{"TMP", "TMPDIR", "TEMP"} {
+		fmt.Fprintf(&b, "env[%s] = %s/tmp\n", k, home)
+	}
 	fmt.Fprintf(&b, "php_admin_value[error_log] = %s/logs/php-error.log\n", home)
 	b.WriteString("php_admin_flag[log_errors] = on\n")
 	if settings := a.PHPSettings[version]; len(settings) > 0 {

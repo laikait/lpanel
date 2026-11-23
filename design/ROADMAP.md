@@ -1057,8 +1057,31 @@ Not a numbered milestone: the panels' look moved out of the modules.
   not in the distribution's repositories); static files that nginx serves
   itself in hybrid are not looked at; rule-set updates are the package's.
 
-**Still to build in M9:**
-- Account isolation hardening (`hidepid`, private `/tmp`, symlink protection).
+**M9d, account isolation hardening, is built (2026-11-24). This finishes M9.**
+
+- **Agent** (`internal/isolation`, ops `isolation.info|apply`): `/proc` mounted
+  `hidepid=2,gid=0` now and after a reboot (a small unit), the kernel's four
+  link protections in a sysctl file; both reversible; the pool of each account
+  also gets `TMP`, `TMPDIR` and `TEMP` pointing at its own `tmp` folder.
+- **Panel** (module `Security`, root only): the Admin page "Account isolation"
+  (what the server has, what always holds, two switches), API
+  `/admin/api/v1/isolation`, commands `isolation:status|set|sync`; both are on
+  unless turned off, and the installer applies them (`isolation:sync`).
+- **What was already there** and is listed on the page: a user and group per
+  account, homes 0711, site folders 0750, a PHP pool per account with its own
+  sessions and temporary files, links followed only to the owner's files, a
+  jail for SSH.
+- **Tried in a real AlmaLinux 9 container:** the remount works and an
+  account then sees 4 processes where root sees 9; the e2e installs with it on
+  and checks every service and site still works.
+- **Not done on purpose:** `open_basedir` and `disable_functions` (they break
+  too many applications to be on by default; Unix permissions already keep
+  accounts apart), a noexec /tmp (it breaks package scripts).
+
+M9 is complete: firewall, brute-force blocking, web application firewall and
+isolation. What still needs a hand run on a real server: the firewall's
+ipset and reload mechanism (M9a) and the log formats of pure-ftpd and Dovecot
+(M9b).
 
 ### M10: Operations
 - Server dashboard and service watchdog.

@@ -52,6 +52,9 @@ var Tools = map[string]string{
 	"pure-ftpwho": "/usr/sbin/pure-ftpwho",
 	// firewalld: ports, and the IP sets and rules the agent writes.
 	"firewall-cmd": "/usr/bin/firewall-cmd",
+	// Account isolation: /proc with hidepid, and the kernel's link protections.
+	"mount":  "/usr/bin/mount",
+	"sysctl": "/usr/sbin/sysctl",
 }
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"

@@ -1,0 +1,261 @@
+// Package isolation hardens the server so that one account cannot see or
+// trick another through the system they share.
+//
+// Two settings, both off the web stack (accounts are already apart by user
+// and group, each with a private home, PHP pool, session and temporary
+// folders, and a jail of their own for SSH):
+//
+//   - hidepid: /proc is mounted with hidepid=2 (gid=0), so a process of one
+//     account (a PHP script running ps, a shell outside the jail) sees only
+//     its own processes, not other accounts' command lines, which may hold
+//     passwords. Root always sees everything. Kept across a reboot by a
+//     small systemd unit (lpanel-hidepid.service) that does the same mount.
+//   - links: the kernel's protection of links and files in sticky folders such
+//     as /tmp: a symlink is followed only by its owner or the folder's owner
+//     (protected_symlinks), a hard link needs access to its target
+//     (protected_hardlinks), and files in sticky world-writable folders
+//     cannot be opened by someone else with O_CREAT (protected_regular,
+//     protected_fifos). Written to /etc/sysctl.d and loaded.
+//
+// The agent changes only what it is asked to, writes its files whole, and
+// does nothing a second time: the same settings twice is no change.
+package isolation
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"lpa/internal/fsutil"
+	"lpa/internal/protocol"
+	"lpa/internal/sysexec"
+)
+
+// Error codes.
+const (
+	CodeProc   = "isolation_proc"
+	CodeSysctl = "isolation_sysctl"
+)
+
+// links are the sysctl names with the values the "links" setting wants. The
+// kernel's own defaults (AlmaLinux 9) are in distro.
+var links = []struct {
+	Name string
+	Want int
+}{
+	{"fs.protected_symlinks", 1},
+	{"fs.protected_hardlinks", 1},
+	{"fs.protected_regular", 2},
+	{"fs.protected_fifos", 2},
+}
+
+var distro = map[string]int{
+	"fs.protected_symlinks":  1,
+	"fs.protected_hardlinks": 1,
+	"fs.protected_regular":   2,
+	"fs.protected_fifos":     1,
+}
+
+// Manager changes the settings. Paths are fields so tests can use a folder.
+type Manager struct {
+	Run        sysexec.Runner
+	Log        *slog.Logger
+	SysctlFile string // /etc/sysctl.d/90-lpanel-isolation.conf
+	UnitFile   string // /etc/systemd/system/lpanel-hidepid.service
+	ProcMounts string // /proc/self/mounts
+	ProcSys    string // /proc/sys
+}
+
+// Defaults fills in the paths a server has.
+func (m *Manager) Defaults() {
+	set := func(p *string, v string) {
+		if *p == "" {
+			*p = v
+		}
+	}
+	set(&m.SysctlFile, "/etc/sysctl.d/90-lpanel-isolation.conf")
+	set(&m.UnitFile, "/etc/systemd/system/lpanel-hidepid.service")
+	set(&m.ProcMounts, "/proc/self/mounts")
+	set(&m.ProcSys, "/proc/sys")
+}
+
+// Settings are isolation.apply's arguments.
+type Settings struct {
+	Hidepid bool `json:"hidepid"`
+	Links   bool `json:"links"`
+}
+
+// Link is one protection as the kernel has it.
+type Link struct {
+	Name  string `json:"name"`
+	Value int    `json:"value"`
+	Want  int    `json:"want"`
+}
+
+// Info is what isolation.info answers.
+type Info struct {
+	// Hidepid is true when /proc hides other users' processes now; Mode is
+	// the mount option as the kernel shows it (off, "invisible", "noaccess").
+	Hidepid bool   `json:"hidepid"`
+	Mode    string `json:"mode"`
+	// HidepidKept is true when the unit that makes it survive a reboot is there.
+	HidepidKept bool `json:"hidepid_kept"`
+	// Links lists the protections; LinksOK is true when each is at least as
+	// strict as wanted; LinksKept is true when LPanel's sysctl file is there.
+	Links     []Link `json:"links"`
+	LinksOK   bool   `json:"links_ok"`
+	LinksKept bool   `json:"links_kept"`
+}
+
+// Info reads the system's state.
+func (m *Manager) Info(ctx context.Context) Info {
+	info := Info{Links: []Link{}, LinksOK: true}
+	info.Mode = m.procMode()
+	info.Hidepid = info.Mode == "invisible" || info.Mode == "noaccess" || info.Mode == "2" || info.Mode == "1"
+	_, err := os.Stat(m.UnitFile)
+	info.HidepidKept = err == nil
+	_, err = os.Stat(m.SysctlFile)
+	info.LinksKept = err == nil
+	for _, l := range links {
+		v := m.sysctl(l.Name)
+		info.Links = append(info.Links, Link{Name: l.Name, Value: v, Want: l.Want})
+		if v < l.Want {
+			info.LinksOK = false
+		}
+	}
+	return info
+}
+
+// procMode is hidepid's value on the /proc mount ("0" when not set).
+func (m *Manager) procMode() string {
+	data, err := os.ReadFile(m.ProcMounts)
+	if err != nil {
+		return "0"
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 4 && f[1] == "/proc" && f[2] == "proc" {
+			for _, o := range strings.Split(f[3], ",") {
+				if v, ok := strings.CutPrefix(o, "hidepid="); ok {
+					return v
+				}
+			}
+		}
+	}
+	return "0"
+}
+
+func (m *Manager) sysctl(name string) int {
+	data, err := os.ReadFile(filepath.Join(m.ProcSys, strings.ReplaceAll(name, ".", "/")))
+	if err != nil {
+		return 0
+	}
+	v, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	return v
+}
+
+const banner = "Generated by LPanel (Security, account isolation). Changes made here are replaced the next time the setting is saved."
+
+// Apply brings the system to the settings and returns the state after.
+func (m *Manager) Apply(ctx context.Context, s Settings) (Info, error) {
+	if err := m.applyLinks(ctx, s.Links); err != nil {
+		return m.Info(ctx), err
+	}
+	if err := m.applyHidepid(ctx, s.Hidepid); err != nil {
+		return m.Info(ctx), err
+	}
+	return m.Info(ctx), nil
+}
+
+func (m *Manager) applyLinks(ctx context.Context, on bool) error {
+	if !on {
+		if err := os.Remove(m.SysctlFile); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		// Back to what the distribution sets, now, not at the next boot.
+		args := []string{"-w"}
+		for _, l := range links {
+			args = append(args, fmt.Sprintf("%s=%d", l.Name, distro[l.Name]))
+		}
+		if err := sysexec.Must(ctx, m.Run, "sysctl", args...); err != nil {
+			return protocol.Fail(CodeSysctl, "the protections could not be set back: "+err.Error())
+		}
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n", banner)
+	for _, l := range links {
+		fmt.Fprintf(&b, "%s = %d\n", l.Name, l.Want)
+	}
+	old, _ := os.ReadFile(m.SysctlFile)
+	if !bytes.Equal(old, []byte(b.String())) {
+		// A minimal system has no /etc/sysctl.d yet.
+		if err := fsutil.EnsureDir(filepath.Dir(m.SysctlFile), 0o755); err != nil {
+			return err
+		}
+		if err := fsutil.WriteFileAtomic(m.SysctlFile, []byte(b.String()), 0o644); err != nil {
+			return err
+		}
+	}
+	if err := sysexec.Must(ctx, m.Run, "sysctl", "-p", m.SysctlFile); err != nil {
+		return protocol.Fail(CodeSysctl, "the protections could not be set: "+err.Error())
+	}
+	return nil
+}
+
+func (m *Manager) unit() []byte {
+	return []byte("# " + banner + "\n" +
+		"[Unit]\nDescription=LPanel: hide other users' processes in /proc\nDocumentation=file:///usr/local/lpanel/design/ARCHITECTURE.md\n" +
+		"DefaultDependencies=no\nAfter=local-fs.target\nBefore=sysinit.target\n\n" +
+		"[Service]\nType=oneshot\nRemainAfterExit=yes\n" +
+		"ExecStart=/usr/bin/mount -o remount,hidepid=2,gid=0 /proc\n" +
+		"ExecStop=/usr/bin/mount -o remount,hidepid=0 /proc\n\n" +
+		"[Install]\nWantedBy=sysinit.target\n")
+}
+
+func (m *Manager) applyHidepid(ctx context.Context, on bool) error {
+	if !on {
+		if _, err := os.Stat(m.UnitFile); err == nil {
+			_ = sysexec.Must(ctx, m.Run, "systemctl", "disable", "--quiet", "lpanel-hidepid.service")
+			if err := os.Remove(m.UnitFile); err != nil {
+				return err
+			}
+			if err := sysexec.Must(ctx, m.Run, "systemctl", "daemon-reload"); err != nil {
+				return err
+			}
+		}
+		if m.procMode() != "0" {
+			if err := sysexec.Must(ctx, m.Run, "mount", "-o", "remount,hidepid=0", "/proc"); err != nil {
+				return protocol.Fail(CodeProc, "/proc could not be shown to everyone again: "+err.Error())
+			}
+		}
+		return nil
+	}
+	old, _ := os.ReadFile(m.UnitFile)
+	if !bytes.Equal(old, m.unit()) {
+		if err := fsutil.EnsureDir(filepath.Dir(m.UnitFile), 0o755); err != nil {
+			return err
+		}
+		if err := fsutil.WriteFileAtomic(m.UnitFile, m.unit(), 0o644); err != nil {
+			return err
+		}
+		if err := sysexec.Must(ctx, m.Run, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
+	}
+	if err := sysexec.Must(ctx, m.Run, "systemctl", "enable", "--quiet", "lpanel-hidepid.service"); err != nil {
+		return err
+	}
+	if m.procMode() == "invisible" || m.procMode() == "2" {
+		return nil
+	}
+	if err := sysexec.Must(ctx, m.Run, "mount", "-o", "remount,hidepid=2,gid=0", "/proc"); err != nil {
+		return protocol.Fail(CodeProc, "/proc could not hide other users' processes: "+err.Error())
+	}
+	return nil
+}
