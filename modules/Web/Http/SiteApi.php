@@ -26,6 +26,7 @@ use App\Modules\Web\WebSync;
  *   PUT    domains/{domain}/error-pages        {"404": "/errors/404.html", …}  (the whole set)
  *   PUT    domains/{domain}/hotlink            {extensions: [...], allow: [...]}
  *   DELETE domains/{domain}/hotlink
+ *   PUT    domains/{domain}/waf                {mode: default|off|detect|block, exclude: [rule numbers]}
  *   POST   domains/{domain}/redirects          {path, to, code}
  *   DELETE domains/{domain}/redirects/{id}
  *   POST   domains/{domain}/protected          {path, realm, login?, password?}
@@ -62,6 +63,15 @@ final class SiteApi
         $list = static fn(mixed $v): string => \is_array($v) ? \implode(',', \array_map('strval', $v)) : (string) $v;
 
         return $this->respond($this->actions->hotlink($identity, $request, $account, $row, true, $list($request->input('extensions', SiteFeatures::HOTLINK_DEFAULT)), $list($request->input('allow', []))), $account, $row);
+    }
+
+    public function waf(Request $request, Identity $identity, string $username, string $domain): JsonResponse
+    {
+        [$account, $row] = $this->domain($identity, $username, $domain);
+        $list = $request->input('exclude', []);
+        $exclude = \is_array($list) ? \implode(',', \array_map(static fn(mixed $v): string => \is_scalar($v) ? (string) $v : '', $list)) : (string) $list;
+
+        return $this->respond($this->actions->waf($identity, $request, $account, $row, (string) $request->input('mode', 'default'), $exclude), $account, $row);
     }
 
     public function hotlinkOff(Request $request, Identity $identity, string $username, string $domain): JsonResponse
@@ -168,6 +178,7 @@ final class SiteApi
             'canonical' => $row['canonical'] ?? null,
             'error_pages' => (object) $row['error_pages'],
             'hotlink' => $row['hotlink'],
+            'waf' => $row['waf'] ?? ['mode' => 'default', 'exclude' => []],
             'redirects' => \array_map(static fn(array $r): array => ['id' => (int) $r['id'], 'path' => $r['path'], 'to' => $r['target'], 'code' => (int) $r['code']], $this->features->redirects($id)),
             'protected' => \array_map(static fn(array $p): array => ['id' => $p['id'], 'path' => '/' . $p['path'], 'realm' => $p['realm'], 'logins' => $p['logins']], $this->features->protected($id)),
         ];

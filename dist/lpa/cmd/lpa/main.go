@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"lpa/internal/accounts"
+	"lpa/internal/authlog"
 	"lpa/internal/backup"
 	"lpa/internal/certs"
 	"lpa/internal/config"
@@ -183,12 +184,14 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	}
 	ops.Accounts(reg, acc)
 	ops.Web(reg, sites)
+	ops.WAF(reg, sites)
 	ops.SSL(reg, tls)
 	ops.DB(reg, dbs)
 	ops.DNS(reg, zones)
 	ops.Mail(reg, mails)
 	ops.FTP(reg, ftps)
 	ops.Firewall(reg, fw)
+	ops.AuthLog(reg, authlog.Default())
 	ops.SSH(reg, keys)
 	ops.Backup(reg, backups)
 	self, err := os.Executable()

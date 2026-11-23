@@ -1012,9 +1012,52 @@ Not a numbered milestone: the panels' look moved out of the modules.
 - **Not yet:** per-account outgoing rules and remote-database host
   allowances (they use these lists), country "allow only" mode.
 
+**M9b, built-in brute-force blocking, is built (2026-11-24).**
+
+- **Agent** (`internal/authlog`, op `authlog.scan`, read-only): failed sign-ins
+  in the SSH, FTP, Dovecot and Exim logs, by address, since a cursor the panel
+  keeps; rotated logs are noticed; the first scan starts at the end.
+- **Panel** (module `Security`): the panel's own failed sign-ins (the
+  `auth.failed` hook) and the agent's counts go in one table; every minute
+  (`bruteforce:scan`) an address over the limit (default 10 failures in 10
+  minutes, all services together) is added to the deny list through the same
+  `Firewall` class the pages use, so it is audited, ends by itself and is
+  guarded like any other entry. A repeat offender gets 1 h, then 1 d, 7 d,
+  30 d. The allow list is never blocked; an IPv6 attacker is blocked as its
+  /64. Page "Brute-force blocking", API `/admin/api/v1/bruteforce`, commands
+  `bruteforce:status|set|scan`.
+- **Tests:** Go (each service's line format, cursors, rotation, half lines);
+  PHP 10 in `BruteForceTest`. **Not tested against real logs here**: the log
+  paths and line formats are from the services' documented formats and need a
+  look on a real AlmaLinux server (especially where pure-ftpd and Dovecot log).
+- **Not yet:** a journald reader for servers that do not write these files,
+  blocking at the web server (404 floods) and ModSecurity (M9c).
+
+**M9c, the web application firewall, is built (2026-11-24).**
+
+- **Agent** (`internal/web/waf.go`, ops `waf.info|settings|events`, a site's
+  `waf` in `web.apply`): ModSecurity with the Core Rule Set (the EPEL packages
+  `mod_security`, `mod_security_crs`) in Apache; per site off, log-only or
+  block, and the rules the site does not want; a site that has not chosen is
+  log-only; the paranoia level is global; what the rules said is read from
+  each account's error log, one event per request.
+- **Panel** (module `Web`, `Waf/`): the owner's Firewall card on a site's page
+  (mode, rules not wanted, the site's latest events), the Admin page (default
+  mode, strictness, all events), API `/admin/api/v1/waf` and
+  `/admin/api/v1/accounts/{user}/domains/{domain}/waf`, commands `waf:status|
+  set|scan` and `domains:waf`, `waf:scan` every five minutes. Changing the
+  default mode writes every account's sites again. Capability `server.waf`
+  (administrators).
+- **Tried in a real AlmaLinux 9 container** while building: mod_security 2.9
+  with Core Rule Set 3.3.5 refuses an XSS and a SQL injection with a 403 in
+  `On`, lets them through and logs in `DetectionOnly`, and a rule removed by
+  number in the virtual host is accepted by `httpd -t`. The e2e repeats it on
+  the apache and hybrid stacks.
+- **Not yet:** the nginx stack alone has no firewall (the nginx connector is
+  not in the distribution's repositories); static files that nginx serves
+  itself in hybrid are not looked at; rule-set updates are the package's.
+
 **Still to build in M9:**
-- Built-in brute-force blocking (feeds the deny list, with a time it ends).
-- ModSecurity + OWASP CRS for each domain.
 - Account isolation hardening (`hidepid`, private `/tmp`, symlink protection).
 
 ### M10: Operations

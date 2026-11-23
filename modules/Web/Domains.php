@@ -490,6 +490,8 @@ final class Domains
         $row['error_pages'] = \is_array($pages) ? $pages : [];
         $hotlink = \json_decode((string) ($row['hotlink'] ?? ''), true);
         $row['hotlink'] = \is_array($hotlink) ? $hotlink : null;
+        $waf = \json_decode((string) ($row['waf'] ?? ''), true);
+        $row['waf'] = \is_array($waf) ? $waf : null;
 
         return $row;
     }
@@ -507,6 +509,10 @@ final class Domains
 
         if (\array_key_exists('hotlink', $row)) {
             $row['hotlink'] = $row['hotlink'] === null ? null : \json_encode($row['hotlink'], \JSON_THROW_ON_ERROR);
+        }
+
+        if (\array_key_exists('waf', $row)) {
+            $row['waf'] = $row['waf'] === null ? null : \json_encode($row['waf'], \JSON_THROW_ON_ERROR);
         }
 
         return $row;

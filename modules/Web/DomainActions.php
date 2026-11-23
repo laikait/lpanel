@@ -139,6 +139,30 @@ final class DomainActions
     }
 
     /**
+     * The site's web application firewall: its mode ("default" follows the
+     * server) and the rules it does not want.
+     *
+     * @param array<string, mixed> $account
+     * @param array<string, mixed> $domain
+     *
+     * @return array{0: ?WebOutcome, 1: array<string, string>}
+     */
+    public function waf(?Identity $actor, ?Request $request, array $account, array $domain, string $mode, string $exclude): array
+    {
+        if ($domain['kind'] === Domains::ALIAS) {
+            return [null, ['kind' => 'Web.error_alias_settings']];
+        }
+
+        [$clean, $errors] = SiteFeatures::validateWaf($mode, $exclude);
+
+        if ($errors !== []) {
+            return [null, $errors];
+        }
+
+        return [$this->changeColumns($actor, $request, $account, $domain, 'domain.waf', ['waf' => $clean], ['mode' => $clean['mode'] ?? 'default', 'exclude' => \implode(' ', $clean['exclude'] ?? [])]), []];
+    }
+
+    /**
      * @param array<string, mixed> $account
      * @param array<string, mixed> $domain
      * @param array<string, mixed> $input   path, to, code

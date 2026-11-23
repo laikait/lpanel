@@ -164,6 +164,21 @@ final class FakeServer
         'ports' => [['port' => '22', 'proto' => 'tcp', 'sources' => []], ['port' => '80', 'proto' => 'tcp', 'sources' => []], ['port' => '7443', 'proto' => 'tcp', 'sources' => []]],
         'allow' => [], 'deny' => [], 'countries' => [], 'nets' => ['CN' => ['203.0.113.0/24'], 'RU' => ['198.51.100.0/24']], 'keep' => [22, 7443, 7444],
     ];
+    /** @var array{available: bool, server: string, rules: string, paranoia: int} what waf.info answers */
+    public array $waf = ['available' => true, 'server' => 'apache', 'rules' => '3.3.5', 'paranoia' => 1];
+
+    /** @var list<array<string, mixed>> what the next waf.events reports (then it is empty) */
+    public array $wafEvents = [];
+
+    /** @var list<array<string, mixed>> what each waf.events was asked */
+    public array $wafScans = [];
+
+    /** @var list<array{ip: string, service: string, count: int}> what the next authlog.scan reports (then it is empty) */
+    public array $authFailures = [];
+
+    /** @var list<array<string, mixed>> what each authlog.scan was asked */
+    public array $authScans = [];
+
     /** @var array<string, list<array<string, mixed>>> account => the keys ssh.apply last wrote */
     public array $sshKeys = [];
 
@@ -207,7 +222,7 @@ final class FakeServer
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
-        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries'] as $op) {
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries', 'waf.settings'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -286,6 +301,31 @@ final class FakeServer
             'cached' => \array_map(fn(string $c): array => ['code' => $c, 'v4' => \count($this->fw['nets'][$c] ?? []), 'v6' => 0, 'fetched' => '2026-11-23T00:00:00Z'], $this->fw['countries']),
             'rules' => $this->fw['allow'] !== [] || $this->fw['deny'] !== [] || $this->fw['countries'] !== [], 'keep' => $this->fw['keep'],
         ]];
+        $answers['waf.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'available' => $this->waf['available'], 'server' => $this->waf['server'], 'rules' => $this->waf['rules'], 'paranoia' => $this->waf['paranoia'],
+        ]];
+        $answers['waf.events'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $this->wafScans[] = $args;
+            $events = $this->wafEvents;
+            $this->wafEvents = [];
+
+            return ['status' => 'done', 'result' => ['events' => $events, 'cursors' => ['shop' => ['offset' => \count($this->wafScans) * 10, 'head' => 'w1']]]];
+        };
+        $answers['authlog.scan'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $this->authScans[] = $args;
+            $failures = $this->authFailures;
+            $this->authFailures = [];
+
+            return ['status' => 'done', 'result' => ['failures' => $failures, 'cursors' => ['ssh' => ['offset' => \count($this->authScans) * 100, 'head' => 'h1']], 'missing' => ['ftp', 'mail', 'smtp'], 'lines' => 0]];
+        };
         $answers['ftp.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
             'enabled' => true, 'installed' => true, 'running' => true, 'version' => '1.0.52',
             'logins' => \array_sum(\array_map(static fn(array $s): int => $s['suspended'] ? 0 : \count($s['users']), $this->ftp)),
@@ -473,6 +513,16 @@ final class FakeServer
 
         if (\str_starts_with($op, 'firewall.')) {
             return $this->runFirewall($op, $args);
+        }
+
+        if ($op === 'waf.settings') {
+            if (!$this->waf['available'] || $this->waf['server'] === 'nginx') {
+                return ['status' => 'failed', 'error' => ['code' => 'waf_unavailable', 'message' => 'the web application firewall needs Apache']];
+            }
+
+            $this->waf['paranoia'] = (int) $args['paranoia'];
+
+            return ['status' => 'done', 'result' => ['available' => true, 'server' => $this->waf['server'], 'rules' => $this->waf['rules'], 'paranoia' => $this->waf['paranoia']]];
         }
 
         if (\str_starts_with($op, 'backup.')) {

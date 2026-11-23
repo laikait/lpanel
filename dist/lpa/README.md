@@ -145,6 +145,10 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `firewall.info` | read-only | firewalld's state, the zones, the open ports (and which service opens each), the allow and deny lists, the blocked countries and what is cached |
 | `firewall.port` | change | `{action: open\|close, port, proto, sources?, protect?}`: open a port, limit it to some addresses, or close it |
 | `firewall.lists` | change | `{allow, deny, protect?}`: the allow list and the deny list, whole |
+| `waf.info` | read-only | whether Apache has ModSecurity loaded, the Core Rule Set's version, the paranoia level |
+| `waf.settings` | change | `{paranoia}`: how strict the Core Rule Set is, 1 to 4 (global; written, tested with `httpd -t`, reloaded) |
+| `waf.events` | read-only | `{cursors}`: what the rules said about requests, one event per request, from each account's error log since its cursor |
+| `authlog.scan` | read-only | `{cursors}`: failed sign-ins found in the SSH, FTP, mail and SMTP logs since each source's cursor, counted by address |
 | `firewall.countries` | change | `{codes, refresh?, protect?}`: the countries blocked, whole; their lists are fetched when missing |
 | `backup.destination` | change | `{id, type, path \| host, port, user \| endpoint, scheme, region, bucket, prefix, access_key?, secret_key?}`: checks a destination, keeps it with its secrets (empty secrets keep the ones there) and makes its repository with a new random password; a destination that does not answer is not kept |
 | `backup.destination_remove` | change | `{id}`: forgets a destination and its password; what was backed up stays there |
@@ -583,6 +587,52 @@ host only, at most 4 MB, every line a network of the right family, or the
 list is not kept); a country that cannot be fetched changes nothing. Error
 codes: `firewall_off`, `firewall_kept`, `firewall_lockout`, `firewall_fetch`,
 `firewall_toomany`.
+
+### Web application firewall (`waf.*`, a site's `waf` in `web.apply`)
+
+M9c puts ModSecurity with the OWASP Core Rule Set in front of each site. It
+lives in Apache (the `mod_security` and `mod_security_crs` packages, installed
+by the installer), so it covers the apache stack and the hybrid stack's dynamic
+requests; nginx alone has none, and says so (`waf.info` `available: false`).
+
+- **Per site** (`web.apply`, `sites[].waf = {mode, exclude}`): `off`,
+  `detect` (the rules run and log, nothing is refused) or `block` (an anomaly
+  score of 5 or more gets a 403), and up to 50 rule numbers the site does not
+  want (`SecRuleRemoveById`). A site with no `waf` is `detect`, never the
+  package's own default (blocking), so every mode in force is one somebody
+  chose. In `detect` and `block` the request body limit is 512 MB with
+  `ProcessPartial`, so a large upload is not refused for its size.
+- **Global** (`waf.settings`): the paranoia level, written to
+  `/etc/httpd/lpanel/waf.conf` as a `SecAction` that the main include reads
+  before the rule set loads. Apache's `-t` must accept it, or the old file is
+  put back (`waf_config`).
+- **Events** (`waf.events`): the account's `*.error.log` carries one line per
+  matching rule (`ModSecurity: Warning/Access denied … [id "941100"] [msg …]
+  [unique_id …]`); lines with the same unique id are one request, the
+  anomaly-score summary rule (949110) gives the score and whether it was
+  refused. A log never read starts at its end; a replaced log is read from its
+  top; at most 8 MB per log and 500 events per call.
+
+### Sign-in logs (`authlog.scan`)
+
+M9b's brute-force blocker needs to know who keeps failing. The agent only
+reads and reports; it blocks nothing and keeps nothing. `authlog.scan` reads
+four logs from the place the panel says it stopped (a cursor per source: a
+position and a hash of the file's first line, so a rotated or replaced log is
+read from its top) and answers the failures per address and service:
+
+| Source | Log | Line |
+|---|---|---|
+| `ssh` | `/var/log/secure` | sshd `Failed password/publickey/keyboard-interactive for … from IP` |
+| `ftp` | `/var/log/messages` | pure-ftpd `(user@IP) [WARNING] Authentication failed` |
+| `mail` | `/var/log/maillog` | Dovecot `…-login: …auth failed, N attempts…rip=IP` (counts N) |
+| `smtp` | `/var/log/exim/mainlog` | Exim `login authenticator failed for … [IP]` |
+
+A source never read before starts at the end of its log, so history never
+blocks anyone when the feature is turned on. A log that is not there is listed
+under `missing`. At most 8 MB of one log is read per scan; a line still being
+written is left for the next. Loopback and unspecified addresses are never
+reported.
 
 ### SSH and SFTP (`ssh.apply`, `cmd/lpanel-jail`)
 

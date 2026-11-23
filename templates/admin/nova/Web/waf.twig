@@ -1,0 +1,84 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+{% set loaded = info and info.available %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Web.waf_title'|local }}</h1>
+        <p>{{ 'Web.waf_lead'|local }}</p>
+    </div>
+</div>
+
+{% if info is null %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Web.waf_error_unreachable'|local }}</p></div>
+{% elseif info.server == 'nginx' %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Web.waf_nginx'|local }}</p></div>
+{% elseif not info.available %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Web.waf_missing'|local }}</p></div>
+{% endif %}
+
+<div class="mb-6 grid gap-5 sm:grid-cols-3">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('shield') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Web.waf_tile_state'|local }}</div>
+            <div class="stat-value">{% if loaded %}<span class="badge ok">{{ 'Web.waf_loaded'|local }}</span>{% elseif info %}<span class="badge plain">{{ 'Web.waf_not_loaded'|local }}</span>{% else %}—{% endif %}</div>
+            <div class="stat-sub">{% if loaded and info.rules %}{{ 'Web.waf_rules_version'|local({v: info.rules}) }}{% endif %}</div>
+        </div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('alert') }}</span>
+        <div><div class="stat-label">{{ 'Web.waf_tile_day'|local }}</div><div class="stat-value">{{ counts.day }}</div><div class="stat-sub">{{ 'Web.waf_tile_day_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('lock') }}</span>
+        <div><div class="stat-label">{{ 'Web.waf_tile_blocked'|local }}</div><div class="stat-value">{{ counts.blocked }}</div><div class="stat-sub">{{ 'Web.waf_tile_blocked_sub'|local }}</div></div>
+    </div>
+</div>
+
+<div class="grid grid-side" style="margin-bottom:20px;align-items:start">
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Web.waf_events'|local }}</h2><p>{{ 'Web.waf_events_lead'|local }}</p></div></div>
+        {% if events is empty %}
+            <div class="empty">{{ icon('check') }}<h3>{{ 'Web.waf_events_none'|local }}</h3><p>{{ 'Web.waf_events_none_text'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <tbody>
+            {% for e in events %}
+                <tr>
+                    <td>
+                        <strong>{{ e.host }}</strong> <span class="mono">{{ e.uri }}</span>
+                        <div class="domain-sub">{{ e.ip }} · {{ e.seen_at[:16] }} UTC · {{ 'Web.waf_score'|local({n: e.score}) }}</div>
+                        <div class="domain-sub">{% for r in e.rules %}<span title="{{ r.msg }}">{{ 'Web.waf_rule'|local({id: r.id}) }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</div>
+                    </td>
+                    <td style="text-align:end"><span class="badge {{ e.blocked ? 'bad' : 'plain' }}">{{ (e.blocked ? 'Web.waf_refused' : 'Web.waf_logged')|local }}</span></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </section>
+
+    <form class="card" method="post" action="{{ save_url }}">
+        <div class="card-head"><div><h2>{{ 'Web.waf_settings'|local }}</h2><p>{{ 'Web.waf_settings_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <span class="label">{{ 'Web.waf_default_mode'|local }}</span>
+                <div class="segmented" role="radiogroup" aria-label="{{ 'Web.waf_default_mode'|local }}">
+                    {% for m in modes %}<label><input type="radio" name="mode" value="{{ m }}"{% if m == settings.default %} checked{% endif %}>{{ ('Web.waf_mode_' ~ m)|local }}</label>{% endfor %}
+                </div>
+                <div class="hint">{{ ('Web.waf_mode_' ~ settings.default ~ '_hint')|local }}</div>
+            </div>
+            <div class="field" style="margin:0">
+                <label for="waf-paranoia">{{ 'Web.waf_paranoia'|local }}</label>
+                <select class="input" id="waf-paranoia" name="paranoia">
+                    {% for n in 1..4 %}<option value="{{ n }}"{% if n == settings.paranoia %} selected{% endif %}>{{ n }}</option>{% endfor %}
+                </select>
+                <div class="hint">{{ 'Web.waf_paranoia_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Web.waf_save'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

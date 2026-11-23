@@ -18,6 +18,7 @@ use App\Modules\Web\Domains;
 use App\Modules\Web\PhpSettings;
 use App\Modules\Web\SiteFeatures;
 use App\Modules\Web\WebOutcome;
+use App\Modules\Web\Waf\Waf;
 use App\Modules\Web\WebSync;
 
 /**
@@ -36,6 +37,7 @@ final class SitePages
         private readonly PhpSettings $php,
         private readonly DomainActions $actions,
         private readonly WebSync $sync,
+        private readonly Waf $waf,
         private readonly Subusers $subusers,
         private readonly PanelPage $pages,
         private readonly Router $router,
@@ -100,6 +102,15 @@ final class SitePages
         [$outcome, $errors] = $this->actions->hotlink($identity, $request, $account, $domain, $input['on'], $input['extensions'], $input['allow']);
 
         return $this->after($request, $session, $identity, $account, $domain, $outcome, $errors, 'hotlink', $input);
+    }
+
+    public function waf(Request $request, Session $session, Identity $identity, string $id): Response
+    {
+        [$account, $domain] = $this->domain($identity, $id);
+        $input = ['mode' => (string) $request->input('mode', 'default'), 'exclude' => (string) $request->input('exclude', '')];
+        [$outcome, $errors] = $this->actions->waf($identity, $request, $account, $domain, $input['mode'], $input['exclude']);
+
+        return $this->after($request, $session, $identity, $account, $domain, $outcome, $errors, 'waf', $input);
     }
 
     public function protect(Request $request, Session $session, Identity $identity, string $id): Response
@@ -233,6 +244,8 @@ final class SitePages
             'protected' => $protected,
             'codes' => SiteFeatures::ERROR_CODES,
             'hotlink_default' => \implode(', ', SiteFeatures::HOTLINK_DEFAULT),
+            'waf_default' => $this->features->defaultWafMode(),
+            'waf_events' => $this->waf->recent([(string) $domain['name'], 'www.' . $domain['name']], (string) $account['username'], 10),
             'php' => $this->sync->phpVersions($inUse),
             'web' => $this->sync->stateOf((int) $account['id']),
             'urls' => [
@@ -241,6 +254,7 @@ final class SitePages
                 'redirect' => $url('redirects'),
                 'errors' => $url('errors'),
                 'hotlink' => $url('hotlink'),
+                'waf' => $url('waf'),
                 'protect' => $url('protected'),
                 'delete' => $url('delete'),
             ],

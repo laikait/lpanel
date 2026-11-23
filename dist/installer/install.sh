@@ -104,7 +104,7 @@ fi
 dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
     php83-php-pdo php83-php-mysqlnd php83-php-process php83-php-opcache php83-php-xml \
-    mariadb-server nginx httpd mod_ssl openssl policycoreutils-python-utils procps-ng iproute logrotate \
+    mariadb-server nginx httpd mod_ssl mod_security mod_security_crs openssl policycoreutils-python-utils procps-ng iproute logrotate \
     pdns pdns-backend-mysql bind-utils \
     exim dovecot dovecot-pigeonhole \
     rspamd clamd clamav-update \

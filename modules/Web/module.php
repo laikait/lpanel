@@ -32,6 +32,10 @@ use App\Modules\Web\SiteFeatures;
 use App\Modules\Web\SslSites;
 use App\Modules\Web\WebListeners;
 use App\Modules\Web\WebSettings;
+use App\Modules\Web\Waf\Waf;
+use App\Modules\Web\Waf\WafApi;
+use App\Modules\Web\Waf\WafCommands;
+use App\Modules\Web\Waf\WafPages;
 use App\Modules\Web\WebSync;
 
 /**
@@ -58,6 +62,10 @@ return static function (ModuleContext $module): void {
         $services->singleton(SiteFeatures::class);
         $services->singleton(PhpSettings::class);
         $services->singleton(WebSettings::class);
+        $services->singleton(Waf::class);
+        $services->bind(WafPages::class);
+        $services->bind(WafApi::class);
+        $services->bind(WafCommands::class);
         $services->singleton(WebSync::class);
         $services->singleton(PhpVersions::class);
         $services->singleton(Bandwidth::class);
@@ -81,6 +89,7 @@ return static function (ModuleContext $module): void {
 
     $module->access(static function (AccessCollector $access): void {
         $access->capability('server.php', 'Install and remove PHP versions and extensions, and choose the version new sites get.');
+        $access->capability('server.waf', 'Set the web application firewall for the whole server: the mode sites start in and how strict the rules are.');
         $access->capability('server.ssl', 'Set up AutoSSL (certificate authorities) and the server hostname\'s certificate.');
     });
 
@@ -95,11 +104,23 @@ return static function (ModuleContext $module): void {
             $routes->post('/{id}/redirects/{redirect}/delete', [SitePages::class, 'removeRedirect'])->name('.redirects.delete')->where('id', '\d+')->where('redirect', '\d+');
             $routes->post('/{id}/errors', [SitePages::class, 'errorPages'])->name('.errors')->where('id', '\d+');
             $routes->post('/{id}/hotlink', [SitePages::class, 'hotlink'])->name('.hotlink')->where('id', '\d+');
+            $routes->post('/{id}/waf', [SitePages::class, 'waf'])->name('.waf')->where('id', '\d+');
             $routes->post('/{id}/protected', [SitePages::class, 'protect'])->name('.protected')->where('id', '\d+');
             $routes->post('/{id}/protected/{folder}/delete', [SitePages::class, 'unprotect'])->name('.protected.delete')->where('id', '\d+')->where('folder', '\d+');
             $routes->post('/{id}/protected/{folder}/logins', [SitePages::class, 'setLogin'])->name('.protected.logins')->where('id', '\d+')->where('folder', '\d+');
             $routes->post('/{id}/protected/{folder}/logins/{login}/delete', [SitePages::class, 'removeLogin'])->name('.protected.logins.delete')->where('id', '\d+')->where('folder', '\d+')->where('login', '[A-Za-z0-9._-]{1,32}');
         }, name: 'user.domains', meta: ['can' => 'feature.domains']);
+
+        // The server's web application firewall (Admin panel).
+        $routes->group('/admin/waf', static function (RouteCollector $routes): void {
+            $routes->get('', [WafPages::class, 'index'])->name('');
+            $routes->post('', [WafPages::class, 'save'])->name('.save');
+        }, name: 'admin.waf', meta: ['can' => 'server.waf']);
+
+        $routes->group('/admin/api/v1/waf', static function (RouteCollector $routes): void {
+            $routes->get('', [WafApi::class, 'show'])->name('');
+            $routes->put('', [WafApi::class, 'update'])->name('.update');
+        }, name: 'api.waf', meta: ['can' => 'server.waf', 'csrf' => false, 'rate_limit' => '60/1m']);
 
         // The server's PHP versions (Admin panel).
         $routes->group('/admin/php', static function (RouteCollector $routes): void {
@@ -186,6 +207,7 @@ return static function (ModuleContext $module): void {
             $routes->get('/{domain}', [SiteApi::class, 'show'])->name('.show')->where('username', $user)->where('domain', $domain);
             $routes->put('/{domain}/error-pages', [SiteApi::class, 'errorPages'])->name('.error_pages')->where('username', $user)->where('domain', $domain)->meta($modify);
             $routes->put('/{domain}/hotlink', [SiteApi::class, 'hotlink'])->name('.hotlink')->where('username', $user)->where('domain', $domain)->meta($modify);
+            $routes->put('/{domain}/waf', [SiteApi::class, 'waf'])->name('.waf')->where('username', $user)->where('domain', $domain)->meta($modify);
             $routes->delete('/{domain}/hotlink', [SiteApi::class, 'hotlinkOff'])->name('.hotlink_off')->where('username', $user)->where('domain', $domain)->meta($modify);
             $routes->post('/{domain}/redirects', [SiteApi::class, 'addRedirect'])->name('.redirects')->where('username', $user)->where('domain', $domain)->meta($modify);
             $routes->delete('/{domain}/redirects/{id}', [SiteApi::class, 'removeRedirect'])->name('.redirects.delete')->where('username', $user)->where('domain', $domain)->where('id', $id)->meta($modify);
@@ -252,6 +274,20 @@ return static function (ModuleContext $module): void {
             ->option('extensions', 'File kinds, comma-separated (default: ' . implode(',', SiteFeatures::HOTLINK_DEFAULT) . ').')
             ->option('allow', 'Other sites that may show them, comma-separated.')
             ->flag('off', 'Turn it off.');
+        $commands->add('domains:waf', [SiteCommands::class, 'waf'])
+            ->describe('Set a site\'s web application firewall: its mode and the rules it does not want.')
+            ->argument('username', 'The account.')
+            ->argument('domain', 'The domain name.')
+            ->option('mode', 'default (the server\'s), off, detect (log only) or block.')
+            ->option('exclude', 'Rule numbers the site does not want, comma-separated (empty for none).');
+        $commands->add('waf:status', [WafCommands::class, 'status'])
+            ->describe('Show the web application firewall: whether it is loaded, its settings, the latest requests it disliked.');
+        $commands->add('waf:set', [WafCommands::class, 'set'])
+            ->describe('Set the firewall for the whole server.')
+            ->option('mode', 'The mode of sites that have not chosen: off, detect or block.')
+            ->option('paranoia', 'How strict the rules are, 1 to 4.');
+        $commands->add('waf:scan', [WafCommands::class, 'scan'])
+            ->describe('Read what the firewall rules said since last time.');
         $commands->add('domains:protect', [SiteCommands::class, 'protect'])
             ->describe('Make a folder of the site ask for a password. With --login, its password is read from standard input.')
             ->argument('username', 'The account.')
@@ -367,11 +403,13 @@ return static function (ModuleContext $module): void {
     $module->schedules(static function (ScheduleCollector $schedules): void {
         $schedules->command('web:settle')->everyMinute()->withoutOverlapping(600);
         $schedules->command('web:traffic')->everyFifteenMinutes()->withoutOverlapping(900);
+        $schedules->command('waf:scan')->everyFiveMinutes()->withoutOverlapping(600);
         $schedules->command('ssl:autossl')->everyFiveMinutes()->withoutOverlapping(900);
     });
 
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'php_versions', 'label' => 'Web.php_versions', 'icon' => 'code', 'route' => 'admin.php', 'can' => 'server.php', 'order' => 30];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_security', 'key' => 'waf', 'label' => 'Web.waf_title', 'icon' => 'shield', 'route' => 'admin.waf', 'can' => 'server.waf', 'order' => 84];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'ssl', 'label' => 'Web.ssl', 'icon' => 'lock', 'route' => 'admin.ssl', 'can' => 'server.ssl', 'order' => 35];
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'ssl', 'label' => 'Web.ssl', 'icon' => 'lock', 'route' => 'user.ssl', 'can' => 'feature.ssl', 'order' => 15];
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'domains', 'label' => 'Web.domains', 'icon' => 'globe', 'route' => 'user.domains', 'can' => 'feature.domains', 'order' => 10];

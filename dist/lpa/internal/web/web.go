@@ -79,6 +79,9 @@ type Site struct {
 	ErrorPages map[string]string `json:"error_pages"`
 	Protected  []Protected       `json:"protected"`
 	Hotlink    *Hotlink          `json:"hotlink"`
+	// WAF is the site's web application firewall (ModSecurity); nil is
+	// detection only.
+	WAF *WAF `json:"waf"`
 	// TLS serves the site over HTTPS too, with a certificate the agent
 	// stores (ssl.issue, ssl.install); nil serves HTTP only.
 	TLS *SiteTLS `json:"tls"`
@@ -171,6 +174,9 @@ type Manager struct {
 	NginxLogDir   string // /var/log/nginx/lpanel
 	// BackendPort is where Apache listens behind nginx (hybrid), on 127.0.0.1.
 	BackendPort int
+	// WAFRules is where the Core Rule Set's package keeps its rules (tests
+	// change it); empty is the package's own place.
+	WAFRules string
 	// MailSetup is the panel's local address for mail clients' setup
 	// requests (the panel's nginx, on 127.0.0.1 only).
 	MailSetup string
@@ -416,6 +422,11 @@ func (a *ApplyArgs) check() error {
 		}
 		if err := s.checkFeatures(); err != nil {
 			return err
+		}
+		if s.WAF != nil {
+			if err := s.WAF.check(s.Name); err != nil {
+				return err
+			}
 		}
 		if s.TLS != nil && !certRule.MatchString(s.TLS.Cert) {
 			return badArgs("%s: certificate id %q is not 16 hex digits", s.Name, s.TLS.Cert)

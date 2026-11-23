@@ -25,6 +25,11 @@ final class SiteFeatures
 
     public const HOTLINK_DEFAULT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'mp4'];
 
+    /** A site's firewall mode; "default" follows the server's. */
+    public const WAF_MODES = ['default', 'off', 'detect', 'block'];
+
+    public const WAF_MAX_EXCLUDED = 50;
+
     public const MAX_REDIRECTS = 100;
 
     public const MAX_PROTECTED = 50;
@@ -41,7 +46,10 @@ final class SiteFeatures
     private const EXTENSION = '/^[a-z0-9]{1,8}$/';
     private const PART = '/^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/';
 
-    public function __construct(private readonly ConnectionManager $connections) {}
+    public function __construct(
+        private readonly ConnectionManager $connections,
+        private readonly WebSettings $settings,
+    ) {}
 
     // ---- Redirects ---------------------------------------------------------
 
@@ -140,6 +148,54 @@ final class SiteFeatures
         \ksort($clean);
 
         return [$clean, $errors];
+    }
+
+    /**
+     * A site's firewall: its mode ("default" is the server's, kept as null) and the
+     * rules it does not want, by number.
+     *
+     * @return array{0: ?array{mode: string, exclude: list<int>}, 1: array<string, string>}
+     */
+    public static function validateWaf(string $mode, string $exclude): array
+    {
+        $errors = [];
+
+        if (!\in_array($mode, self::WAF_MODES, true)) {
+            $errors['mode'] = 'Web.error_waf_mode';
+        }
+
+        $ids = [];
+
+        foreach (self::words($exclude) as $word) {
+            if (\preg_match('/^[1-9][0-9]{0,6}$/', $word) !== 1) {
+                $errors['exclude'] = 'Web.error_waf_rules';
+
+                continue;
+            }
+
+            $ids[(int) $word] = true;
+        }
+
+        $ids = \array_keys($ids);
+        \sort($ids);
+
+        if (\count($ids) > self::WAF_MAX_EXCLUDED) {
+            $errors['exclude'] = 'Web.error_waf_rules_many';
+        }
+
+        if ($errors !== []) {
+            return [null, $errors];
+        }
+
+        return [$mode === 'default' && $ids === [] ? null : ['mode' => $mode, 'exclude' => $ids], []];
+    }
+
+    /** The server's mode for sites that have not chosen. */
+    public function defaultWafMode(): string
+    {
+        $mode = $this->settings->get('waf_default', 'detect');
+
+        return \in_array($mode, ['off', 'detect', 'block'], true) ? (string) $mode : 'detect';
     }
 
     /**
@@ -295,6 +351,10 @@ final class SiteFeatures
             'error_pages' => (object) $domain['error_pages'],
             'protected' => \array_map(static fn(array $p): array => ['path' => (string) $p['path'], 'realm' => (string) $p['realm'], 'users' => $p['users']], $this->protected($id)),
             'hotlink' => $domain['hotlink'],
+            'waf' => [
+                'mode' => ($domain['waf']['mode'] ?? 'default') === 'default' ? $this->defaultWafMode() : (string) $domain['waf']['mode'],
+                'exclude' => \array_values($domain['waf']['exclude'] ?? []),
+            ],
         ];
     }
 

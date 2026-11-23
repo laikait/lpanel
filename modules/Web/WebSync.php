@@ -86,6 +86,25 @@ final class WebSync
     }
 
     /**
+     * Bring every account's sites in step (a setting for all sites changed).
+     *
+     * @return array<string, int> outcome => count
+     */
+    public function touchAll(): array
+    {
+        $counts = [];
+
+        foreach ([Accounts::ACTIVE, Accounts::SUSPENDED] as $status) {
+            foreach ($this->connections->connection()->table('accounts')->where('status', $status)->get() as $account) {
+                $outcome = $this->touch((int) $account['id']);
+                $counts[$outcome->status] = ($counts[$outcome->status] ?? 0) + 1;
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
      * Send every recorded state the agent has not answered yet, and bring in
      * accounts that have no web state at all (made before this module).
      *

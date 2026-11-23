@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -37,6 +38,9 @@ func (m *Manager) renderInclude(sites string) []byte {
 		b.WriteString("# Certificate checks (HTTP-01): every site answers them from here.\n")
 		fmt.Fprintf(&b, "<Directory \"%s\">\n    Options None\n    AllowOverride None\n    Require all granted\n    ForceType text/plain\n</Directory>\n\n", m.Challenges)
 	}
+	// The firewall's strictness, read before the Core Rule Set is (this file
+	// comes before the package's own in the configuration folder).
+	fmt.Fprintf(&b, "<IfModule security2_module>\n    IncludeOptional \"%s\"\n</IfModule>\n\n", filepath.Join(filepath.Dir(m.Sites), "waf.conf"))
 	b.WriteString("<IfDefine !LPANEL_SITES>\n    Define LPANEL_SITES " + sites + "\n</IfDefine>\n\n")
 	b.WriteString("# The first site answers names that no account serves: a 404,\n")
 	b.WriteString("# never some customer's site.\n")
@@ -176,6 +180,7 @@ func (m *Manager) apacheSite(b *strings.Builder, a ApplyArgs, s Site, home strin
 	root := home + "/" + s.Docroot
 	fmt.Fprintf(b, "    DocumentRoot \"%s\"\n", root)
 	renderFeatures(b, s)
+	renderWAF(b, s)
 	fmt.Fprintf(b, "    <Directory \"%s\">\n", root)
 	b.WriteString("        Options -Indexes +SymLinksIfOwnerMatch\n")
 	// .htaccess works, but cannot turn on following any link or

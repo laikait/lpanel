@@ -54,6 +54,7 @@ final class SiteCommands
             'www' => 'www.' . $row['name'], 'bare' => $row['name'], default => 'either'
         });
         $output->line('  wildcard   ' . ($row['wildcard'] ? 'yes' : 'no'));
+        $output->line('  firewall   ' . (string) ($row['waf']['mode'] ?? 'default') . (\count($row['waf']['exclude'] ?? []) > 0 ? ' (without rules ' . \implode(' ', $row['waf']['exclude']) . ')' : ''));
         $output->line('  hotlink    ' . ($row['hotlink'] === null ? 'off' : 'on: ' . \implode(',', $row['hotlink']['extensions']) . ($row['hotlink']['allow'] === [] ? '' : ' (also ' . \implode(',', $row['hotlink']['allow']) . ')')));
 
         foreach ($row['error_pages'] as $code => $page) {
@@ -109,6 +110,21 @@ final class SiteCommands
         $pages[$code] = $page ?? '';
 
         return $this->report($output, $this->actions->errorPages($this->root(), null, $account, $row, $pages), $page === null ? "{$code} shows the standard page." : "{$code} shows {$page}.");
+    }
+
+    /** The site's web application firewall: --mode default|off|detect|block, --exclude rule numbers. */
+    public function waf(Output $output, string $username, string $domain, ?string $mode = null, ?string $exclude = null): int
+    {
+        [$account, $row] = $this->find($output, $username, $domain);
+
+        if ($row === null) {
+            return 1;
+        }
+
+        $mode ??= (string) ($row['waf']['mode'] ?? 'default');
+        $exclude ??= \implode(',', $row['waf']['exclude'] ?? []);
+
+        return $this->report($output, $this->actions->waf($this->root(), null, $account, $row, $mode, $exclude), 'The firewall is set to ' . $mode . '.');
     }
 
     public function hotlink(Output $output, string $username, string $domain, ?string $extensions = null, ?string $allow = null, bool $off = false): int

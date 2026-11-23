@@ -1,0 +1,108 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Security.bf_title'|local }}</h1>
+        <p>{{ 'Security.bf_lead'|local }}</p>
+    </div>
+    <a class="btn" href="{{ deny_url }}">{{ icon('shield') }}{{ 'Security.bf_open_firewall'|local }}</a>
+</div>
+
+{% if overview.missing %}
+    <div class="alert alert-info">{{ icon('info') }}<p>{{ 'Security.bf_missing'|local({names: overview.missing|join(', ')}) }}</p></div>
+{% endif %}
+
+<div class="mb-6 grid gap-5 sm:grid-cols-3">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('lock') }}</span>
+        <div>
+            <div class="stat-label">{{ 'Security.bf_tile_state'|local }}</div>
+            <div class="stat-value"><span class="badge {{ settings.enabled ? 'ok' : 'plain' }}">{{ (settings.enabled ? 'Security.bf_on' : 'Security.bf_off')|local }}</span></div>
+            <div class="stat-sub">{{ settings.threshold }} / {{ settings.window }} min · {{ ('Security.fw_for_' ~ settings.duration)|local }}</div>
+        </div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('alert') }}</span>
+        <div><div class="stat-label">{{ 'Security.bf_tile_failures'|local }}</div><div class="stat-value">{{ overview.failures_hour }}</div><div class="stat-sub">{{ 'Security.bf_tile_failures_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('shield') }}</span>
+        <div><div class="stat-label">{{ 'Security.bf_tile_bans'|local }}</div><div class="stat-value">{{ overview.bans_day }}</div><div class="stat-sub">{{ 'Security.bf_tile_bans_sub'|local }}</div></div>
+    </div>
+</div>
+
+<div class="grid grid-side" style="margin-bottom:20px;align-items:start">
+    <div style="display:grid;gap:20px">
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Security.bf_latest'|local }}</h2><p>{{ 'Security.bf_latest_lead'|local }}</p></div></div>
+            {% if overview.bans is empty %}
+                <div class="empty">{{ icon('shield') }}<h3>{{ 'Security.bf_latest_none'|local }}</h3><p>{{ 'Security.bf_latest_none_text'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table">
+                <tbody>
+                {% for b in overview.bans %}
+                    <tr>
+                        <td>
+                            <strong class="mono">{{ b.cidr }}</strong>
+                            <div class="domain-sub">{{ 'Security.bf_failed'|local({n: b.failures}) }} · {% for s in b.services|split(',') %}{{ ('Security.bf_service_' ~ s)|local }}{% if not loop.last %}, {% endif %}{% endfor %}</div>
+                        </td>
+                        <td class="hide-sm"><span class="badge warn">{{ 'Security.bf_for'|local({for: ('Security.fw_for_' ~ b.duration)|local|lower}) }}</span></td>
+                        <td style="text-align:end" class="domain-sub">{{ b.banned_at[:16] }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Security.bf_busiest'|local }}</h2><p>{{ 'Security.bf_busiest_lead'|local }}</p></div></div>
+            {% if overview.top is empty %}
+                <div class="empty">{{ icon('check') }}<h3>{{ 'Security.bf_busiest_none'|local }}</h3><p>{{ 'Security.bf_busiest_none_text'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table">
+                <tbody>
+                {% for t in overview.top %}
+                    <tr>
+                        <td><strong class="mono">{{ t.ip }}</strong></td>
+                        <td>{% for s in t.services %}<span class="badge plain" style="margin-inline-end:4px">{{ ('Security.bf_service_' ~ s)|local }}</span>{% endfor %}</td>
+                        <td style="text-align:end">{{ 'Security.bf_failed'|local({n: t.count}) }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table></div>
+            {% endif %}
+        </section>
+    </div>
+
+    <form class="card" method="post" action="{{ save_url }}">
+        <div class="card-head"><div><h2>{{ 'Security.bf_settings'|local }}</h2><p>{{ 'Security.bf_settings_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label class="inline-flex items-center gap-2"><input type="checkbox" name="enabled" value="1"{% if settings.enabled %} checked{% endif %}>{{ 'Security.bf_enabled'|local }}</label>
+            </div>
+            <div class="grid grid-2">
+                <div class="field">
+                    <label for="bf-threshold">{{ 'Security.bf_threshold'|local }}</label>
+                    <input class="input" id="bf-threshold" name="threshold" type="number" min="3" max="1000" value="{{ settings.threshold }}" required>
+                </div>
+                <div class="field">
+                    <label for="bf-window">{{ 'Security.bf_window'|local }}</label>
+                    <input class="input" id="bf-window" name="window" type="number" min="1" max="1440" value="{{ settings.window }}" required>
+                </div>
+            </div>
+            <div class="hint" style="margin:-6px 0 14px">{{ 'Security.bf_threshold_hint'|local }} {{ 'Security.bf_window_hint'|local }}</div>
+            <div class="field">
+                <label for="bf-duration">{{ 'Security.bf_duration'|local }}</label>
+                <select class="input" id="bf-duration" name="duration">
+                    {% for d in ladder %}<option value="{{ d }}"{% if d == settings.duration %} selected{% endif %}>{{ ('Security.fw_for_' ~ d)|local }}</option>{% endfor %}
+                </select>
+                <div class="hint">{{ 'Security.bf_duration_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Security.bf_save'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

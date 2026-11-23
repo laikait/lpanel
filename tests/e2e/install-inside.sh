@@ -1439,6 +1439,76 @@ t_fw_off()      { lpanel firewall:status > /tmp/fw1.out 2>&1; grep -q "no firewa
                   && [ "$(mariadb -uroot -N lpanel -e "select count(*) from firewall_entries")" = 0 ]; }
 check "the firewall manager says a server without firewalld has none, and keeps nothing" t_fw_off
 
+# Brute-force blocking reads the agent's view of the logs. A container has no
+# firewalld, so nothing can be blocked here, but the real agent op, the
+# cursor round trip and the counting are all exercised.
+t_bf_read() {
+    touch /var/log/secure && chmod 600 /var/log/secure \
+        && lpanel bruteforce:scan > /tmp/bf1.out 2>&1 || { cat /tmp/bf1.out; return 1; }
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        echo "Nov 24 10:00:0$((i % 10)) e2e sshd[400$i]: Failed password for root from 198.51.100.9 port 40$i ssh2" >> /var/log/secure
+    done
+    echo "Nov 24 10:00:09 e2e sshd[4100]: Failed password for root from 127.0.0.1 port 41 ssh2" >> /var/log/secure
+    echo "Nov 24 10:00:09 e2e sshd[4101]: Accepted password for root from 198.51.100.77 port 42 ssh2" >> /var/log/secure
+    lpanel bruteforce:scan > /tmp/bf2.out 2>&1
+    lpanel bruteforce:scan > /tmp/bf3.out 2>&1
+    [ "$(mariadb -uroot -N lpanel -e "select coalesce(sum(\`count\`),0) from bruteforce_failures where ip='198.51.100.9' and service='ssh'")" = 10 ] \
+        && [ "$(mariadb -uroot -N lpanel -e "select count(*) from bruteforce_failures where ip<>'198.51.100.9'")" = 0 ]
+}
+t_bf_status() {
+    lpanel bruteforce:status > /tmp/bf4.out 2>&1 && grep -q "Blocking is on: 10 failed sign-ins within 10 minutes" /tmp/bf4.out \
+        && grep -q "198.51.100.9" /tmp/bf4.out
+}
+t_bf_page() {
+    curl -sk -o /dev/null -w '%{http_code}' https://127.0.0.1:7443/admin/security/bruteforce | grep -q '^\(302\|200\)$'
+}
+check "brute-force blocking counts each failed sign-in in the logs once, from the real agent" t_bf_read
+check "brute-force status shows the limit and the busiest address" t_bf_status
+check "the brute-force page is served" t_bf_page
+
+# The web application firewall (ModSecurity with the Core Rule Set) lives in
+# Apache, so on the apache and hybrid stacks the real thing is tried: an
+# attack gets a 403 in block mode, goes through in log-only mode, and the
+# agent reads what the rules said from the account's error log.
+t_waf_status() {
+    lpanel waf:status > /tmp/waf1.out 2>&1
+    case "$WEB" in
+        nginx) grep -q "nginx alone" /tmp/waf1.out ;;
+        *)     grep -q "ModSecurity is loaded, Core Rule Set" /tmp/waf1.out ;;
+    esac
+}
+check "the firewall manager knows whether this stack has ModSecurity" t_waf_status
+case "$WEB" in
+    apache|hybrid)
+        ATTACK="/?q=%3Cscript%3Ealert(1)%3C/script%3E&id=1%20union%20select%20password%20from%20users--"
+        wafcode() { curl -s -o /dev/null -w '%{http_code}' -H 'Host: shop.example.test' "http://127.0.0.1$1"; }
+        t_waf_block() {
+            lpanel domains:waf shop1 shop.example.test --mode=block > /tmp/waf2.out 2>&1 || { cat /tmp/waf2.out; return 1; }
+            lpanel waf:scan > /tmp/waf3.out 2>&1
+            [ "$(wafcode "$ATTACK")" = 403 ] && [ "$(wafcode /)" != 403 ]
+        }
+        t_waf_detect() {
+            lpanel domains:waf shop1 shop.example.test --mode=detect > /tmp/waf4.out 2>&1 || { cat /tmp/waf4.out; return 1; }
+            [ "$(wafcode "$ATTACK")" != 403 ]
+        }
+        t_waf_off() {
+            lpanel domains:waf shop1 shop.example.test --mode=off > /tmp/waf5.out 2>&1 || return 1
+            [ "$(wafcode "$ATTACK")" != 403 ]
+        }
+        t_waf_events() {
+            lpanel domains:waf shop1 shop.example.test --mode=default > /tmp/waf6.out 2>&1 || return 1
+            sleep 1
+            lpanel waf:scan > /tmp/waf7.out 2>&1 || { cat /tmp/waf7.out; return 1; }
+            [ "$(mariadb -uroot -N lpanel -e "select count(*) from waf_events where host='shop.example.test' and blocked=1 and rules like '%\"id\":94%'")" -ge 1 ] \
+                && [ "$(mariadb -uroot -N lpanel -e "select count(*) from waf_events where host='shop.example.test' and blocked=0")" -ge 1 ]
+        }
+        check "an attack gets a 403 in block mode, a normal request does not" t_waf_block
+        check "in log-only mode the same attack goes through" t_waf_detect
+        check "with the firewall off it goes through too" t_waf_off
+        check "the agent reads the rules' log: one refused request, one only logged" t_waf_events
+        ;;
+esac
+
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"
 t_switched() {

@@ -252,6 +252,55 @@
             </div>
             <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button></div>
         </form>
+
+
+        {# ---- Web application firewall --------------------------------------- #}
+        {% set w = d.waf %}
+        {% set wmode = form == 'waf' ? o.mode|default('default') : (w.mode|default('default')) %}
+        <form class="card" id="waf" method="post" action="{{ urls.waf }}">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="card-head">
+                <div><h2>{{ 'Web.waf_site'|local }}</h2><p>{{ 'Web.waf_site_lead'|local }}</p></div>
+                {% set shown = wmode == 'default' ? waf_default : wmode %}
+                <span class="badge {{ shown == 'block' ? 'ok' : (shown == 'detect' ? 'warn' : 'plain') }}">{{ ('Web.waf_mode_' ~ shown)|local }}</span>
+            </div>
+            <div class="card-body">
+                <div class="field">
+                    <label for="w-mode">{{ 'Web.waf_mode'|local }}</label>
+                    <select class="input{{ _self.bad('waf', 'mode', form, errors) }}" id="w-mode" name="mode">
+                        <option value="default"{% if wmode == 'default' %} selected{% endif %}>{{ 'Web.waf_site_default'|local({mode: ('Web.waf_mode_' ~ waf_default)|local|lower}) }}</option>
+                        {% for m in ['off', 'detect', 'block'] %}<option value="{{ m }}"{% if wmode == m %} selected{% endif %}>{{ ('Web.waf_mode_' ~ m)|local }}</option>{% endfor %}
+                    </select>
+                </div>
+                {{ _self.err('waf', 'mode', form, errors) }}
+                <div class="field" style="margin:0">
+                    <label for="w-exclude">{{ 'Web.waf_exclude'|local }} <span class="muted">({{ 'Web.optional'|local }})</span></label>
+                    <input class="input mono{{ _self.bad('waf', 'exclude', form, errors) }}" id="w-exclude" name="exclude" value="{{ form == 'waf' ? o.exclude|default('') : (w ? w.exclude|join(', ') : '') }}" placeholder="942100, 941160" autocapitalize="none" spellcheck="false">
+                    {{ _self.err('waf', 'exclude', form, errors) }}
+                    <div class="hint">{{ 'Web.waf_exclude_hint'|local }}</div>
+                </div>
+            </div>
+            {% if waf_events %}
+            <div class="table-wrap" style="border-top:1px solid var(--border)">
+                <div class="card-body" style="padding-bottom:0"><strong>{{ 'Web.waf_site_events'|local }}</strong></div>
+                <table class="table">
+                    <tbody>
+                    {% for e in waf_events %}
+                        <tr>
+                            <td>
+                                <span class="mono">{{ e.uri }}</span>
+                                <div class="domain-sub">{{ e.ip }} · {{ e.seen_at[:16] }} UTC · {{ 'Web.waf_score'|local({n: e.score}) }}</div>
+                                <div class="domain-sub">{% for r in e.rules %}<span title="{{ r.msg }}">{{ 'Web.waf_rule'|local({id: r.id}) }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</div>
+                            </td>
+                            <td style="text-align:end"><span class="badge {{ e.blocked ? 'bad' : 'plain' }}">{{ (e.blocked ? 'Web.waf_refused' : 'Web.waf_logged')|local }}</span></td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('check') }}{{ 'Web.save'|local }}</button></div>
+        </form>
     </div>
 
     <div class="stack">

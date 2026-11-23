@@ -66,6 +66,37 @@ final class Cidr
         return [$bits === $max ? $out : $out . '/' . $bits, null];
     }
 
+    /** Whether an address (or network) lies inside a network, both as normalize() writes them. */
+    public static function contains(string $network, string $address): bool
+    {
+        $a = \explode('/', $network, 2);
+        $b = \explode('/', $address, 2);
+        $net = @\inet_pton($a[0]);
+        $ip = @\inet_pton($b[0]);
+
+        if ($net === false || $ip === false || \strlen($net) !== \strlen($ip)) {
+            return false;
+        }
+
+        $bits = isset($a[1]) ? (int) $a[1] : \strlen($net) * 8;
+
+        // The inner network must be at least as narrow as the outer one.
+        if (isset($b[1]) && (int) $b[1] < $bits) {
+            return false;
+        }
+
+        for ($i = 0; $i < \strlen($net); $i++) {
+            $keep = \max(0, \min(8, $bits - $i * 8));
+            $mask = (0xFF << (8 - $keep)) & 0xFF;
+
+            if ((\ord($net[$i]) & $mask) !== (\ord($ip[$i]) & $mask)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     /** @return list<string> the addresses and networks in a text, one per line or comma-separated */
     public static function split(string $text): array
     {
