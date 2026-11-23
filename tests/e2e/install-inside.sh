@@ -92,7 +92,7 @@ check "the Admin panel sign-in page" bash -c 'curl -ksf https://127.0.0.1:7443/a
 check "the User panel sign-in page" bash -c 'curl -ksf https://127.0.0.1:7444/panel/login | grep -q "User panel"'
 check "7443 does not serve the User panel" bash -c '[ "$(status https://127.0.0.1:7443/panel/login)" = 404 ]'
 check "7444 does not serve the Admin panel" bash -c '[ "$(status https://127.0.0.1:7444/admin/login)" = 404 ]'
-check "module assets are served" bash -c 'curl -ksfI https://127.0.0.1:7443/assets/module/Panel/css/panel.css | grep -qi "content-type: text/css"'
+check "template assets are served (both panels)" bash -c 'curl -ksfI https://127.0.0.1:7443/assets/template/admin/nova/css/app.css | grep -qi "content-type: text/css" && curl -ksfI https://127.0.0.1:7444/assets/template/user/nova/css/app.css | grep -qi "content-type: text/css"'
 for path in composer.json .env vendor/autoload.php engine/Core/Application.php modules/Identity/module.php laika; do
     check "/$path cannot be downloaded" bash -c "! curl -ks https://127.0.0.1:7443/$path | grep -qE 'APP_KEY|\"require\"|<\?php'"
 done
@@ -176,14 +176,14 @@ post() { # page-with-the-form url field=value... -> status and Location
 t_both_in()   { rm -f $both
                 post https://127.0.0.1:7443/admin/login https://127.0.0.1:7443/admin/login username=root "password=$ROOT_PASSWORD" >/dev/null
                 post https://127.0.0.1:7444/panel/login https://127.0.0.1:7444/panel/login username=shop1 password=Owner-Pass-Word-1 >/dev/null
-                curl -ks -b $both https://127.0.0.1:7443/admin | grep -q "Welcome, root" && curl -ks -b $both https://127.0.0.1:7444/panel | grep -q "shop.example.test"; }
+                curl -ks -b $both https://127.0.0.1:7443/admin | grep -q "Welcome back, root" && curl -ks -b $both https://127.0.0.1:7444/panel | grep -q "shop.example.test"; }
 t_two_cookies() { grep -q lpanel_admin $both && grep -q lpanel_user $both; }
 SHOP1_LOGIN=$(mariadb -uroot -N lpanel -e "select login_id from accounts where username='shop1'")
 t_login_as()  { local out; out=$(post https://127.0.0.1:7443/admin "https://127.0.0.1:7443/admin/login-as/$SHOP1_LOGIN"); echo "$out"
                 [[ "$out" == "303 https://127.0.0.1:7444/panel/login-as?ticket="* ]] || return 1
                 curl -ks -b $both -c $both -o /dev/null "${out#303 }"
                 curl -ks -b $both https://127.0.0.1:7444/panel | grep -q "You are signed in as shop1. You are really root"; }
-t_still_root() { curl -ks -b $both https://127.0.0.1:7443/admin | grep -q "Welcome, root"; }
+t_still_root() { curl -ks -b $both https://127.0.0.1:7443/admin | grep -q "Welcome back, root"; }
 t_on_behalf() { [ "$(mariadb -uroot -N lpanel -e "select count(*) from audit_log where action='auth.login_as' and actor_name='root' and subject='shop1'")" = 1 ]; }
 check "one browser is signed in to both interfaces at once" t_both_in
 check "each interface has its own session cookie" t_two_cookies
@@ -562,7 +562,8 @@ t_pma_closed() { [ "$(status https://127.0.0.1:7444/phpmyadmin/config.inc.php)" 
                  && [ "$(status https://127.0.0.1:7443/phpmyadmin/)" != 200 ] && [ "$(curl -ks -o /dev/null -w '%{redirect_url}' https://127.0.0.1:7444/phpmyadmin/index.php)" = https://127.0.0.1:7444/panel/databases ]; }
 t_pma_apart()  { [ "$(stat -c '%a %U %G' /var/lib/lpanel-pma/tickets)" = "2770 lpanel lpanel-pma" ] && ! runuser -u lpanel-pma -- cat /usr/local/lpanel/.env 2>/dev/null \
                  && ! runuser -u lpanel -- cat /usr/local/lpanel-pma/phpmyadmin/config.inc.php 2>/dev/null && ps -o user:20= -C php-fpm | grep -qx lpanel-pma; }
-t_db_page()    { curl -ks -b /tmp/jar2 https://127.0.0.1:7444/panel/databases | grep -q 'shop1_app' && curl -ks -b $jar https://127.0.0.1:7443/admin/databases | grep -q 'shop1_shop'; }
+t_db_page()    { curl -ks -b /tmp/jar2 -o /tmp/dbp1.html https://127.0.0.1:7444/panel/databases && curl -ks -b $jar -o /tmp/dbp2.html https://127.0.0.1:7443/admin/databases \
+                 && grep -q 'shop1_app' /tmp/dbp1.html && grep -q 'shop1_shop' /tmp/dbp2.html; }
 t_db_drop()    { lpanel db:user-drop shop1 app && lpanel db:drop shop1 shop && ! mariadb -uroot -N -e "show databases like 'shop1\_%'" | grep -q . \
                  && ! mariadb -uroot -N -e "select user from mysql.user where user like 'shop1\_%'" | grep -q .; }
 t_db_terminate() { echo "Owner-Pass-Word-6" | lpanel accounts:create shop6 six.example.test Starter >/dev/null && lpanel db:create shop6 gone && echo "$DBPW" | lpanel db:user-create shop6 app --grant=gone \
@@ -1429,6 +1430,14 @@ check "the API browses a snapshot and refuses a path out of the home" t_rs_api
 check "another server's repository opens with its password, and shows its accounts" t_rs_moved
 check "a terminated account is made again from its backup: site, database, mail, owner's login, reseller" t_rs_recreate
 check "restores are in the audit log" t_rs_audit
+
+# A container has no firewalld, so the firewall manager must say so and change nothing;
+# on a real server it works on firewalld (tried by hand, see design/ROADMAP.md M9a).
+t_fw_off()      { lpanel firewall:status > /tmp/fw1.out 2>&1; grep -q "no firewalld" /tmp/fw1.out \
+                  && { lpanel firewall:deny 198.51.100.9 > /tmp/fw2.out 2>&1; [ $? = 1 ]; } && grep -q "no firewalld" /tmp/fw2.out \
+                  && { lpanel firewall:deny rubbish > /tmp/fw3.out 2>&1; [ $? = 1 ]; } && grep -q "not an IPv4 or IPv6" /tmp/fw3.out \
+                  && [ "$(mariadb -uroot -N lpanel -e "select count(*) from firewall_entries")" = 0 ]; }
+check "the firewall manager says a server without firewalld has none, and keeps nothing" t_fw_off
 
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"

@@ -142,6 +142,10 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `ftp.settings` | change | `{tls, passive_from, passive_to, passive_ip, max_clients, max_per_ip}`: `pure-ftpd.conf`, whole; Pure-FTPd restarts, and the old file comes back if it will not start |
 | `ftp.info` | read-only | Pure-FTPd's state and version, the logins, the settings applied and every session with its account |
 | `ftp.kill` | change | `{pid, username?}`: end one session listed by `pure-ftpwho` (with `username`, only one of that account's) |
+| `firewall.info` | read-only | firewalld's state, the zones, the open ports (and which service opens each), the allow and deny lists, the blocked countries and what is cached |
+| `firewall.port` | change | `{action: open\|close, port, proto, sources?, protect?}`: open a port, limit it to some addresses, or close it |
+| `firewall.lists` | change | `{allow, deny, protect?}`: the allow list and the deny list, whole |
+| `firewall.countries` | change | `{codes, refresh?, protect?}`: the countries blocked, whole; their lists are fetched when missing |
 | `backup.destination` | change | `{id, type, path \| host, port, user \| endpoint, scheme, region, bucket, prefix, access_key?, secret_key?}`: checks a destination, keeps it with its secrets (empty secrets keep the ones there) and makes its repository with a new random password; a destination that does not answer is not kept |
 | `backup.destination_remove` | change | `{id}`: forgets a destination and its password; what was backed up stays there |
 | `backup.run` | change, background | `{destination, accounts: [{username, meta}], keep: {daily, weekly, monthly}, prune}`: one snapshot per account (home without `tmp/`, a dump of each of its databases, `meta` as `lpanel.json`), then that account's retention; one run at a time |
@@ -549,6 +553,36 @@ snapshot (`restic dump`) into `mariadb` as root; only the account's own
 (by prefix). One restore or download at a time (`backup_busy`).
 `backup.download` writes into `lpanel-backups/` (0700, the owner's) the same
 way.
+
+### Firewall (`firewall.*`)
+
+M9a manages firewalld (lpa.json `"firewall": "on"`, set by the installer when
+firewalld runs). What the panel keeps in `/var/lib/lpa/firewall/state.json`
+(the lists and countries) the agent turns into six firewalld IP sets
+(`/etc/firewalld/ipsets/lpanel-{allow,deny,cc}[6].xml`, one per family) and
+six rich rules in the default zone and every active zone, which point at them
+with priorities: the allow list accepts (-300), the deny list drops (-200),
+the blocked countries drop (-100); all run before the zone's port rules. The
+files are rewritten whole, firewalld is reloaded only when one changed, so
+the same call twice does nothing.
+
+Ports are changed in the default zone (permanent, then `--reload`). Services
+the installer opened (`ssh`, `http`...) are read for their ports; changing
+one of a service's ports takes the service out and opens its other ports
+one by one, so nothing else is lost. A limited port is a rich rule per
+address (IPv4 and IPv6) instead of the plain port.
+
+Guards: ports 22, 7443 and 7444 (`Keep`) can be limited to addresses but
+never closed. Every list entry is checked (a network no wider than /8 for
+IPv4 and /16 for IPv6; never the loopback, never `0.0.0.0/0`). `protect`
+names addresses that must stay reachable (the administrator's own, from the
+panel): a deny list or a blocked country that holds one (unless the allow
+list names it), or a limit on a kept port that leaves it out, is refused
+with `firewall_lockout`. Country lists come from ipdeny.com (HTTPS only, that
+host only, at most 4 MB, every line a network of the right family, or the
+list is not kept); a country that cannot be fetched changes nothing. Error
+codes: `firewall_off`, `firewall_kept`, `firewall_lockout`, `firewall_fetch`,
+`firewall_toomany`.
 
 ### SSH and SFTP (`ssh.apply`, `cmd/lpanel-jail`)
 

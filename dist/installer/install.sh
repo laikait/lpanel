@@ -668,7 +668,11 @@ if systemctl is-active --quiet firewalld; then
         --add-service=ftp --add-service=ssh
     firewall-cmd -q --permanent --add-port=7443/tcp --add-port=7444/tcp --add-port=30000-30100/tcp
     firewall-cmd -q --reload
-    note "firewalld: 7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS), mail (25, 465, 587, 143, 993, 110, 995), FTP (21, 30000-30100) and SSH (22) open"
+    # The Admin panel's firewall manager works through firewalld.
+    $PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
+        $c["firewall"] = "on";
+        file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+    note "firewalld:7443 and 7444 (the panel), 80 and 443 (sites), 53 (DNS), mail (25, 465, 587, 143, 993, 110, 995), FTP (21, 30000-30100) and SSH (22) open"
 fi
 
 step "Database tables"

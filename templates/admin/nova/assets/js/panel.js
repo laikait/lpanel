@@ -4,7 +4,7 @@
 const root = document.documentElement;
 
 // Theme: the server renders data-theme from the lp_theme cookie, so the
-// chosen theme is there on the first paint. "auto" follows the system.
+// chosen theme is there on the first paint. Light unless the visitor chose dark.
 function currentTheme() {
     const set = root.getAttribute('data-theme');
     if (set === 'light' || set === 'dark') return set;
@@ -350,5 +350,14 @@ document.querySelectorAll('[data-drop-upload]').forEach((zone) => {
         if (!event.dataTransfer.files.length) return;
         input.files = event.dataTransfer.files;
         form.requestSubmit();
+    });
+});
+
+// A search box that hides the items it does not match: <input data-filter=".item">.
+document.querySelectorAll('input[data-filter]').forEach((input) => {
+    const items = document.querySelectorAll(input.dataset.filter);
+    input.addEventListener('input', () => {
+        const q = input.value.trim().toLowerCase();
+        items.forEach((el) => { el.hidden = q !== '' && !el.textContent.toLowerCase().includes(q); });
     });
 });

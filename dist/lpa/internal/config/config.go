@@ -54,6 +54,9 @@ type Config struct {
 	// FTP is "on" when the installer set up Pure-FTPd; "off" turns the FTP
 	// operations off.
 	FTP string `json:"ftp"`
+	// Firewall is "on" when firewalld runs on this server; "off" turns the
+	// firewall operations off.
+	Firewall string `json:"firewall"`
 	// FilesStaging is the panel's folder for the file manager's uploads,
 	// saved files and downloads; the agent opens files in it by name only.
 	FilesStaging string `json:"files_staging"`
@@ -94,6 +97,7 @@ func Defaults() Config {
 		PanelPHP:     "83",
 		Mail:         "off",
 		FTP:          "off",
+		Firewall:     "off",
 		FilesStaging: "/var/lib/lpanel/files",
 		ACME: ACME{
 			LetsEncrypt: "https://acme-v02.api.letsencrypt.org/directory",
@@ -143,6 +147,9 @@ func (c Config) validate() error {
 	}
 	if c.FTP != "on" && c.FTP != "off" {
 		return fmt.Errorf("ftp must be \"on\" or \"off\", not %q", c.FTP)
+	}
+	if c.Firewall != "on" && c.Firewall != "off" {
+		return fmt.Errorf("firewall must be \"on\" or \"off\", not %q", c.Firewall)
 	}
 	if c.Mail != "on" && c.Mail != "off" {
 		return fmt.Errorf("mail must be \"on\" or \"off\", not %q", c.Mail)

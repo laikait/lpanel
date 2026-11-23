@@ -3,7 +3,7 @@
  * (dist/themes/build.sh) into ../css/app.css, which is committed.
  *
  *   base.css   the shell and components every page uses (token driven)
- *   nova.css   nova's look: navy sidebar, blue accent, rounded cards
+ *   nova.css   nova's look: white sidebar, blue accent, rounded cards
  *
  * Utilities come from Tailwind, scanned from this template's .twig files.
  * No preflight: base.css has its own resets.

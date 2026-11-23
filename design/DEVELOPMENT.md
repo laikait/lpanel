@@ -63,6 +63,7 @@ utilities.
 |---|---|
 | `Shared` | DataSource binding, `/health` |
 | `Panel` | `PanelPage` (renders each page in its panel's template), the chart helpers, dashboards, the `panel.nav`, `panel.dashboard` and `panel.attention` filters; the templates themselves are in `templates/admin/<name>` and `templates/user/<name>` |
+| `Security` | the firewall (M9a): `Firewall` (every change goes to the agent first, with the administrator's address as `protect`), `Entries` (the allow and deny lists, countries), the Admin page, API and `firewall:*` commands; brute-force blocking, ModSecurity and isolation follow |
 | `Audit` | `audit_log`, `AuditLog::record()`, audit pages, sign-in failure listeners |
 | `Identity` | `panel_users`, sign-in/out, two-factor, root via authd, staff, tiers and roles (all role lists live here), API tokens |
 | `Agent` | `AgentClient` (signed requests to lpa), `AgentKey`, `agent:*` commands, the server card |

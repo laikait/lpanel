@@ -1,0 +1,223 @@
+{% extends "layout.twig" %}
+
+{# One list card: the allow list or the deny list, with its add form. #}
+{% macro list_card(list, rows, urls, durations, token, mine) %}
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>{{ ('Security.fw_' ~ list ~ '_title')|local }}</h2>
+            <p>{{ ('Security.fw_' ~ list ~ '_lead')|local }}</p>
+        </div>
+    </div>
+    {% if rows is empty %}
+        <div class="empty">{{ icon(list == 'allow' ? 'check' : 'shield') }}<h3>{{ ('Security.fw_none_' ~ list)|local }}</h3><p>{{ ('Security.fw_none_' ~ list ~ '_text')|local }}</p></div>
+    {% else %}
+        <div class="table-wrap"><table class="table">
+            <tbody>
+            {% for e in rows %}
+                <tr>
+                    <td>
+                        <strong class="mono">{{ e.cidr }}</strong>
+                        {% if e.note %}<div class="domain-sub">{{ e.note }}</div>{% endif %}
+                    </td>
+                    <td class="hide-sm">
+                        {% if list == 'deny' %}
+                            {% if e.expires_at %}<span class="badge warn">{{ 'Security.fw_ends'|local({when: e.expires_at[:16]}) }}</span>{% else %}<span class="badge plain">{{ 'Security.fw_forever'|local }}</span>{% endif %}
+                            {% if e.source == 'bruteforce' %}<div class="domain-sub">{{ 'Security.fw_from_bruteforce'|local }}</div>{% endif %}
+                        {% endif %}
+                    </td>
+                    <td style="text-align:end">
+                        <form class="inline-form" method="post" action="{{ e.delete_url }}" data-confirm="{{ 'Security.fw_confirm_remove'|local({address: e.cidr}) }}">
+                            <input type="hidden" name="_token" value="{{ token }}">
+                            <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Security.fw_remove_name'|local({address: e.cidr}) }}">{{ icon('trash') }}</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+    {% endif %}
+    <form method="post" action="{{ urls.entries }}">
+        <div class="card-body" style="border-top:1px solid var(--border)">
+            <input type="hidden" name="_token" value="{{ token }}">
+            <input type="hidden" name="list" value="{{ list }}">
+            <div class="field">
+                <label for="addr-{{ list }}">{{ 'Security.fw_address'|local }}</label>
+                <textarea class="input mono" id="addr-{{ list }}" name="address" rows="2" autocomplete="off" spellcheck="false" placeholder="{{ list == 'allow' ? mine|default('203.0.113.7') : '198.51.100.0/24' }}" required></textarea>
+                <div class="hint">{{ 'Security.fw_address_hint'|local }}</div>
+            </div>
+            <div class="grid grid-2">
+                <div class="field">
+                    <label for="note-{{ list }}">{{ 'Security.fw_note'|local }}</label>
+                    <input class="input" id="note-{{ list }}" name="note" maxlength="120" autocomplete="off">
+                </div>
+                {% if list == 'deny' %}
+                <div class="field">
+                    <label for="for-{{ list }}">{{ 'Security.fw_for'|local }}</label>
+                    <select class="input" id="for-{{ list }}" name="duration">
+                        {% for d in durations %}<option value="{{ d }}"{% if d == 'never' %} selected{% endif %}>{{ ('Security.fw_for_' ~ d)|local }}</option>{% endfor %}
+                    </select>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon(list == 'allow' ? 'check' : 'shield') }}{{ ('Security.fw_add_' ~ list)|local }}</button></div>
+    </form>
+</section>
+{% endmacro %}
+
+{% block content %}
+{% set running = info and info.running %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Security.fw_title'|local }}</h1>
+        <p>{{ 'Security.fw_lead'|local }}</p>
+    </div>
+</div>
+
+{% if info is null %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Security.fw_error_unreachable'|local }}</p></div>
+{% elseif not info.enabled %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Security.fw_error_off'|local }}</p></div>
+{% elseif not info.running %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Security.fw_not_running'|local }}</p></div>
+{% elseif not info.rules %}
+    <div class="alert alert-info">{{ icon('info') }}<p>{{ 'Security.fw_rules_missing'|local }}</p></div>
+{% endif %}
+
+<div class="mb-6 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('shield') }}</span>
+        <div>
+            <div class="stat-label">firewalld</div>
+            <div class="stat-value">{% if running %}<span class="badge ok">{{ 'Security.fw_running'|local }}</span>{% elseif info %}<span class="badge bad">{{ 'Security.fw_stopped'|local }}</span>{% else %}—{% endif %}</div>
+            <div class="stat-sub">{% if running %}{{ 'Security.fw_version'|local({v: info.version}) }} · {{ 'Security.fw_zone'|local({zone: info.zone}) }}{% endif %}</div>
+        </div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('globe') }}</span>
+        <div><div class="stat-label">{{ 'Security.fw_tile_ports'|local }}</div><div class="stat-value">{{ running ? info.ports|length : '—' }}</div><div class="stat-sub">{{ 'Security.fw_tile_ports_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('check') }}</span>
+        <div><div class="stat-label">{{ 'Security.fw_tile_allow'|local }}</div><div class="stat-value">{{ allow|length }}</div><div class="stat-sub">{{ 'Security.fw_tile_allow_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('lock') }}</span>
+        <div><div class="stat-label">{{ 'Security.fw_tile_deny'|local }}</div><div class="stat-value">{{ deny|length }}</div><div class="stat-sub">{{ 'Security.fw_tile_deny_sub'|local }}{% if blocked %} · {{ 'Security.fw_tile_deny_countries'|local({n: blocked|length}) }}{% endif %}</div></div>
+    </div>
+</div>
+
+<div class="grid grid-side" style="margin-bottom:20px;align-items:start">
+    <section class="card">
+        <div class="card-head"><div><h2>{{ 'Security.fw_ports'|local }}</h2><p>{{ 'Security.fw_ports_lead'|local }}</p></div></div>
+        {% if not running or info.ports is empty %}
+            <div class="empty">{{ icon('globe') }}<h3>{{ 'Security.fw_no_ports'|local }}</h3><p>{{ 'Security.fw_no_ports_text'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <thead><tr>
+                <th>{{ 'Security.fw_port'|local }}</th>
+                <th>{{ 'Security.fw_reachable_by'|local }}</th>
+                <th style="text-align:end"><span class="sr-only">{{ 'Security.fw_close'|local }}</span></th>
+            </tr></thead>
+            <tbody>
+            {% for p in info.ports %}
+                {% set kept = false %}
+                {% for k in info.keep %}{% if '-' in p.port ? (k >= p.port|split('-')[0] and k <= p.port|split('-')[1]) : k == p.port %}{% set kept = true %}{% endif %}{% endfor %}
+                <tr>
+                    <td>
+                        <strong class="mono">{{ p.port }}/{{ p.proto }}</strong>
+                        {% if p.via %}<div class="domain-sub">{{ 'Security.fw_via'|local({name: p.via}) }}</div>{% endif %}
+                    </td>
+                    <td>
+                        {% if p.sources is empty %}<span class="badge ok">{{ 'Security.fw_everyone'|local }}</span>
+                        {% else %}{% for s in p.sources %}<span class="badge plain mono" style="margin:0 4px 4px 0">{{ s }}</span>{% endfor %}{% endif %}
+                        {% if kept %}<div class="domain-sub" title="{{ 'Security.fw_kept_hint'|local }}">{{ 'Security.fw_kept'|local }}</div>{% endif %}
+                    </td>
+                    <td style="text-align:end">
+                        {% if not kept %}
+                        <form class="inline-form" method="post" action="{{ urls.close }}" data-confirm="{{ 'Security.fw_confirm_close'|local({port: p.port ~ '/' ~ p.proto}) }}">
+                            <input type="hidden" name="_token" value="{{ lp.token }}">
+                            <input type="hidden" name="port" value="{{ p.port }}">
+                            <input type="hidden" name="proto" value="{{ p.proto }}">
+                            <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Security.fw_close_name'|local({port: p.port ~ '/' ~ p.proto}) }}">{{ icon('x') }}</button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </section>
+
+    <form class="card" method="post" action="{{ urls.ports }}" data-show-from="scope">
+        <div class="card-head"><div><h2>{{ 'Security.fw_open_title'|local }}</h2><p>{{ 'Security.fw_open_lead'|local }}</p></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="grid grid-2">
+                <div class="field">
+                    <label for="fw-port">{{ 'Security.fw_port_label'|local }}</label>
+                    <input class="input mono" id="fw-port" name="port" maxlength="11" inputmode="numeric" autocomplete="off" placeholder="8080" required>
+                </div>
+                <div class="field">
+                    <span class="label">{{ 'Security.fw_proto'|local }}</span>
+                    <div class="segmented" role="radiogroup" aria-label="{{ 'Security.fw_proto'|local }}">
+                        <label><input type="radio" name="proto" value="tcp" checked>TCP</label>
+                        <label><input type="radio" name="proto" value="udp">UDP</label>
+                    </div>
+                </div>
+            </div>
+            <div class="hint" style="margin:-6px 0 14px">{{ 'Security.fw_port_hint'|local }}</div>
+            <div class="field">
+                <span class="label">{{ 'Security.fw_scope'|local }}</span>
+                <div class="segmented" role="radiogroup" aria-label="{{ 'Security.fw_scope'|local }}">
+                    <label><input type="radio" name="scope" value="all" checked>{{ 'Security.fw_scope_all'|local }}</label>
+                    <label><input type="radio" name="scope" value="only">{{ 'Security.fw_scope_only'|local }}</label>
+                </div>
+            </div>
+            <div class="field" data-show-for="only">
+                <label for="fw-src">{{ 'Security.fw_sources'|local }}</label>
+                <textarea class="input mono" id="fw-src" name="sources" rows="3" autocomplete="off" spellcheck="false">{{ mine }}</textarea>
+                <div class="hint">{{ 'Security.fw_sources_hint'|local }}</div>
+            </div>
+            {% if mine %}<p class="hint" style="margin:0">{{ 'Security.fw_mine'|local({ip: mine}) }}</p>{% endif %}
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit"{% if not running %} disabled{% endif %}>{{ 'Security.fw_open_button'|local }}</button></div>
+    </form>
+</div>
+
+<div class="grid grid-2" style="margin-bottom:20px;align-items:start">
+    {{ _self.list_card('allow', allow, urls, durations, lp.token, mine) }}
+    {{ _self.list_card('deny', deny, urls, durations, lp.token, mine) }}
+</div>
+
+<form class="card" method="post" action="{{ urls.countries }}">
+    <div class="card-head"><div><h2>{{ 'Security.fw_countries'|local }}</h2><p>{{ 'Security.fw_countries_lead'|local }}</p></div></div>
+    <div class="card-body">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <div class="field">
+            <label for="fw-filter">{{ 'Security.fw_countries_filter'|local }}</label>
+            <input class="input" id="fw-filter" type="search" autocomplete="off" data-filter=".country-item">
+        </div>
+        <div class="grid max-h-96 gap-1 overflow-auto rounded-xl border border-line p-2 sm:grid-cols-2 xl:grid-cols-3">
+            {% for code, name in names %}
+                <label class="country-item flex cursor-pointer items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-surface-2">
+                    <input type="checkbox" name="codes[]" value="{{ code }}"{% if code in blocked %} checked{% endif %}>
+                    <span class="mono text-xs text-ink-3">{{ code }}</span>
+                    <span class="min-w-0 flex-1 truncate">{{ name }}</span>
+                    {% if cached[code] is defined %}<span class="text-xs text-ink-3" title="{{ 'Security.fw_country_networks'|local({n: cached[code].v4 + cached[code].v6}) }}">✓</span>{% endif %}
+                </label>
+            {% endfor %}
+        </div>
+        <p class="hint" style="margin:12px 0 0">
+            {% if fetched_at %}{{ 'Security.fw_countries_fetched'|local({when: fetched_at[:16]}) }}{% else %}{{ 'Security.fw_countries_never'|local }}{% endif %}
+            {{ 'Security.fw_countries_slow'|local }}
+        </p>
+    </div>
+    <div class="card-foot" style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+        <label class="inline-flex items-center gap-2 text-sm text-ink-2"><input type="checkbox" name="refresh" value="1">{{ 'Security.fw_countries_refresh'|local }}</label>
+        <button class="btn btn-primary" type="submit"{% if not running %} disabled{% endif %}>{{ 'Security.fw_countries_save'|local }}</button>
+    </div>
+</form>
+{% endblock %}

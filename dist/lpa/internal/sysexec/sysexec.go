@@ -50,6 +50,8 @@ var Tools = map[string]string{
 	// writes, and lists the sessions open now.
 	"pure-pw":     "/usr/bin/pure-pw",
 	"pure-ftpwho": "/usr/sbin/pure-ftpwho",
+	// firewalld: ports, and the IP sets and rules the agent writes.
+	"firewall-cmd": "/usr/bin/firewall-cmd",
 }
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"

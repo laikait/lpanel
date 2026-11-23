@@ -30,6 +30,7 @@ import (
 	"lpa/internal/config"
 	"lpa/internal/dns"
 	"lpa/internal/files"
+	"lpa/internal/firewall"
 	"lpa/internal/ftp"
 	"lpa/internal/journal"
 	"lpa/internal/mail"
@@ -149,6 +150,8 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	mails.Defaults()
 	ftps := &ftp.Manager{Enabled: cfg.FTP == "on", Run: sysexec.Exec{}, Owner: acc.Owner, Log: log}
 	ftps.Defaults()
+	fw := &firewall.Manager{Enabled: cfg.Firewall == "on", Run: sysexec.Exec{}, Log: log}
+	fw.Defaults()
 	keys := &sshkeys.Manager{Owner: acc.Owner, Log: log}
 	keys.Defaults()
 	backups := &backup.Manager{Owner: acc.Owner, Databases: dbs.Databases, Log: log, SELinux: acc.SELinux}
@@ -185,6 +188,7 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	ops.DNS(reg, zones)
 	ops.Mail(reg, mails)
 	ops.FTP(reg, ftps)
+	ops.Firewall(reg, fw)
 	ops.SSH(reg, keys)
 	ops.Backup(reg, backups)
 	self, err := os.Executable()

@@ -69,7 +69,7 @@ templates/user/<name>/     the User panel (:7444)
     assets/js, icons.svg, favicon.svg
 ```
 
-The first template is **nova**: navy sidebar, blue accent (teal in the User
+The first template is **nova**: white sidebar, blue accent (teal in the User
 panel), rounded cards, stat tiles with sparklines, gauge rings, a traffic
 chart. Modules hold their logic and `lang/` files and no templates: a page is
 named by path (`'Backups/restore'`), found in the active template first.

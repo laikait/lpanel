@@ -191,7 +191,7 @@ final class PanelPage
             'version' => (string) $this->config->get('Panel.version', ''),
             'lang' => $language,
             'dir' => \in_array($language, self::RTL, true) ? 'rtl' : 'ltr',
-            'theme' => \in_array($theme, ['light', 'dark'], true) ? $theme : 'auto',
+            'theme' => \in_array($theme, ['light', 'dark'], true) ? $theme : 'light',
             'token' => $this->csrf->token($request),
             'notices' => \is_array($notices) ? $notices : [],
         ];

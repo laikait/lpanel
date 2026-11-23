@@ -153,6 +153,17 @@ final class FakeServer
     /** @var list<int> sessions ftp.kill ended */
     public array $ftpKilled = [];
 
+    /**
+     * What the firewall holds: ports (port, proto, sources), both lists, the
+     * countries blocked, and each country's networks (what its list holds).
+     *
+     * @var array{enabled: bool, running: bool, ports: list<array{port: string, proto: string, sources: list<string>}>, allow: list<string>, deny: list<string>, countries: list<string>, nets: array<string, list<string>>, keep: list<int>}
+     */
+    public array $fw = [
+        'enabled' => true, 'running' => true,
+        'ports' => [['port' => '22', 'proto' => 'tcp', 'sources' => []], ['port' => '80', 'proto' => 'tcp', 'sources' => []], ['port' => '7443', 'proto' => 'tcp', 'sources' => []]],
+        'allow' => [], 'deny' => [], 'countries' => [], 'nets' => ['CN' => ['203.0.113.0/24'], 'RU' => ['198.51.100.0/24']], 'keep' => [22, 7443, 7444],
+    ];
     /** @var array<string, list<array<string, mixed>>> account => the keys ssh.apply last wrote */
     public array $sshKeys = [];
 
@@ -196,7 +207,7 @@ final class FakeServer
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
-        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download'] as $op) {
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -268,6 +279,13 @@ final class FakeServer
                 ? ['status' => 'failed', 'error' => ['code' => 'backup_not_in_snapshot', 'message' => 'there is no snapshot ' . $args['snapshot']]]
                 : ['status' => 'done', 'result' => ['snapshot' => ['id' => $args['snapshot'], 'short_id' => \substr((string) $args['snapshot'], 0, 8), 'time' => '2026-11-18T02:30:00Z', 'username' => $snap['username']], 'meta' => $snap['meta']]];
         };
+        $answers['firewall.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
+            'enabled' => $this->fw['enabled'], 'running' => $this->fw['enabled'] && $this->fw['running'], 'version' => '1.3.4', 'zone' => 'public', 'zones' => ['public'],
+            'ports' => $this->fw['running'] ? \array_map(static fn(array $p): array => $p + ['via' => ''], $this->fw['ports']) : [], 'services' => [],
+            'allow' => $this->fw['allow'], 'deny' => $this->fw['deny'], 'countries' => $this->fw['countries'],
+            'cached' => \array_map(fn(string $c): array => ['code' => $c, 'v4' => \count($this->fw['nets'][$c] ?? []), 'v6' => 0, 'fetched' => '2026-11-23T00:00:00Z'], $this->fw['countries']),
+            'rules' => $this->fw['allow'] !== [] || $this->fw['deny'] !== [] || $this->fw['countries'] !== [], 'keep' => $this->fw['keep'],
+        ]];
         $answers['ftp.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
             'enabled' => true, 'installed' => true, 'running' => true, 'version' => '1.0.52',
             'logins' => \array_sum(\array_map(static fn(array $s): int => $s['suspended'] ? 0 : \count($s['users']), $this->ftp)),
@@ -451,6 +469,10 @@ final class FakeServer
 
         if (\str_starts_with($op, 'ftp.')) {
             return $this->runFtp($op, $args);
+        }
+
+        if (\str_starts_with($op, 'firewall.')) {
+            return $this->runFirewall($op, $args);
         }
 
         if (\str_starts_with($op, 'backup.')) {
@@ -1454,5 +1476,113 @@ final class FakeServer
         }
 
         return $fail('unknown_op');
+    }
+
+    /**
+     * firewall.*: the agent's rules, as far as the panel can see them: a deny
+     * list or a country that holds an address in `protect` is refused, so is
+     * closing a kept port or limiting one to addresses without it.
+     *
+     * @param array<string, mixed> $args
+     *
+     * @return array<string, mixed>
+     */
+    private function runFirewall(string $op, array $args): array
+    {
+        $fail = static fn(string $code, string $message): array => ['status' => 'failed', 'error' => ['code' => $code, 'message' => $message]];
+
+        if (!$this->fw['enabled'] || !$this->fw['running']) {
+            return $fail('firewall_off', 'firewalld is not running');
+        }
+
+        $inside = static function (string $net, string $ip): bool {
+            $parts = \explode('/', $net, 2);
+            $base = $parts[0];
+            $bits = $parts[1] ?? null;
+            $a = \inet_pton($base);
+            $b = \inet_pton($ip);
+
+            if ($a === false || $b === false || \strlen($a) !== \strlen($b)) {
+                return false;
+            }
+
+            $bits = $bits === null ? \strlen($a) * 8 : (int) $bits;
+
+            for ($i = 0; $i < \strlen($a); $i++) {
+                $keep = \max(0, \min(8, $bits - $i * 8));
+                $mask = (0xFF << (8 - $keep)) & 0xFF;
+
+                if ((\ord($a[$i]) & $mask) !== (\ord($b[$i]) & $mask)) {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+        $any = static fn(array $nets, string $ip): bool => \array_reduce($nets, static fn(bool $c, string $n): bool => $c || $inside($n, $ip), false);
+
+        if ($op === 'firewall.lists') {
+            foreach ((array) ($args['protect'] ?? []) as $ip) {
+                if ($any((array) $args['deny'], (string) $ip) && !$any((array) $args['allow'], (string) $ip)) {
+                    return $fail('firewall_lockout', 'your address ' . $ip . ' is in the deny list: that would shut you out');
+                }
+            }
+
+            $this->fw['allow'] = \array_values((array) $args['allow']);
+            $this->fw['deny'] = \array_values((array) $args['deny']);
+
+            return ['status' => 'done', 'result' => ['allow' => \count($this->fw['allow']), 'deny' => \count($this->fw['deny'])]];
+        }
+
+        if ($op === 'firewall.countries') {
+            $nets = [];
+
+            foreach ((array) $args['codes'] as $code) {
+                if (!isset($this->fw['nets'][$code])) {
+                    return $fail('firewall_fetch', 'the list for ' . $code . ' could not be fetched');
+                }
+
+                $nets = [...$nets, ...$this->fw['nets'][$code]];
+            }
+
+            foreach ((array) ($args['protect'] ?? []) as $ip) {
+                if ($any($nets, (string) $ip) && !$any($this->fw['allow'], (string) $ip)) {
+                    return $fail('firewall_lockout', 'your address ' . $ip . ' is in a country you chose: that would shut you out');
+                }
+            }
+
+            $this->fw['countries'] = \array_values((array) $args['codes']);
+
+            return ['status' => 'done', 'result' => ['codes' => $this->fw['countries'], 'v4' => \count($nets), 'v6' => 0, 'fetched' => []]];
+        }
+
+        // firewall.port
+        $port = (string) $args['port'];
+        $proto = (string) $args['proto'];
+        $kept = \in_array((int) $port, $this->fw['keep'], true);
+
+        if (!\preg_match('/^[0-9]{1,5}(-[0-9]{1,5})?$/', $port) || !\in_array($proto, ['tcp', 'udp'], true) || !\in_array($args['action'], ['open', 'close'], true)) {
+            return $fail('bad_args', 'not a port');
+        }
+
+        if ($args['action'] === 'close' && $kept) {
+            return $fail('firewall_kept', 'port ' . $port . ' is how the panel and SSH are reached: limit it to some addresses instead of closing it');
+        }
+
+        if ($args['action'] === 'open' && $kept && (array) $args['sources'] !== []) {
+            foreach ((array) ($args['protect'] ?? []) as $ip) {
+                if (!$any((array) $args['sources'], (string) $ip)) {
+                    return $fail('firewall_lockout', 'your address ' . $ip . ' would no longer reach port ' . $port . ': add it to the addresses');
+                }
+            }
+        }
+
+        $this->fw['ports'] = \array_values(\array_filter($this->fw['ports'], static fn(array $p): bool => $p['port'] !== $port || $p['proto'] !== $proto));
+
+        if ($args['action'] === 'open') {
+            $this->fw['ports'][] = ['port' => $port, 'proto' => $proto, 'sources' => \array_values((array) $args['sources'])];
+        }
+
+        return ['status' => 'done', 'result' => ['port' => $port, 'proto' => $proto, 'sources' => $args['sources'], 'closed' => $args['action'] === 'close']];
     }
 }

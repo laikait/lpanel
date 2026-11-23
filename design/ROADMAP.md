@@ -970,7 +970,7 @@ Not a numbered milestone: the panels' look moved out of the modules.
 - **Templates in folders:** `templates/admin/<name>/` and
   `templates/user/<name>/` hold the layout, every page, the errors, the
   emails' layout and the assets; modules keep logic and language only. The
-  first template is nova (the design the project owner supplied: navy
+  first template is nova (the design the project owner supplied: white
   sidebar, blue accent, stat tiles, gauges, traffic chart); the User panel
   is the same with a teal accent.
 - **Tailwind v4** from the standalone CLI (`dist/themes/build.sh`); colours
@@ -987,8 +987,33 @@ Not a numbered milestone: the panels' look moved out of the modules.
   from the tokens).
 
 ### M9: Security
-- Firewall manager, IP and country lists.
-- Built-in brute-force blocking.
+
+**M9a, the firewall manager, is built (2026-11-23).**
+
+- **Agent** (`internal/firewall`, ops `firewall.info|port|lists|countries`):
+  firewalld ports (open, limit to addresses, close; a service's ports are
+  turned into plain ones when one of them is changed), an allow list, a deny
+  list and blocked countries as IP sets with prioritised rich rules (allow,
+  then deny, then countries). The countries' lists come from ipdeny.com and
+  are cached. Guards against locking out: kept ports (22, 7443, 7444) are
+  never closed, `protect` addresses stay reachable, loopback and very wide
+  networks are refused.
+- **Panel** (module `Security`, root only): the Admin page (ports, the two
+  lists with notes and a time a block ends, a country picker), the API
+  (`/admin/api/v1/firewall…`) and `lpanel firewall:status|open|close|allow|deny|
+  remove|countries|sync|expire`. Audited: `firewall.port`, `.allow`, `.deny`,
+  `.remove`, `.countries`. Installer: `lpa.json` `"firewall": "on"` when
+  firewalld runs.
+- **Tests:** Go (a fake firewalld: ports, services, lists, countries, every
+  guard); PHP 12 in `FirewallTest`; e2e: the manager says plainly that a
+  container has no firewalld. **Not tested against a real firewalld here**
+  (containers have none): the XML sets and the reload-based update need a
+  run on a real AlmaLinux server before M9 is called done.
+- **Not yet:** per-account outgoing rules and remote-database host
+  allowances (they use these lists), country "allow only" mode.
+
+**Still to build in M9:**
+- Built-in brute-force blocking (feeds the deny list, with a time it ends).
 - ModSecurity + OWASP CRS for each domain.
 - Account isolation hardening (`hidepid`, private `/tmp`, symlink protection).
 
