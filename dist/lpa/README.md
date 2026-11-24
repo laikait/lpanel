@@ -147,6 +147,11 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `firewall.lists` | change | `{allow, deny, protect?}`: the allow list and the deny list, whole |
 | `cron.apply` | change | `{username, suspended, jobs: [{schedule, command}]}`: an account's whole list of scheduled jobs (none, or suspended: the file is removed) |
 | `tasks.list` | read-only (answered by the server itself, like `op.status`) | `{state?, limit?}`: the journal's newest entries (operation, state, times, error), never their arguments or results |
+| `updates.check` | change, async | `{}`: refresh the repositories; the updates dnf offers (installed and offered version, repository, erratum, kind, severity), PHP versions with a new release, the services on old code, whether a reboot is needed, the running kernel, LPanel's latest release from its channel |
+| `updates.apply` | change, async (2 h) | `{scope: all\|security\|php\|packages, packages?, exclude?}`: update, then restart what runs old code; answers what changed, what was restarted, what still needs a restart, whether a reboot is needed |
+| `updates.reboot` | change | `{cancel?}`: reboot a minute from now (a transient timer), or call it off |
+| `updates.panel` | change, async | `{version}`: fetch the channel's signed manifest, check it, download and check the bundle, unpack it, start its `upgrade.sh` in the unit `lpanel-upgrade` |
+| `updates.panel_status` | read-only | how the last upgrade went (`status.json`), the end of its log, the release installed now |
 | `services.status` | read-only | every service LPanel manages that is installed: its state, whether it starts at boot, since when, its memory, what the unit allows |
 | `services.act` | change | `{unit, action}`: start, stop, restart, reload, enable or disable one of them, within what that unit allows |
 | `isolation.info` | read-only | whether /proc hides other users' processes (and the unit that keeps it), the kernel's four link protections and their values |
@@ -610,6 +615,46 @@ at most twelve minutes, and none closer than five apart when every hour runs),
 and an account has at most 20. No jobs, or a suspended account, removes the
 file; the same list twice changes nothing. Removing the file of an account that
 no longer exists needs no user.
+
+### Updates (`updates.*`)
+
+The operating system's updates come from dnf, one run at a time across the
+agent (`sysexec.Packages`, which PHP's operations share). A check is
+`dnf repoquery --upgrades` (refreshing the repositories), `dnf updateinfo list
+--updates` for errata (optional: Remi and most of EPEL publish none), `rpm -qa`
+for what is installed, and `dnf needs-restarting -s` and `-r` for services on
+old code and whether a reboot is needed. An update is `dnf upgrade` with the
+scope's arguments: `--security`, the pattern `php[5-8][0-9]-*` for every Remi
+PHP version, or package names that are installed (checked first: dnf would
+otherwise refuse, never install). Exclusions are `--exclude=` patterns. Names
+and patterns must look like package names, never an option or a path.
+
+After an update, the services still on old code that LPanel knows to be safe
+to restart (web servers, PHP-FPM, DNS, mail, FTP, cron, chrony, SSH, MariaDB,
+firewalld, rsyslog, the sign-in helper) are restarted with `try-restart`; the
+panel's own nginx and PHP-FPM fifteen seconds later through a transient timer,
+so the answer reaches the panel first; anything else is reported.
+
+LPanel's own releases come from lpa.json's `updates.url`, a manifest:
+
+    {"product":"lpanel","version":"1.2.0","file":"lpanel-1.2.0.tar.gz",
+     "sha256":"…","size":29360128,"released":"2026-11-24","notes":"…"}
+
+and its signature at the same address plus `.sig`: Ed25519, base64, over
+`lpanel-release-v1\n` followed by the manifest's bytes, by a key listed in
+`updates.key_file` (`/etc/lpa/release.pub`, one base64 key per line, so a key
+can be rotated). `dist/installer/release.sh` makes keys and signs releases.
+The bundle is downloaded to `/var/lib/lpa/updates`, its size and SHA-256
+checked, and unpacked: only plain files and folders, all inside
+`lpanel-<version>/`, which must hold `VERSION` (the same version), `install.sh`,
+`upgrade.sh`, `bin/lpa` and `panel/laika`. Its `upgrade.sh` then runs in the
+transient unit `lpanel-upgrade` (not the agent's, since the installer restarts
+the agent): it backs up the panel's code, `/usr/local/lpa/bin`,
+`/usr/libexec/lpanel`, LPanel's units and a dump of the panel's database to
+`/var/lib/lpa/updates/rollback`, runs `install.sh`, and if that fails puts all
+of it back and restarts the panel. Its progress is `upgrade.log` and how it
+went `status.json` (starting, running, done, rolled_back, failed), which
+`updates.panel_status` reads.
 
 ### Services (`services.*`)
 

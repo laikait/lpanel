@@ -55,6 +55,9 @@ grep -q "LPanel is installed." /tmp/install.log && echo "        (installer prin
 # AutoSSL would ask the real Let's Encrypt (every five minutes, from the
 # scheduler) for names that point nowhere; it waits for the SSL section.
 lpanel ssl:settings --enabled=no --host-autossl=no >/dev/null
+# Nothing is installed by itself during the run (the nightly hour could fall in
+# it); the updates section asks for what it tests.
+lpanel updates:settings --os=off --php=no >/dev/null
 
 echo "== services"
 for unit in mariadb lpa lpanel-authd.socket lpanel-php-fpm lpanel-nginx lpanel-scheduler.timer; do
@@ -1633,6 +1636,164 @@ case "$WEB" in
         check "the agent reads the rules' log: one refused request, one only logged" t_waf_events
         ;;
 esac
+
+echo "== updates (dnf, and LPanel's own releases)"
+# Something the scheduler started (the daily check) may be running: wait for it.
+upd_idle() {
+    for _ in $(seq 150); do
+        lpanel updates:settle >/dev/null 2>&1
+        [ "$(mariadb -uroot -N lpanel -e "select count(*) from ops_update_runs where state in ('running','installing')")" = 0 ] && return 0
+        sleep 2
+    done
+    return 1
+}
+# upd <command...>: an updates command, again if the scheduler got in first.
+upd() {
+    local i
+    for i in 1 2 3 4 5; do
+        upd_idle
+        lpanel "$@" > /tmp/upd.out 2>&1 && return 0
+        grep -q "being checked or installed already" /tmp/upd.out || { cat /tmp/upd.out; return 1; }
+    done
+    cat /tmp/upd.out; return 1
+}
+t_upd_version() { [ "$(cat /usr/local/lpanel/VERSION)" = "$(cat /bundle/VERSION)" ] && lpanel updates:status | grep -q "^LPanel     $(cat /bundle/VERSION)"; }
+t_upd_check()   { upd updates:check --wait && grep -q "packages can be updated" /tmp/upd.out; }
+# A package of our own, 1.0 installed and 1.1 in a local repository with a
+# security erratum, so the update is the same on every run.
+t_upd_repo() {
+    dnf -y -q install rpm-build createrepo_c > /tmp/upd-rpm.log 2>&1 || { tail -5 /tmp/upd-rpm.log; return 1; }
+    mkdir -p /root/rpmbuild/SPECS /srv/e2e-repo
+    local v
+    for v in 1.0 1.1; do
+        cat > /root/rpmbuild/SPECS/dummy.spec <<SPEC
+Name: lpanel-e2e-dummy
+Version: $v
+Release: 1
+Summary: LPanel e2e test package
+License: MIT
+BuildArch: noarch
+%description
+A package the e2e run updates.
+%install
+mkdir -p %{buildroot}/usr/share/lpanel-e2e-dummy
+echo $v > %{buildroot}/usr/share/lpanel-e2e-dummy/version
+%files
+/usr/share/lpanel-e2e-dummy/version
+SPEC
+        rpmbuild -bb /root/rpmbuild/SPECS/dummy.spec >> /tmp/upd-rpm.log 2>&1 || { tail -5 /tmp/upd-rpm.log; return 1; }
+    done
+    rpm -i /root/rpmbuild/RPMS/noarch/lpanel-e2e-dummy-1.0-1.noarch.rpm || return 1
+    cp /root/rpmbuild/RPMS/noarch/lpanel-e2e-dummy-1.1-1.noarch.rpm /srv/e2e-repo/
+    createrepo_c -q /srv/e2e-repo || return 1
+    cat > /tmp/updateinfo.xml <<'XML'
+<?xml version="1.0" encoding="UTF-8"?>
+<updates>
+  <update from="e2e@lpanel.test" status="stable" type="security" version="2.0">
+    <id>LPE2E-2026:0001</id>
+    <title>Important: lpanel-e2e-dummy security update</title>
+    <severity>Important</severity>
+    <issued date="2026-11-24 00:00:00"/>
+    <description>A test erratum.</description>
+    <pkglist><collection short="e2e"><name>e2e</name>
+      <package name="lpanel-e2e-dummy" version="1.1" release="1" epoch="0" arch="noarch"><filename>lpanel-e2e-dummy-1.1-1.noarch.rpm</filename></package>
+    </collection></pkglist>
+  </update>
+</updates>
+XML
+    modifyrepo_c --mdtype=updateinfo /tmp/updateinfo.xml /srv/e2e-repo/repodata >> /tmp/upd-rpm.log 2>&1 || { tail -5 /tmp/upd-rpm.log; return 1; }
+    printf '[lpanel-e2e]\nname=LPanel e2e\nbaseurl=file:///srv/e2e-repo\nenabled=1\ngpgcheck=0\nmetadata_expire=0\n' > /etc/yum.repos.d/lpanel-e2e.repo
+}
+t_upd_found()   { upd updates:check --wait && grep -Eq 'lpanel-e2e-dummy +1\.1-1 +security Important' /tmp/upd.out; }
+t_upd_apply()   { upd updates:apply --packages=lpanel-e2e-dummy --wait && grep -q "1 packages updated" /tmp/upd.out \
+                  && [ "$(rpm -q --qf '%{VERSION}' lpanel-e2e-dummy)" = 1.1 ] && [ "$(cat /usr/share/lpanel-e2e-dummy/version)" = 1.1 ]; }
+t_upd_refused() { ! upd updates:apply --packages=lpanel-e2e-absent --wait && grep -q "is not installed" /tmp/upd.out && ! rpm -q lpanel-e2e-absent >/dev/null 2>&1; }
+t_upd_audited() { mariadb -uroot -N lpanel -e "select concat(action, ':', outcome) from audit_log where action like 'updates.appl%' order by id" | tr '\n' ' ' | tee /dev/stderr \
+                  | grep -q "updates.apply:ok updates.applied:ok updates.apply:ok updates.applied:failed"; }
+t_upd_page()    { signin "$ROOT_PASSWORD" >/dev/null; curl -ks -b $jar -c $jar -o /tmp/upd.html https://127.0.0.1:7443/admin/updates && grep -q "lpanel-e2e-dummy" /tmp/upd.html && grep -q "Installed by themselves" /tmp/upd.html; }
+check "the release number is installed with the panel" t_upd_version
+check "the server says what can be updated" t_upd_check
+check "a test repository with an update and a security erratum is set up" t_upd_repo
+check "the check finds the update and its erratum" t_upd_found
+check "one named package is updated" t_upd_apply
+check "a package that is not installed is refused, not installed" t_upd_refused
+check "updates are in the audit log" t_upd_audited
+check "the Updates page shows them" t_upd_page
+
+# LPanel's own release channel on this machine: a signing key of our own, the
+# bundle again as release 0.1.1-e2e (and 0.1.2-e2e, whose installer fails), each
+# signed and served over HTTP on 127.0.0.1 (the agent allows plain HTTP there only).
+REL=/srv/e2e-channel
+make_release() { # version [broken]
+    local v=$1 d=/tmp/rel/lpanel-$1
+    rm -rf "$d" && mkdir -p /tmp/rel && cp -a /bundle "$d" || return 1
+    echo "$v" > "$d/VERSION"
+    cp /root/release-keys/release.pub "$d/packaging/release.pub"
+    if [ "${2:-}" = broken ]; then
+        sed -i 's|^step "Database tables"$|step "Database tables"; echo "e2e: this release fails here" >\&2; exit 1|' "$d/install.sh"
+        grep -q "this release fails here" "$d/install.sh" || return 1
+    fi
+    tar -C /tmp/rel -czf "/tmp/rel/lpanel-$v.tar.gz" "lpanel-$v" && rm -rf "$d"
+    bash /e2e/release.sh sign "/tmp/rel/lpanel-$v.tar.gz" /root/release-keys/release.key "$REL" "e2e release $v"
+}
+panel_run() { # waits for the latest upgrade to finish, as the scheduler would settle it
+    local st
+    for _ in $(seq 200); do
+        lpanel updates:settle >/dev/null 2>&1
+        st=$(mariadb -uroot -N lpanel -e "select state from ops_update_runs where kind='panel' order by id desc limit 1" 2>/dev/null)
+        case "$st" in done|failed) echo "$st"; return 0 ;; esac
+        sleep 3
+    done
+    echo "still ${st:-unknown}"
+}
+t_upd_channel() {
+    mkdir -p "$REL" && bash /e2e/release.sh keygen /root/release-keys > /dev/null || return 1
+    make_release 0.1.1-e2e > /tmp/rel.out 2>&1 || { cat /tmp/rel.out; return 1; }
+    (cd "$REL" && nohup python3 -m http.server 8099 --bind 127.0.0.1 > /tmp/channel.log 2>&1 &)
+    install -m 0644 /root/release-keys/release.pub /etc/lpa/release.pub
+    /usr/bin/php83 -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true);
+        $c["updates"]["url"] = "http://127.0.0.1:8099/latest.json";
+        file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");'
+    systemctl restart lpa && for _ in $(seq 50); do [ -S /run/lpa/lpa.sock ] && break; sleep 0.2; done
+    for _ in $(seq 30); do curl -sf -o /dev/null http://127.0.0.1:8099/latest.json.sig && return 0; sleep 0.5; done; return 1
+}
+t_upd_offered() { upd updates:check --wait && grep -q "LPanel 0.1.1-e2e is out" /tmp/upd.out; }
+t_upd_upgrade() {
+    upd updates:panel 0.1.1-e2e || return 1
+    local st; st=$(panel_run)
+    [ "$st" = done ] || { echo "upgrade: $st"; cat /var/lib/lpa/updates/status.json; tail -30 /var/lib/lpa/updates/upgrade.log; return 1; }
+    [ "$(cat /usr/local/lpanel/VERSION)" = 0.1.1-e2e ] && grep -q '"state":"done"' /var/lib/lpa/updates/status.json \
+        && grep -q "Backing up the panel" /var/lib/lpa/updates/upgrade.log && [ -s /var/lib/lpa/updates/rollback/lpanel.sql ]
+}
+t_upd_works()   { curl -ksf -o /dev/null https://127.0.0.1:7443/health && lpanel agent:ping >/dev/null && says shop.example.test "8.3 as shop1" \
+                  && [ "$(signin_as 7443 /admin root "$ROOT_PASSWORD")" = "303 https://127.0.0.1:7443/admin" ]; }
+t_upd_tampered() {
+    # A manifest changed after it was signed is refused, and nothing is installed.
+    cp "$REL/latest.json" /tmp/latest.json.good
+    sed -i 's/e2e release 0.1.1-e2e/e2e release, changed/' "$REL/latest.json"
+    upd updates:check --wait && lpanel updates:status > /tmp/upd-t.out 2>&1; grep -q "does not match any release key" /tmp/upd-t.out
+    local rc=$?
+    cp /tmp/latest.json.good "$REL/latest.json"
+    [ "$rc" -eq 0 ] || { cat /tmp/upd-t.out; return 1; }
+    # And the release running now is not installed again.
+    ! lpanel updates:panel 0.1.1-e2e > /tmp/upd-t.out 2>&1 && grep -q "not newer" /tmp/upd-t.out
+}
+t_upd_rollback() {
+    make_release 0.1.2-e2e broken > /tmp/rel.out 2>&1 || { cat /tmp/rel.out; return 1; }
+    upd updates:panel 0.1.2-e2e || return 1
+    local st; st=$(panel_run)
+    [ "$st" = failed ] || { echo "upgrade: $st"; tail -20 /var/lib/lpa/updates/upgrade.log; return 1; }
+    grep -q '"state":"rolled_back"' /var/lib/lpa/updates/status.json && grep -q "this release fails here" /var/lib/lpa/updates/upgrade.log \
+        && [ "$(cat /usr/local/lpanel/VERSION)" = 0.1.1-e2e ] \
+        && mariadb -uroot -N lpanel -e "select error from ops_update_runs where kind='panel' order by id desc limit 1" | grep -q "0.1.1-e2e was put back"
+}
+check "a signed release channel is served on this machine" t_upd_channel
+check "the check sees LPanel's new release" t_upd_offered
+check "LPanel upgrades itself from the channel (backup, install, done)" t_upd_upgrade
+check "after the upgrade the panel, the agent, sites and sign-in work" t_upd_works
+check "a manifest changed after signing is refused, the same release is not installed again" t_upd_tampered
+check "a release whose installer fails is rolled back to the one before" t_upd_rollback
+check "after the rollback the panel, the agent, sites and sign-in work" t_upd_works
 
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"

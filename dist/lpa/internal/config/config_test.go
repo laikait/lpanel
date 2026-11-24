@@ -27,14 +27,22 @@ func TestLoad(t *testing.T) {
 	}
 
 	for name, body := range map[string]string{
-		"typo":          `{"max_runing": 3}`,
-		"relative path": `{"socket": "lpa.sock"}`,
-		"root as panel": `{"panel_user": "root"}`,
-		"homes in /":    `{"homes_base": "/"}`,
-		"quota maybe":   `{"quota": "maybe"}`,
+		"typo":                 `{"max_runing": 3}`,
+		"relative path":        `{"socket": "lpa.sock"}`,
+		"root as panel":        `{"panel_user": "root"}`,
+		"homes in /":           `{"homes_base": "/"}`,
+		"quota maybe":          `{"quota": "maybe"}`,
+		"plain http updates":   `{"updates": {"url": "http://updates.example.com/latest.json"}}`,
+		"updates key relative": `{"updates": {"key_file": "release.pub"}}`,
 	} {
 		if _, err := Load(write(body)); err == nil {
 			t.Errorf("%s was accepted", name)
 		}
+	}
+
+	// A test channel on this machine may be plain HTTP; the key file keeps its default.
+	cfg, err = Load(write(`{"updates": {"url": "http://127.0.0.1:8099/latest.json"}}`))
+	if err != nil || cfg.Updates.URL != "http://127.0.0.1:8099/latest.json" || cfg.Updates.KeyFile != "/etc/lpa/release.pub" {
+		t.Fatalf("got %+v %v", cfg.Updates, err)
 	}
 }

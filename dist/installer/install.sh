@@ -110,7 +110,7 @@ dnf -y -q install \
     rspamd clamd clamav-update \
     pure-ftpd \
     openssh-server openssh-clients bubblewrap rsync git-core \
-    restic cronie
+    restic cronie dnf-plugins-core
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -231,7 +231,13 @@ step "Copying the panel to $PANEL"
 
 # Code is root's and read-only to the panel; only system/ (cache, logs,
 # sessions, runtime) is the panel's to write. .env and system/ survive upgrades.
+# The old code goes first, so a file a release no longer has (a module, a
+# migration) is not left behind; compiled templates go with it.
+find "$PANEL" -mindepth 1 -maxdepth 1 ! -name system ! -name .env -exec rm -rf {} +
+rm -rf "$PANEL/system/Cache/"*
 tar -C "$BUNDLE/panel" --exclude=./.env --exclude=./system -cf - . | tar -C "$PANEL" --no-same-owner -xf -
+# Which release this is: the Admin panel's Updates page and the agent read it.
+install -m 0644 "$BUNDLE/VERSION" "$PANEL/VERSION"
 chown -R root:lpanel "$PANEL"
 find "$PANEL" -path "$PANEL/system" -prune -o -type d -exec chmod 0750 {} + -o -type f -exec chmod 0640 {} +
 chmod 0750 "$PANEL/laika"
@@ -321,6 +327,24 @@ $PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true)
     $c["homes_base"] ??= "/home"; $c["quota"] = $argv[1]; $c["web"] = $argv[3]; $c["panel_php"] = $argv[2];
     file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$LPA_QUOTA" "${PHP##*php}" "$WEB"
 note "disk quotas for accounts: $LPA_QUOTA"
+# LPanel's own updates (Admin panel, Updates): the channel a release build
+# names (UPDATE_URL in the bundle) and the keys its releases are signed with.
+# A channel set by hand in lpa.json is kept.
+if [ -f "$BUNDLE/packaging/release.pub" ]; then
+    install -m 0644 "$BUNDLE/packaging/release.pub" /etc/lpa/release.pub
+fi
+UPDATE_URL=$(tr -d '[:space:]' < "$BUNDLE/UPDATE_URL" 2>/dev/null || true)
+$PHP -r '$f = "/etc/lpa/lpa.json"; $c = json_decode(file_get_contents($f), true) ?: [];
+    $u = is_array($c["updates"] ?? null) ? $c["updates"] : [];
+    if (($u["url"] ?? "") === "" && $argv[1] !== "") { $u["url"] = $argv[1]; }
+    $u["url"] ??= ""; $u["key_file"] ??= "/etc/lpa/release.pub"; $c["updates"] = $u;
+    file_put_contents($f, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");' "$UPDATE_URL"
+install -d -m 0700 -o root -g root /var/lib/lpa/updates
+if [ -n "$($PHP -r '$c = json_decode(file_get_contents("/etc/lpa/lpa.json"), true); echo $c["updates"]["url"] ?? "";')" ]; then
+    note "LPanel's updates come from $($PHP -r '$c = json_decode(file_get_contents("/etc/lpa/lpa.json"), true); echo $c["updates"]["url"];')"
+else
+    note "no update channel: LPanel itself is upgraded by running a new bundle's upgrade.sh"
+fi
 [ -f /etc/lpanel/authd.json ] || install -m 0644 "$BUNDLE/packaging/authd.json" /etc/lpanel/authd.json
 install -m 0644 "$BUNDLE/packaging/pam.d-lpanel.el" /etc/pam.d/lpanel
 note "root signs in with the server's own root password, checked by PAM (/etc/pam.d/lpanel)"

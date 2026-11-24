@@ -1137,7 +1137,51 @@ ipset and reload mechanism (M9a) and the log formats of pure-ftpd and Dovecot
   removes the file.
 - **Not yet:** a log of what each job printed or when it last ran.
 
-- OS, panel and PHP updates.
+**M10c, updates of the operating system, PHP and LPanel itself, is built (2026-11-24).**
+
+- **Agent** (`internal/updates`, ops `updates.check|apply|reboot|panel|panel_status`):
+  dnf's offered updates with their errata (security, severity) and the
+  installed versions, PHP versions with a new release, the services still on
+  old code and whether a reboot is needed (`dnf needs-restarting`; the
+  installer adds dnf-plugins-core). Updates by scope (all, security, php,
+  named packages that are installed), with exclusions; nothing new is
+  installed except what an update brings. Afterwards the services LPanel knows
+  to be safe are restarted, the panel's own fifteen seconds later, the rest
+  reported. A reboot is a minute away and can be called off. One dnf at a
+  time across the agent (`sysexec.Packages`, shared with PHP's ops).
+- **LPanel's own releases:** a channel (lpa.json `updates.url`, HTTPS, or
+  plain HTTP to this machine only) serves a manifest signed with Ed25519
+  (keys in `/etc/lpa/release.pub`); the manifest names the bundle and its
+  SHA-256. The agent checks the signature, downloads and checks the bundle,
+  unpacks it (files and folders only, inside its one folder), and starts its
+  `upgrade.sh` in a unit of its own (`lpanel-upgrade`). That backs up the
+  panel's code, the agent, LPanel's units and the panel's database, runs
+  `install.sh`, and puts the backup back if `install.sh` fails.
+  `dist/installer/release.sh` makes a signing key and signs a release; a
+  release bundle carries its channel and key (`LPANEL_UPDATE_URL`,
+  `LPANEL_RELEASE_PUB` for bundle.sh). The installer now installs `VERSION`
+  with the panel, and removes the old code and compiled templates before
+  copying the new (a file a release dropped no longer stays behind).
+- **Panel** (`Operations/Updates`): the Admin page `/admin/updates` (root only,
+  capability `server.updates`): what is waiting (security first), install
+  security, all, PHP or the ticked packages, LPanel's new release with its
+  notes, reboot (typing "reboot"), history with what each update did, and
+  what is installed by itself. API `/admin/api/v1/updates` and `updates:*`.
+  Every night in the chosen hour: security updates (or all, or none), PHP's
+  (Remi publishes no errata, so "security" alone never updates PHP), LPanel's
+  release if asked, a reboot if asked and needed. A check runs once a day and
+  after each update; a failed check is tried again an hour later. The bell
+  says when security updates wait, a reboot is needed, a release is out, or
+  an update failed. Hook `ops.update_event` for M10d's alerts.
+- **Tests:** Go (parsing dnf's and rpm's answers, scopes, refusals, restarts,
+  reboot, versions, the signed manifest, a tampered manifest or bundle, unsafe
+  archive entries), PHP (9 in `UpdatesTest`), e2e: a real check, a local
+  repository with a package and a security erratum found and updated, a
+  package that is not installed refused, a real upgrade of LPanel from a
+  signed channel, a tampered manifest refused, and a release whose installer
+  fails rolled back with the panel working afterwards.
+- **Not yet:** a check of the free disk space before an upgrade; SELinux
+  enforcing on a real server for the upgrade unit (unverified, like M1c).
 - GoAccess stats, logs, and alerts (email, Telegram, Slack, webhook).
 
 ### M11: Release

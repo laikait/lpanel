@@ -47,6 +47,7 @@ import (
 	"lpa/internal/sshkeys"
 	"lpa/internal/sysexec"
 	"lpa/internal/sysinfo"
+	"lpa/internal/updates"
 	"lpa/internal/web"
 )
 
@@ -199,6 +200,9 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	iso.Defaults()
 	ops.Isolation(reg, iso)
 	ops.Services(reg, &services.Manager{Run: sysexec.Exec{}})
+	upd := &updates.Manager{Run: sysexec.Exec{}, Log: log, Channel: cfg.Updates.URL, KeyFile: cfg.Updates.KeyFile, State: filepath.Join(state, "updates")}
+	upd.Defaults()
+	ops.Updates(reg, upd)
 	cr := &cron.Manager{Owner: acc.Owner}
 	cr.Defaults()
 	ops.Cron(reg, cr)

@@ -42,6 +42,7 @@ docker exec "$name" mkdir -p /bundle /e2e
 docker cp "${bundle%/}/." "$name:/bundle/"
 docker cp tests/e2e/install-inside.sh "$name:/e2e/install-inside.sh"
 docker cp tests/e2e/quota-home.sh "$name:/e2e/quota-home.sh"
+docker cp dist/installer/release.sh "$name:/e2e/release.sh"
 docker cp "$pebble" "$name:/e2e/pebble"
 # HOME_FS=xfs tests/e2e/install.sh puts /home on XFS with uquota instead of ext4.
 # WEB=nginx or WEB=hybrid tests/e2e/install.sh installs that web stack instead of Apache.

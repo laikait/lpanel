@@ -121,8 +121,8 @@ func (m *Manager) InstallPHP(ctx context.Context, a PHPArgs) (PHPState, error) {
 	if err := m.phpOn(a.Version); err != nil {
 		return PHPState{}, err
 	}
-	m.pkgMu.Lock()
-	defer m.pkgMu.Unlock()
+	sysexec.Packages.Lock()
+	defer sysexec.Packages.Unlock()
 
 	names := make([]string, 0, len(phpBase)+len(phpDefaults))
 	for _, p := range phpBase {
@@ -154,8 +154,8 @@ func (m *Manager) RemovePHP(ctx context.Context, a PHPArgs) (PHPState, error) {
 	if a.Version == m.PanelPHP {
 		return PHPState{}, protocol.Fail(CodePanelPHP, "the panel itself runs on PHP "+label(a.Version))
 	}
-	m.pkgMu.Lock()
-	defer m.pkgMu.Unlock()
+	sysexec.Packages.Lock()
+	defer sysexec.Packages.Unlock()
 	// No site may start using it while it goes.
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -207,8 +207,8 @@ func (m *Manager) PHPExtensions(ctx context.Context, a ExtensionArgs) (PHPState,
 	if !slices.Contains(m.installed(), a.Version) {
 		return PHPState{}, protocol.Fail(CodeNotInstalled, "PHP "+label(a.Version)+" is not installed")
 	}
-	m.pkgMu.Lock()
-	defer m.pkgMu.Unlock()
+	sysexec.Packages.Lock()
+	defer sysexec.Packages.Unlock()
 
 	pkg := func(list []string) []string {
 		out := make([]string, 0, len(list))

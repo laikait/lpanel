@@ -3,6 +3,7 @@ package journal
 import (
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -117,11 +118,15 @@ func TestAClaimIsNeverSeenHalfWritten(t *testing.T) {
 	j, _ := Open(privateDir(t))
 	done := make(chan struct{})
 	errs := make(chan error, 200)
+	// Every retry is waited for: the test's folder is removed when it ends.
+	var wg sync.WaitGroup
 	go func() {
 		defer close(done)
 		for i := 0; i < 200; i++ {
 			id := "race-" + string(rune('a'+i%26)) + "-" + time.Now().Format("150405.000000000")
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				for k := 0; k < 20; k++ {
 					if _, err := j.Claim(id, "web.apply", "aaa"); err != nil && !errors.Is(err, ErrExists) {
 						errs <- err
@@ -135,7 +140,7 @@ func TestAClaimIsNeverSeenHalfWritten(t *testing.T) {
 		}
 	}()
 	<-done
-	time.Sleep(200 * time.Millisecond)
+	wg.Wait()
 	select {
 	case err := <-errs:
 		t.Fatalf("a retry saw a claim half written: %v", err)

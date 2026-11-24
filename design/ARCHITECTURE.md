@@ -422,6 +422,9 @@ user, not from SELinux.
 | `/usr/local/lpa/bin/lpa`, `/usr/local/lpa/bin/lpanel-authd` | the two root programs (`lpanel_agent_exec_t`, `lpanel_authd_exec_t`) |
 | `/etc/lpa/lpa.json`, `/etc/lpa/panel.pub` | agent config, and the panel's public key |
 | `/var/lib/lpa/journal/` | agent journal |
+| `/etc/lpa/release.pub` | the public keys LPanel's releases are signed with (from a release bundle; lpa.json `updates.url` names the channel) |
+| `/var/lib/lpa/updates/` | LPanel upgrades (0700 root): the downloaded, checked release and its folder, `upgrade.log`, `status.json`, and `rollback/` (the panel's code, the agent, LPanel's units and a dump of the panel's database, put back if `install.sh` fails) |
+| `/usr/local/lpanel/VERSION` | the release installed (the Updates page and the agent read it) |
 | `/run/lpa/lpa.sock`, `/run/lpanel-authd/authd.sock` | the two sockets, 0660 root:lpanel |
 | `/home/<user>/` | account homes (`public_html`, `mail`, `logs`, `tmp`, `.lpanel`) |
 | `/etc/httpd/conf.d/lpanel.conf` | the agent's one addition to Apache: the log format, a 404 default site on 80 and on 443 (with the hostname's certificate), `Listen 443` when Apache is alone, and the include of the sites folder (through the `LPANEL_SITES` variable, so candidates can be tested whole). The installer empties mod_ssl's own `ssl.conf` |

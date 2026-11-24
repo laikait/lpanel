@@ -13,6 +13,7 @@ use App\Engine\Scheduler\ScheduleCollector;
 use App\Modules\Operations\Commands\CronCommands;
 use App\Modules\Operations\Commands\ServiceCommands;
 use App\Modules\Operations\Commands\TaskCommands;
+use App\Modules\Operations\Commands\UpdateCommands;
 use App\Modules\Operations\Cron\CronJobs;
 use App\Modules\Operations\Http\CronApi;
 use App\Modules\Operations\Http\CronPages;
@@ -20,15 +21,21 @@ use App\Modules\Operations\Http\ServiceApi;
 use App\Modules\Operations\Http\ServicePages;
 use App\Modules\Operations\Http\TaskApi;
 use App\Modules\Operations\Http\TaskPages;
+use App\Modules\Operations\Http\UpdateApi;
+use App\Modules\Operations\Http\UpdatePages;
 use App\Modules\Operations\OperationsListeners;
 use App\Modules\Operations\Services\Services;
 use App\Modules\Operations\Services\Watchdog;
 use App\Modules\Operations\Tasks\Tasks;
+use App\Modules\Operations\Updates\PanelRelease;
+use App\Modules\Operations\Updates\Updates;
+use App\Modules\Operations\Updates\UpdateSettings;
 
 /**
  * Operations: looking after the server once it is running. First the services
  * (how each is doing, start, stop, restart, and a watchdog that restarts what
- * falls over); cron jobs, updates, logs and alerts follow.
+ * falls over); cron jobs and the agent's background tasks; updates of the
+ * operating system, PHP and LPanel itself; logs and alerts follow.
  */
 return static function (ModuleContext $module): void {
     $module
@@ -49,6 +56,12 @@ return static function (ModuleContext $module): void {
         $services->singleton(Watchdog::class);
         $services->singleton(CronJobs::class);
         $services->singleton(Tasks::class);
+        $services->singleton(UpdateSettings::class);
+        $services->singleton(PanelRelease::class);
+        $services->singleton(Updates::class);
+        $services->bind(UpdatePages::class);
+        $services->bind(UpdateApi::class);
+        $services->bind(UpdateCommands::class);
         $services->bind(TaskPages::class);
         $services->bind(TaskApi::class);
         $services->bind(TaskCommands::class);
@@ -63,6 +76,7 @@ return static function (ModuleContext $module): void {
 
     $module->access(static function (AccessCollector $access): void {
         $access->capability('server.services', 'See how the server\'s services are doing, start, stop and restart them, and set which ones the watchdog restarts.');
+        $access->capability('server.updates', 'Install the operating system\'s, PHP\'s and LPanel\'s updates, choose what is installed by itself, and reboot the server.');
     });
 
     $module->routes(static function (RouteCollector $routes): void {
@@ -87,7 +101,26 @@ return static function (ModuleContext $module): void {
             $routes->delete('/{id}', [CronApi::class, 'remove'])->name('.remove')->where('id', '\d+');
         }, name: 'api.cron', meta: ['can' => 'accounts.modify', 'csrf' => false, 'rate_limit' => '60/1m']);
 
-        $routes->get('/admin/tasks', [TaskPages::class, 'index'])->name('admin.tasks')->meta(['can' => 'server.services']);
+        $routes->group('/admin/updates', static function (RouteCollector $routes): void {
+            $routes->get('', [UpdatePages::class, 'index'])->name('');
+            $routes->post('/check', [UpdatePages::class, 'check'])->name('.check');
+            $routes->post('/apply', [UpdatePages::class, 'apply'])->name('.apply');
+            $routes->post('/panel', [UpdatePages::class, 'panel'])->name('.panel');
+            $routes->post('/reboot', [UpdatePages::class, 'reboot'])->name('.reboot');
+            $routes->post('/settings', [UpdatePages::class, 'saveSettings'])->name('.settings');
+        }, name: 'admin.updates', meta: ['can' => 'server.updates', 'no_impersonation' => true]);
+
+        $routes->group('/admin/api/v1/updates', static function (RouteCollector $routes): void {
+            $routes->get('', [UpdateApi::class, 'index'])->name('');
+            $routes->post('/check', [UpdateApi::class, 'check'])->name('.check');
+            $routes->post('/apply', [UpdateApi::class, 'apply'])->name('.apply');
+            $routes->post('/panel', [UpdateApi::class, 'panel'])->name('.panel');
+            $routes->post('/reboot', [UpdateApi::class, 'reboot'])->name('.reboot');
+            $routes->put('/settings', [UpdateApi::class, 'saveSettings'])->name('.settings');
+            $routes->get('/runs/{id}', [UpdateApi::class, 'run'])->name('.run')->where('id', '\d+');
+        }, name: 'api.updates', meta: ['can' => 'server.updates', 'csrf' => false, 'rate_limit' => '60/1m']);
+
+        $routes->get('/admin/tasks',[TaskPages::class, 'index'])->name('admin.tasks')->meta(['can' => 'server.services']);
         $routes->get('/admin/api/v1/tasks', [TaskApi::class, 'index'])->name('api.tasks')->meta(['can' => 'server.services', 'csrf' => false, 'rate_limit' => '60/1m']);
 
         $routes->group('/admin/api/v1/services', static function (RouteCollector $routes) use ($unit, $action): void {
@@ -128,17 +161,50 @@ return static function (ModuleContext $module): void {
             ->describe('Show what the server\'s agent has done and is doing (newest first).')
             ->option('state', 'running, done, failed or interrupted.')
             ->option('limit', 'How many (default 30).');
-        $commands->add('watchdog:run', [ServiceCommands::class, 'watchdog'])
+        $commands->add('updates:status', [UpdateCommands::class, 'status'])
+            ->describe('Show what can be updated (as the last check found), what runs now and the latest updates.');
+        $commands->add('updates:check', [UpdateCommands::class, 'check'])
+            ->describe('Ask the server what can be updated: packages, security errata, PHP, LPanel\'s latest release.')
+            ->flag('wait', 'Wait for the answer.');
+        $commands->add('updates:apply', [UpdateCommands::class, 'apply'])
+            ->describe('Install updates: everything, or only the security ones, PHP\'s, or named packages.')
+            ->flag('security', 'Only the packages a security erratum updates.')
+            ->flag('php', 'Only PHP (every installed version).')
+            ->option('packages', 'Only these installed packages, by name (comma-separated).')
+            ->flag('wait', 'Wait until it is done, and say what it did.');
+        $commands->add('updates:panel', [UpdateCommands::class, 'panel'])
+            ->describe('Upgrade LPanel to the release its update channel offers (backed up first, put back if the installation fails).')
+            ->argument('version', 'The release (default: the one the last check found).', required: false)
+            ->flag('wait', 'Wait until it is installed or put back.');
+        $commands->add('updates:reboot', [UpdateCommands::class, 'reboot'])
+            ->describe('Reboot the server a minute from now (or call that off).')
+            ->flag('yes', 'Yes, reboot.')
+            ->flag('cancel', 'Call off a reboot that has not happened yet.');
+        $commands->add('updates:settings', [UpdateCommands::class, 'setSettings'])
+            ->describe('Show or change what is installed by itself, and when.')
+            ->option('os', 'The system\'s updates installed every night: off, security or all.')
+            ->option('php', 'PHP\'s updates too: yes or no.')
+            ->option('hour', 'The hour (0-23, server time) they are installed in.')
+            ->option('exclude', 'Packages never updated, space- or comma-separated (patterns such as kernel* too); "" for none.')
+            ->option('panel', 'LPanel\'s releases: notify or install.')
+            ->option('reboot', 'Reboot in the same hour when an update needs it: yes or no.');
+        $commands->add('updates:settle', [UpdateCommands::class, 'settle'])
+            ->describe('Ask the agent how running updates went.');
+        $commands->add('updates:due', [UpdateCommands::class, 'due'])
+            ->describe('Start what is due: the daily check, and in the night\'s hour the updates the settings install.');
+        $commands->add('watchdog:run',[ServiceCommands::class, 'watchdog'])
             ->describe('Look at the services once, and restart the ones that fell over.')
             ->option('grace', 'Seconds a service must have been found down before it is restarted (default 20).');
     });
 
     $module->schedules(static function (ScheduleCollector $schedules): void {
         $schedules->command('watchdog:run')->everyMinute()->withoutOverlapping(600);
+        $schedules->command('updates:due')->everyMinute()->withoutOverlapping(600);
     });
 
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'cron', 'label' => 'Operations.cron_title', 'icon' => 'clock', 'route' => 'user.cron', 'can' => 'feature.cron', 'order' => 40];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'updates', 'label' => 'Operations.updates_title', 'icon' => 'download', 'route' => 'admin.updates', 'can' => 'server.updates', 'order' => 7];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'tasks', 'label' => 'Operations.tasks_title', 'icon' => 'activity', 'route' => 'admin.tasks', 'can' => 'server.services', 'order' => 6];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'services', 'label' => 'Operations.services_title', 'icon' => 'server', 'route' => 'admin.services', 'can' => 'server.services', 'order' => 5];
 

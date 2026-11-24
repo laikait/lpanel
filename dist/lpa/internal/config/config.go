@@ -60,6 +60,17 @@ type Config struct {
 	// FilesStaging is the panel's folder for the file manager's uploads,
 	// saved files and downloads; the agent opens files in it by name only.
 	FilesStaging string `json:"files_staging"`
+	// Updates is where LPanel's own releases come from.
+	Updates Updates `json:"updates"`
+}
+
+// Updates is lpa.json's "updates".
+type Updates struct {
+	// URL is the release manifest's address (HTTPS); empty means LPanel is
+	// not updated from the panel.
+	URL string `json:"url"`
+	// KeyFile holds the public keys releases are signed with, one per line.
+	KeyFile string `json:"key_file"`
 }
 
 // DNS is lpa.json's "dns".
@@ -99,6 +110,7 @@ func Defaults() Config {
 		FTP:          "off",
 		Firewall:     "off",
 		FilesStaging: "/var/lib/lpanel/files",
+		Updates:      Updates{KeyFile: "/etc/lpa/release.pub"},
 		ACME: ACME{
 			LetsEncrypt: "https://acme-v02.api.letsencrypt.org/directory",
 			ZeroSSL:     "https://acme.zerossl.com/v2/DV90",
@@ -179,6 +191,16 @@ func (c Config) validate() error {
 		if _, _, err := net.SplitHostPort(c.DNS.Resolver); err != nil {
 			return fmt.Errorf("dns.resolver must be host:port, not %q", c.DNS.Resolver)
 		}
+	}
+	if c.Updates.URL != "" {
+		p, err := url.Parse(c.Updates.URL)
+		loopback := p != nil && (p.Hostname() == "127.0.0.1" || p.Hostname() == "localhost" || p.Hostname() == "::1")
+		if err != nil || p.Host == "" || p.User != nil || (p.Scheme != "https" && !(p.Scheme == "http" && loopback)) {
+			return fmt.Errorf("updates.url must be an https URL, not %q", c.Updates.URL)
+		}
+	}
+	if !path.IsAbs(c.Updates.KeyFile) {
+		return fmt.Errorf("updates.key_file must be an absolute path, not %q", c.Updates.KeyFile)
 	}
 	if c.MaxRunning < 1 || c.JournalDays < 1 {
 		return errors.New("max_running and journal_days must be at least 1")

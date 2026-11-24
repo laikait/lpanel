@@ -81,16 +81,22 @@ cp dist/authd/packaging/authd.json dist/authd/packaging/lpanel-authd.service \
 install -m 0644 dist/selinux/bin/lpanel.pp "$out/packaging/lpanel.pp"
 install -m 0755 dist/selinux/setup.sh "$out/packaging/selinux-setup.sh"
 install -m 0755 dist/installer/install.sh "$out/install.sh"
+install -m 0755 dist/installer/upgrade.sh "$out/upgrade.sh"
 install -m 0755 dist/installer/diagnose.sh "$out/diagnose.sh"
 echo "$version" > "$out/VERSION"
+# A release build names its update channel and the public key its releases
+# are signed with (dist/installer/release.sh signs them); a development
+# bundle has neither, and servers installed from it are upgraded by hand.
+if [ -n "${LPANEL_UPDATE_URL:-}" ]; then echo "$LPANEL_UPDATE_URL" > "$out/UPDATE_URL"; fi
+if [ -n "${LPANEL_RELEASE_PUB:-}" ]; then install -m 0644 "$LPANEL_RELEASE_PUB" "$out/packaging/release.pub"; fi
 
 # Built on Windows, the files lose their execute bits; the archive sets them
 # for the programs (bin/, install.sh, selinux-setup.sh).
 rm -f "dist/build/lpanel-${version}.tar" "dist/build/lpanel-${version}.tar.gz"
 tar -C dist/build -cf "dist/build/lpanel-${version}.tar" \
-    --exclude="lpanel-${version}/bin/*" --exclude="lpanel-${version}/install.sh" --exclude="lpanel-${version}/diagnose.sh" \
+    --exclude="lpanel-${version}/bin/*" --exclude="lpanel-${version}/install.sh" --exclude="lpanel-${version}/upgrade.sh" --exclude="lpanel-${version}/diagnose.sh" \
     --exclude="lpanel-${version}/packaging/selinux-setup.sh" "lpanel-${version}"
 tar -C dist/build -rf "dist/build/lpanel-${version}.tar" --mode=0755 \
-    "lpanel-${version}/bin" "lpanel-${version}/install.sh" "lpanel-${version}/diagnose.sh" "lpanel-${version}/packaging/selinux-setup.sh"
+    "lpanel-${version}/bin" "lpanel-${version}/install.sh" "lpanel-${version}/upgrade.sh" "lpanel-${version}/diagnose.sh" "lpanel-${version}/packaging/selinux-setup.sh"
 gzip -9 "dist/build/lpanel-${version}.tar"
 echo "dist/build/lpanel-${version}.tar.gz ($(du -h "dist/build/lpanel-${version}.tar.gz" | cut -f1))"

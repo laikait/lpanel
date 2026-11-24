@@ -189,6 +189,36 @@ final class FakeServer
     /** @var list<array<string, mixed>> what tasks.list answers (newest first) */
     public array $tasks = [];
 
+    /** @var array<string, mixed> what updates.check finds */
+    public array $updatesFound = [
+        'checked' => '2026-11-24T03:00:00Z', 'kernel' => '5.14.0-503.el9.x86_64',
+        'packages' => [
+            ['name' => 'openssl-libs', 'arch' => 'x86_64', 'from' => '1:3.0.7-24.el9', 'to' => '1:3.0.7-27.el9', 'repo' => 'baseos', 'advisory' => 'ALSA-2026:0202', 'kind' => 'security', 'severity' => 'Important'],
+            ['name' => 'php83-php-common', 'arch' => 'x86_64', 'from' => '8.3.14-1.el9.remi', 'to' => '8.3.15-1.el9.remi', 'repo' => 'remi-safe', 'advisory' => '', 'kind' => '', 'severity' => ''],
+        ],
+        'security' => 1, 'php' => [['version' => '83', 'from' => '8.3.14', 'to' => '8.3.15']], 'restart' => [],
+        'reboot' => ['known' => true, 'needed' => false, 'why' => [], 'scheduled' => false],
+        'panel' => ['channel' => true, 'installed' => '0.1.0', 'latest' => '0.2.0', 'released' => '2026-11-24', 'notes' => 'Fixes.', 'newer' => true, 'error' => ''],
+    ];
+
+    /** @var list<array<string, mixed>> what each updates.apply was asked */
+    public array $updatesApplied = [];
+
+    /** @var bool while true, update runs (check, apply, panel) are still going on */
+    public bool $updatesHold = false;
+
+    /** @var list<array<string, mixed>> what each updates.panel was asked */
+    public array $upgrades = [];
+
+    /** @var array<string, mixed> what updates.panel_status answers */
+    public array $upgradeStatus = ['state' => '', 'target' => '', 'from' => '', 'started' => '', 'finished' => '', 'error' => '', 'running' => false, 'installed' => '0.1.0', 'log' => []];
+
+    /** @var list<bool> each updates.reboot, true for a cancel */
+    public array $reboots = [];
+
+    /** @var list<string> ids of update runs (op.status answers "running" for them while updatesHold) */
+    private array $updateIds = [];
+
     /** @var list<string> what services.act was asked, as "unit action" */
     public array $serviceActs = [];
 
@@ -259,7 +289,7 @@ final class FakeServer
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
-        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries', 'waf.settings', 'isolation.apply', 'services.act', 'cron.apply'] as $op) {
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries', 'waf.settings', 'isolation.apply', 'services.act', 'cron.apply', 'updates.check', 'updates.apply', 'updates.panel', 'updates.reboot'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -272,6 +302,10 @@ final class FakeServer
 
             if ($entry === null) {
                 return ['status' => 'refused', 'error' => ['code' => 'not_found', 'message' => 'no operation with that id']];
+            }
+
+            if ($this->updatesHold && \in_array((string) $args['id'], $this->updateIds, true)) {
+                return ['status' => 'running'];
             }
 
             return $this->backupHold && \in_array((string) $args['id'], $this->backupIds, true) ? ['status' => 'running'] : $entry;
@@ -347,6 +381,7 @@ final class FakeServer
 
             return ['status' => 'done', 'result' => ['tasks' => \array_slice($list, 0, (int) ($args['limit'] ?? 50))]];
         };
+        $answers['updates.panel_status'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->upgradeStatus];
         $answers['services.status'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['services' => $this->serviceList()]];
         $answers['isolation.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->isolationInfo()];
         $answers['waf.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
@@ -540,7 +575,11 @@ final class FakeServer
         }
 
         // These run in the background: the first answer is "accepted".
-        $async = \str_starts_with($op, 'php.') || \in_array($op, ['ssl.issue', 'ssl.host_issue', 'backup.run', 'backup.restore', 'backup.download'], true);
+        $async = \str_starts_with($op, 'php.') || \in_array($op, ['ssl.issue', 'ssl.host_issue', 'backup.run', 'backup.restore', 'backup.download', 'updates.check', 'updates.apply', 'updates.panel'], true);
+
+        if (\in_array($op, ['updates.check', 'updates.apply', 'updates.panel'], true)) {
+            $this->updateIds[] = $id;
+        }
 
         if (\in_array($op, ['backup.run', 'backup.restore', 'backup.download'], true)) {
             $this->backupIds[] = $id;
@@ -597,6 +636,47 @@ final class FakeServer
             return $this->runFirewall($op, $args);
         }
 
+        if ($op === 'updates.check') {
+            return ['status' => 'done', 'result' => $this->updatesFound];
+        }
+
+        if ($op === 'updates.apply') {
+            $this->updatesApplied[] = $args;
+            $names = match ((string) $args['scope']) {
+                'security' => \array_column(\array_filter($this->updatesFound['packages'], static fn(array $p): bool => $p['kind'] === 'security'), 'name'),
+                'php' => \array_values(\array_filter(\array_column($this->updatesFound['packages'], 'name'), static fn(string $n): bool => \str_starts_with($n, 'php'))),
+                'packages' => (array) $args['packages'],
+                default => \array_column($this->updatesFound['packages'], 'name'),
+            };
+            $upgraded = [];
+
+            foreach ($this->updatesFound['packages'] as $p) {
+                if (\in_array($p['name'], $names, true)) {
+                    $upgraded[] = ['name' => $p['name'], 'arch' => $p['arch'], 'from' => $p['from'], 'to' => $p['to']];
+                }
+            }
+
+            return ['status' => 'done', 'result' => ['scope' => $args['scope'], 'upgraded' => $upgraded, 'restarted' => ['httpd.service'], 'restart_failed' => [], 'soon' => [], 'pending' => [], 'reboot' => $this->updatesFound['reboot']]];
+        }
+
+        if ($op === 'updates.panel') {
+            $this->upgrades[] = $args;
+            $latest = (string) $this->updatesFound['panel']['latest'];
+
+            if ($args['version'] !== $latest) {
+                return ['status' => 'failed', 'error' => ['code' => 'updates_release', 'message' => 'the channel now offers ' . $latest . ', not ' . $args['version']]];
+            }
+
+            $this->upgradeStatus = ['state' => 'starting', 'target' => $latest, 'from' => '0.1.0', 'started' => '2026-11-24T03:00:00Z', 'finished' => '', 'error' => '', 'running' => true, 'installed' => '0.1.0', 'log' => []];
+
+            return ['status' => 'done', 'result' => ['target' => $latest, 'from' => '0.1.0', 'unit' => 'lpanel-upgrade']];
+        }
+
+        if ($op === 'updates.reboot') {
+            $this->reboots[] = (bool) $args['cancel'];
+
+            return ['status' => 'done', 'result' => ['known' => true, 'needed' => false, 'why' => [], 'scheduled' => !$args['cancel']]];
+        }
         if ($op === 'cron.apply') {
             $this->cronApplied[] = $args;
 

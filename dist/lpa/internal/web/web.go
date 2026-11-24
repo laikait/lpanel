@@ -225,9 +225,8 @@ type Manager struct {
 	ProbeFor time.Duration
 
 	mu sync.Mutex
-	// pkgMu keeps dnf runs one at a time (dnf has its own lock, and would
-	// fail the second rather than wait).
-	pkgMu sync.Mutex
+	// dnf runs are kept one at a time by sysexec.Packages, shared with the
+	// update operations.
 	// trafficMu keeps web.traffic runs one at a time.
 	trafficMu sync.Mutex
 }

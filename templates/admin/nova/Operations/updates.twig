@@ -1,0 +1,236 @@
+{% extends "layout.twig" %}
+
+{% macro run_label(r) %}{% if r.kind == 'os' %}{{ ('Operations.updates_scope_' ~ r.scope)|local }}{% elseif r.kind == 'panel' %}{{ 'Operations.updates_run_panel'|local({version: r.target}) }}{% elseif r.kind == 'reboot' %}{{ (r.scope == 'cancel' ? 'Operations.updates_run_reboot_cancel' : 'Operations.updates_run_reboot')|local }}{% else %}{{ 'Operations.updates_run_check'|local }}{% endif %}{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Operations.updates_title'|local }}</h1>
+        <p>{{ 'Operations.updates_lead'|local }}</p>
+    </div>
+    <form class="page-actions" method="post" action="{{ urls.check }}">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <button class="btn" type="submit"{% if busy %} disabled{% endif %}>{{ icon('refresh') }}{{ 'Operations.updates_check'|local }}</button>
+    </form>
+</div>
+
+{% if busy %}
+    <div class="alert alert-info" data-reload="8">{{ icon('refresh') }}<p><strong>{{ _self.run_label(busy) }}</strong> · {{ (busy.state == 'installing' ? 'Operations.updates_busy_installing' : 'Operations.updates_busy_running')|local({when: busy.started_at|when}) }}</p></div>
+{% endif %}
+
+<div class="grid grid-4 stats-row" style="margin-bottom:20px">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('download') }}</span>
+        <div><div class="stat-label">{{ 'Operations.updates_tile_waiting'|local }}</div><div class="stat-value">{{ latest ? latest.packages|length : '–' }}</div><div class="stat-sub">{{ latest ? 'Operations.updates_checked'|local({when: latest.checked_at|when}) : 'Operations.updates_never'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('shield') }}</span>
+        <div><div class="stat-label">{{ 'Operations.updates_tile_security'|local }}</div><div class="stat-value">{% if latest and latest.security %}<span class="badge bad">{{ latest.security }}</span>{% else %}{{ latest ? 0 : '–' }}{% endif %}</div><div class="stat-sub">{{ 'Operations.updates_tile_security_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('power') }}</span>
+        <div><div class="stat-label">{{ 'Operations.updates_tile_reboot'|local }}</div><div class="stat-value">{% if latest and latest.reboot.needed %}<span class="badge warn">{{ 'Operations.updates_reboot_yes'|local }}</span>{% else %}{{ latest and latest.reboot.known ? 'Operations.updates_reboot_no'|local : '–' }}{% endif %}</div><div class="stat-sub mono">{{ latest.kernel|default('') }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('box') }}</span>
+        <div><div class="stat-label">{{ 'Operations.updates_tile_panel'|local }}</div><div class="stat-value mono">{{ installed ?: 'dev' }}</div><div class="stat-sub">{% if latest and latest.panel.newer %}<span class="badge ok">{{ 'Operations.updates_panel_out'|local({version: latest.panel.latest}) }}</span>{% else %}{{ 'Operations.updates_tile_panel_sub'|local }}{% endif %}</div></div>
+    </div>
+</div>
+
+<div class="grid grid-side" style="margin-bottom:20px">
+    <div class="stack">
+        <section class="card">
+            <div class="card-head">
+                <div><h2>{{ 'Operations.updates_waiting'|local }}</h2><p>{{ 'Operations.updates_waiting_lead'|local }}</p></div>
+                {% if latest and packages %}
+                <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0">
+                    {% if latest.security %}
+                    <form class="inline-form" method="post" action="{{ urls.apply }}" data-confirm="{{ 'Operations.updates_confirm_security'|local({n: latest.security}) }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="scope" value="security">
+                        <button class="btn btn-sm btn-primary" type="submit"{% if busy %} disabled{% endif %}>{{ icon('shield') }}{{ 'Operations.updates_install_security'|local }}</button>
+                    </form>
+                    {% endif %}
+                    <form class="inline-form" method="post" action="{{ urls.apply }}" data-confirm="{{ 'Operations.updates_confirm_all'|local({n: packages|length}) }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="scope" value="all">
+                        <button class="btn btn-sm{{ latest.security ? '' : ' btn-primary' }}" type="submit"{% if busy %} disabled{% endif %}>{{ icon('download') }}{{ 'Operations.updates_install_all'|local }}</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+            {% if latest is null %}
+                <div class="empty">{{ icon('refresh') }}<h3>{{ 'Operations.updates_never_title'|local }}</h3><p>{{ 'Operations.updates_never_text'|local }}</p></div>
+            {% elseif packages is empty %}
+                <div class="empty">{{ icon('check') }}<h3>{{ 'Operations.updates_none_title'|local }}</h3><p>{{ 'Operations.updates_none_text'|local({when: latest.checked_at|when}) }}</p></div>
+            {% else %}
+            <form method="post" action="{{ urls.apply }}">
+                <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="scope" value="packages">
+                <div class="table-wrap"><table class="table">
+                    <thead><tr><th style="width:1%"><span class="sr-only">{{ 'Operations.updates_pick'|local }}</span></th><th>{{ 'Operations.updates_package'|local }}</th><th class="hide-sm">{{ 'Operations.updates_version'|local }}</th><th style="text-align:end">{{ 'Operations.updates_kind'|local }}</th></tr></thead>
+                    <tbody>
+                    {% for p in packages %}
+                        <tr>
+                            <td><input type="checkbox" name="packages[]" value="{{ p.name }}" id="pk-{{ loop.index }}" aria-label="{{ p.name }}"></td>
+                            <td><label for="pk-{{ loop.index }}"><strong class="mono">{{ p.name }}</strong></label><div class="domain-sub">{{ p.arch }} · {{ p.repo }}<span class="show-sm"> · {{ p.to }}</span></div></td>
+                            <td class="hide-sm mono domain-sub" style="white-space:normal">{{ p.from ?: '–' }} → <strong>{{ p.to }}</strong></td>
+                            <td style="text-align:end">
+                                {% if p.kind == 'security' %}<span class="badge {{ p.severity in ['Critical', 'Important'] ? 'bad' : 'warn' }}" title="{{ p.advisory }}">{{ 'Operations.updates_security'|local }}{% if p.severity %} · {{ p.severity }}{% endif %}</span>
+                                {% elseif p.kind %}<span class="badge plain" title="{{ p.advisory }}">{{ ('Operations.updates_kind_' ~ p.kind)|local }}</span>{% endif %}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table></div>
+                <div class="card-foot"><button class="btn" type="submit"{% if busy %} disabled{% endif %}>{{ 'Operations.updates_install_picked'|local }}</button></div>
+            </form>
+            {% endif %}
+        </section>
+
+        {% if latest and latest.php %}
+        <section class="card">
+            <div class="card-head">
+                <div><h2>{{ 'Operations.updates_php'|local }}</h2><p>{{ 'Operations.updates_php_lead'|local }}</p></div>
+                <form class="inline-form" method="post" action="{{ urls.apply }}">
+                    <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="scope" value="php">
+                    <button class="btn btn-sm" type="submit"{% if busy %} disabled{% endif %}>{{ icon('download') }}{{ 'Operations.updates_install_php'|local }}</button>
+                </form>
+            </div>
+            <div class="table-wrap"><table class="table"><tbody>
+                {% for p in latest.php %}
+                    <tr><td><strong>PHP {{ p.version[:1] }}.{{ p.version[1:] }}</strong></td><td class="mono" style="text-align:end">{{ p.from }} → <strong>{{ p.to }}</strong></td></tr>
+                {% endfor %}
+            </tbody></table></div>
+        </section>
+        {% endif %}
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Operations.updates_history'|local }}</h2><p>{{ 'Operations.updates_history_lead'|local }}</p></div></div>
+            {% if runs is empty %}
+                <div class="empty">{{ icon('clock') }}<h3>{{ 'Operations.updates_history_none'|local }}</h3><p>{{ 'Operations.updates_history_none_text'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table"><tbody>
+                {% for r in runs %}
+                    <tr>
+                        <td>
+                            <strong>{{ _self.run_label(r) }}</strong>
+                            <div class="domain-sub">{{ r.started_by == 'schedule' ? 'Operations.updates_by_schedule'|local : 'Operations.updates_by'|local({name: r.started_by}) }}</div>
+                            {% if r.state == 'failed' and r.error %}<div class="domain-sub" style="white-space:normal;color:var(--bad)">{{ r.error starts with 'Operations.' ? r.error|local : r.error }}</div>{% endif %}
+                            {% if r.kind == 'os' and r.state == 'done' %}
+                                {% set up = r.result.upgraded|default([]) %}
+                                <details class="domain-sub"><summary>{{ 'Operations.updates_upgraded'|local({n: up|length}) }}</summary>
+                                    <ul class="mono" style="margin:6px 0 0;padding-inline-start:18px">{% for p in up %}<li>{{ p.name }} {{ p.from ?: '' }} → {{ p.to }}</li>{% endfor %}</ul>
+                                    {% if r.result.restarted|default([]) %}<div>{{ 'Operations.updates_restarted'|local }}: <span class="mono">{{ r.result.restarted|join(' ') }}</span></div>{% endif %}
+                                    {% if r.result.restart_failed|default([]) %}<div style="color:var(--bad)">{{ 'Operations.updates_restart_failed'|local }}: <span class="mono">{{ r.result.restart_failed|join(' ') }}</span></div>{% endif %}
+                                    {% if r.result.pending|default([]) %}<div>{{ 'Operations.updates_pending'|local }}: <span class="mono">{{ r.result.pending|join(' ') }}</span></div>{% endif %}
+                                </details>
+                            {% elseif r.kind == 'check' and r.state == 'done' %}
+                                <div class="domain-sub">{{ 'Operations.updates_found'|local({n: r.result.packages|default([])|length, s: r.result.security|default(0)}) }}</div>
+                            {% elseif r.kind == 'panel' and r.result.log|default([]) and r.state == 'failed' %}
+                                <details class="domain-sub"><summary>{{ 'Operations.updates_log'|local }}</summary><pre class="mono" style="white-space:pre-wrap;margin:6px 0 0">{{ r.result.log|join("\n") }}</pre></details>
+                            {% endif %}
+                        </td>
+                        <td><span class="badge {{ r.state == 'done' ? 'ok' : (r.state == 'failed' ? 'bad' : 'warn') }}">{{ ('Operations.updates_state_' ~ r.state)|local }}</span></td>
+                        <td style="text-align:end" class="domain-sub">{{ r.started_at|when }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody></table></div>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="stack">
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Operations.updates_panel'|local }}</h2><p>{{ 'Operations.updates_panel_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <p><span class="label" style="display:inline">{{ 'Operations.updates_panel_installed'|local }}</span> <strong class="mono">{{ installed ?: 'Operations.updates_panel_dev'|local }}</strong></p>
+                {% if latest is null %}
+                    <p class="hint">{{ 'Operations.updates_never_text'|local }}</p>
+                {% elseif not latest.panel.channel %}
+                    <p class="hint">{{ 'Operations.updates_panel_no_channel'|local }}</p>
+                {% elseif latest.panel.error %}
+                    <div class="alert alert-error" style="margin:0">{{ icon('alert') }}<p>{{ 'Operations.updates_panel_error'|local }}<br><span class="mono">{{ latest.panel.error }}</span></p></div>
+                {% elseif latest.panel.newer %}
+                    <p><strong>{{ 'Operations.updates_panel_out'|local({version: latest.panel.latest}) }}</strong>{% if latest.panel.released %} <span class="domain-sub" style="display:inline">({{ latest.panel.released }})</span>{% endif %}</p>
+                    {% if latest.panel.notes %}<p class="hint" style="white-space:pre-line">{{ latest.panel.notes }}</p>{% endif %}
+                    <form method="post" action="{{ urls.panel }}" data-confirm="{{ 'Operations.updates_confirm_panel'|local({version: latest.panel.latest}) }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="version" value="{{ latest.panel.latest }}">
+                        <button class="btn btn-primary" type="submit"{% if busy %} disabled{% endif %}>{{ icon('download') }}{{ 'Operations.updates_panel_install'|local({version: latest.panel.latest}) }}</button>
+                    </form>
+                    <p class="hint">{{ 'Operations.updates_panel_safety'|local }}</p>
+                {% else %}
+                    <p class="hint">{{ 'Operations.updates_panel_current'|local }}</p>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Operations.updates_reboot'|local }}</h2><p>{{ 'Operations.updates_reboot_lead'|local }}</p></div></div>
+            <div class="card-body">
+                {% if latest and latest.reboot.needed %}
+                    <div class="alert alert-warning" style="margin-top:0">{{ icon('alert') }}<p>{{ 'Operations.updates_reboot_needed'|local }}{% if latest.reboot.why %}<br><span class="mono">{{ latest.reboot.why|join(', ') }}</span>{% endif %}</p></div>
+                {% endif %}
+                {% if latest and latest.restart %}
+                    <p class="hint">{{ 'Operations.updates_restart_list'|local }} <span class="mono">{{ latest.restart|join(' ') }}</span></p>
+                {% endif %}
+                {% if latest and latest.reboot.scheduled %}
+                    <form method="post" action="{{ urls.reboot }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="cancel" value="1">
+                        <p><strong>{{ 'Operations.updates_reboot_scheduled'|local }}</strong></p>
+                        <button class="btn" type="submit">{{ 'Operations.updates_reboot_cancel'|local }}</button>
+                    </form>
+                {% else %}
+                    <form method="post" action="{{ urls.reboot }}" data-confirm="{{ 'Operations.updates_confirm_reboot'|local }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <div class="field">
+                            <label for="u-confirm">{{ 'Operations.updates_reboot_type'|local }}</label>
+                            <input class="input mono" id="u-confirm" name="confirm" autocomplete="off" placeholder="reboot" pattern="reboot" required>
+                        </div>
+                        <button class="btn btn-danger" type="submit"{% if busy %} disabled{% endif %}>{{ icon('power') }}{{ 'Operations.updates_reboot_now'|local }}</button>
+                    </form>
+                {% endif %}
+            </div>
+        </section>
+
+        <form class="card" method="post" action="{{ urls.settings }}">
+            <div class="card-head"><div><h2>{{ 'Operations.updates_auto'|local }}</h2><p>{{ 'Operations.updates_auto_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <div class="field">
+                    <label for="u-os">{{ 'Operations.updates_auto_os'|local }}</label>
+                    <select class="input" id="u-os" name="os">
+                        {% for o in oses %}<option value="{{ o }}"{% if settings.os == o %} selected{% endif %}>{{ ('Operations.updates_os_' ~ o)|local }}</option>{% endfor %}
+                    </select>
+                </div>
+                <input type="hidden" name="php" value="0">
+                <label class="switch-row">
+                    <span><strong>{{ 'Operations.updates_auto_php'|local }}</strong><span class="hint">{{ 'Operations.updates_auto_php_hint'|local }}</span></span>
+                    <input class="toggle" type="checkbox" name="php" value="1"{% if settings.php %} checked{% endif %}>
+                </label>
+                <div class="field">
+                    <label for="u-hour">{{ 'Operations.updates_auto_hour'|local }}</label>
+                    <select class="input" id="u-hour" name="hour">
+                        {% for h in 0..23 %}<option value="{{ h }}"{% if settings.hour == h %} selected{% endif %}>{{ '%02d:00'|format(h) }}</option>{% endfor %}
+                    </select>
+                    <div class="hint">{{ 'Operations.updates_auto_hour_hint'|local }}</div>
+                </div>
+                <div class="field">
+                    <label for="u-exclude">{{ 'Operations.updates_auto_exclude'|local }}</label>
+                    <input class="input mono" id="u-exclude" name="exclude" value="{{ settings.exclude|join(' ') }}" placeholder="kernel*">
+                    <div class="hint">{{ 'Operations.updates_auto_exclude_hint'|local }}</div>
+                </div>
+                <div class="field">
+                    <label for="u-panel">{{ 'Operations.updates_auto_panel'|local }}</label>
+                    <select class="input" id="u-panel" name="panel">
+                        {% for o in panels %}<option value="{{ o }}"{% if settings.panel == o %} selected{% endif %}>{{ ('Operations.updates_panelmode_' ~ o)|local }}</option>{% endfor %}
+                    </select>
+                </div>
+                <input type="hidden" name="reboot" value="0">
+                <label class="switch-row">
+                    <span><strong>{{ 'Operations.updates_auto_reboot'|local }}</strong><span class="hint">{{ 'Operations.updates_auto_reboot_hint'|local }}</span></span>
+                    <input class="toggle" type="checkbox" name="reboot" value="1"{% if settings.reboot %} checked{% endif %}>
+                </label>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Operations.updates_save'|local }}</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}

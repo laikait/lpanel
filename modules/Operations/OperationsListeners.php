@@ -10,12 +10,14 @@ use App\Engine\Routing\Router;
 use App\Modules\Accounts\Accounts;
 use App\Modules\Operations\Cron\CronJobs;
 use App\Modules\Operations\Services\Services;
+use App\Modules\Operations\Updates\Updates;
 
 /** What Operations says to the dashboard and the bell. */
 final class OperationsListeners
 {
     public function __construct(
         private readonly Services $services,
+        private readonly Updates $updates,
         private readonly CronJobs $cron,
         private readonly Accounts $accounts,
         private readonly Authorizer $authorizer,
@@ -58,7 +60,15 @@ final class OperationsListeners
      */
     public function attention(array $items, string $area, Identity $identity): array
     {
-        if ($area !== 'admin' || !$this->authorizer->allows($identity, 'server.services')) {
+        if ($area !== 'admin') {
+            return $items;
+        }
+
+        if ($this->authorizer->allows($identity, 'server.updates')) {
+            $items = $this->updateAttention($items);
+        }
+
+        if (!$this->authorizer->allows($identity, 'server.services')) {
             return $items;
         }
 
@@ -107,5 +117,41 @@ final class OperationsListeners
         ];
 
         return $cards;
+    }
+    /**
+     * Updates that need somebody: one that failed, security updates waiting,
+     * a reboot, a new release of LPanel.
+     *
+     * @param list<array<string, mixed>> $items
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function updateAttention(array $items): array
+    {
+        $url = $this->router->url('admin.updates');
+
+        if ($this->updates->recentFailure() !== null) {
+            $items[] = ['tone' => 'bad', 'title' => 'Operations.updates_attention_failed_title', 'text' => 'Operations.updates_attention_failed', 'url' => $url];
+        }
+
+        $latest = $this->updates->latest();
+
+        if ($latest === null) {
+            return $items;
+        }
+
+        if ($latest['security'] > 0 && $this->updates->busy() === null) {
+            $items[] = ['tone' => 'warn', 'title' => 'Operations.updates_attention_security_title', 'text' => 'Operations.updates_attention_security', 'url' => $url];
+        }
+
+        if ($latest['reboot']['needed'] && !$latest['reboot']['scheduled']) {
+            $items[] = ['tone' => 'warn', 'title' => 'Operations.updates_attention_reboot_title', 'text' => 'Operations.updates_attention_reboot', 'url' => $url];
+        }
+
+        if ($latest['panel']['newer']) {
+            $items[] = ['tone' => 'info', 'title' => 'Operations.updates_attention_panel_title', 'text' => 'Operations.updates_attention_panel', 'url' => $url];
+        }
+
+        return $items;
     }
 }

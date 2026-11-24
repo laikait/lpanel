@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // Tools are the only programs operations may run, by absolute path.
@@ -56,6 +57,11 @@ var Tools = map[string]string{
 	"mount":  "/usr/bin/mount",
 	"sysctl": "/usr/sbin/sysctl",
 }
+
+// Packages keeps dnf runs one at a time across every operation that installs,
+// removes or updates packages (dnf has its own lock, and would fail the second
+// run rather than wait for it).
+var Packages sync.Mutex
 
 // phpFPM is the one family of tools with a version in the name: "php-fpm83"
 // is Remi's PHP 8.3 FPM. The version is two digits, so the path cannot be
