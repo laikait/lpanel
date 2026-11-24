@@ -33,7 +33,7 @@ fi
 
 name=lpanel-install-e2e-$$
 docker run -d --name "$name" --hostname e2e-panel.test --privileged --cgroupns=host \
-    -v /sys/fs/cgroup:/sys/fs/cgroup:rw almalinux/9-init >/dev/null
+    -v /sys/fs/cgroup:/sys/fs/cgroup:rw "almalinux/${EL:-9}-init" >/dev/null
 # KEEP=1 leaves the container running afterwards, to look around in it.
 [ "${KEEP:-}" = 1 ] && echo "container: $name" || trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
 for _ in $(seq 30); do docker exec "$name" systemctl is-system-running >/dev/null 2>&1 && break; sleep 1; done

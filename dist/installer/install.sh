@@ -51,8 +51,9 @@ step "Checking this server"
     || die "this is not an LPanel bundle (missing panel/ or bin/). Build one with dist/installer/bundle.sh."
 
 . /etc/os-release
-case "${ID:-}" in almalinux|rocky) ;; *) die "LPanel installs on AlmaLinux or Rocky Linux 9 for now; this is ${PRETTY_NAME:-unknown}." ;; esac
-[ "${VERSION_ID%%.*}" = "9" ] || die "LPanel installs on version 9 for now; this is ${PRETTY_NAME}."
+case "${ID:-}" in almalinux|rocky) ;; *) die "LPanel installs on AlmaLinux or Rocky Linux 8, 9 or 10; this is ${PRETTY_NAME:-unknown}." ;; esac
+EL="${VERSION_ID%%.*}"
+case "$EL" in 8|9|10) ;; *) die "LPanel installs on version 8, 9 or 10; this is ${PRETTY_NAME}." ;; esac
 [ "$(uname -m)" = "x86_64" ] || die "LPanel installs on x86_64 for now; this is $(uname -m)."
 [ "$(ps -p 1 -o comm=)" = "systemd" ] || die "systemd must be running as PID 1."
 note "${PRETTY_NAME}, $(uname -m), systemd"
@@ -87,19 +88,26 @@ fi
 step "Installing packages (EPEL, Remi's PHP, MariaDB, nginx for the panel, Apache for sites, PowerDNS, Exim, Dovecot, Rspamd, ClamAV, Pure-FTPd, bubblewrap and restic)"
 
 rpm -q epel-release >/dev/null 2>&1 || dnf -y -q install epel-release
-rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+rpm -q remi-release >/dev/null 2>&1 || dnf -y -q install "https://rpms.remirepo.net/enterprise/remi-release-${EL}.rpm"
+# Version 8 ships old MariaDB and nginx as the default module streams; the
+# newer streams are what the rest of the installer is written for.
+if [ "$EL" = 8 ]; then
+    dnf -y -q module reset mariadb nginx >/dev/null
+    dnf -y -q module enable mariadb:10.11 nginx:1.24 >/dev/null
+fi
 # Rspamd is not in EL or EPEL; its own repository is signed with its key.
 if [ ! -f /etc/yum.repos.d/rspamd.repo ]; then
     rpm --import https://rspamd.com/rpm/rspamd.asc
     cat > /etc/yum.repos.d/rspamd.repo <<'REPO'
 [rspamd]
 name=Rspamd stable repository
-baseurl=https://rspamd.com/rpm-stable/centos-9/$basearch
+baseurl=https://rspamd.com/rpm-stable/centos-@EL@/$basearch
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=https://rspamd.com/rpm/rspamd.asc
 REPO
+    sed -i "s/@EL@/$EL/" /etc/yum.repos.d/rspamd.repo
 fi
 dnf -y -q install \
     php83-php-fpm php83-php-cli php83-php-sodium php83-php-intl php83-php-mbstring \
@@ -107,10 +115,25 @@ dnf -y -q install \
     mariadb-server nginx httpd mod_ssl mod_security mod_security_crs openssl policycoreutils-python-utils procps-ng iproute logrotate \
     pdns pdns-backend-mysql bind-utils \
     exim dovecot dovecot-pigeonhole \
-    rspamd clamd clamav-update \
+    rspamd clamd clamav-freshclam \
     pure-ftpd \
     openssh-server openssh-clients bubblewrap rsync git-core \
-    restic cronie dnf-plugins-core goaccess
+    cronie dnf-plugins-core goaccess
+# restic: EPEL has it on 9 and 10; on 8 it is the project's own release, by checksum.
+if ! rpm -q restic >/dev/null 2>&1 && ! command -v restic >/dev/null 2>&1; then
+    if dnf -q repoquery --available restic 2>/dev/null | grep -q .; then
+        dnf -y -q install restic
+    else
+        RESTIC_VERSION=0.18.1
+        RESTIC_SHA256=680838f19d67151adba227e1570cdd8af12c19cf1735783ed1ba928bc41f363d
+        tmp=$(mktemp)
+        curl -fsSL -o "$tmp" "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2" \
+            || die "could not download restic ${RESTIC_VERSION}."
+        [ "$(sha256sum "$tmp" | cut -d' ' -f1)" = "$RESTIC_SHA256" ] || { rm -f "$tmp"; die "restic ${RESTIC_VERSION} does not match its checksum."; }
+        bunzip2 -c "$tmp" > /usr/bin/restic && chmod 0755 /usr/bin/restic && rm -f "$tmp"
+        note "restic ${RESTIC_VERSION} from the project's release (this system's repositories have none)"
+    fi
+fi
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
