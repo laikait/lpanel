@@ -7,9 +7,11 @@ use App\Engine\Config\Config;
 use App\Engine\Container\ServiceRegistrar;
 use App\Engine\Module\ModuleContext;
 use App\Engine\Routing\RouteCollector;
+use App\Engine\Routing\Router;
 use App\Engine\Template\TemplateHelperCollector;
 use App\Engine\Template\TemplateRegistry;
 use App\Engine\Template\ThemeRegistry;
+use App\Modules\Panel\Api\ApiDocs;
 use App\Modules\Panel\Http\Home;
 use App\Modules\Panel\Ui\Charts;
 use App\Modules\Panel\Ui\Format;
@@ -79,6 +81,11 @@ return static function (ModuleContext $module): void {
         $items[] = ['area' => 'user', 'section' => '', 'key' => 'dashboard', 'label' => 'Panel.dashboard', 'icon' => 'gauge', 'route' => 'user.dashboard', 'can' => 'user.panel', 'order' => 0];
 
         return $items;
+    });
+    // The API describes itself: every route under /admin/api/v1 gets its summary,
+    // tag and body from ApiCatalogue before the first request is matched.
+    $module->onBoot(static function (Router $router): void {
+        (new ApiDocs())->apply($router);
     });
     // Emails are rendered with no template active (a worker has no request),
     // so each panel template is also a namespace they can reach:

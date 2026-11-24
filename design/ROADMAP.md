@@ -1253,7 +1253,31 @@ ipset and reload mechanism (M9a) and the log formats of pure-ftpd and Dovecot
   the statistics, per-domain rather than per-account statistics.
 
 ### M11: Release
-- REST API completeness pass and the OpenAPI document; CLI parity; webhooks.
+
+**M11a, the API describes itself, is built (2026-11-25).**
+
+- **The OpenAPI 3.1 document** of all 187 endpoints under `/admin/api/v1`
+  (summary, tag, operation id, path parameters with their patterns, what the
+  body holds, who may call, and the answers: the framework's 401/403/429 in its
+  error shape, the panel's 404/409/422/502/503 in its own). Served at
+  `/admin/api/v1/openapi.json` with Swagger UI at `/admin/api/v1/docs`, to
+  anyone who may hold an API token (config `openapi.php`); `php laika
+  openapi:export` prints it, and `design/openapi.json` is the committed copy.
+- **`modules/Panel/Api/ApiCatalogue.php`** is the single list of what each
+  route says about itself; `ApiDocs` puts it into the routes' meta at boot.
+  A test fails when an API route is not in the catalogue, when the catalogue
+  names a route that is gone, and when `design/openapi.json` is out of date,
+  so a new endpoint cannot ship undocumented and a change to the API shows up
+  in a diff.
+- **Found while doing it, left as it is for now:** the panel's own error body
+  is `{"error": "<code>", "message", "fields"}`, while the framework's is
+  `{"error": {"status", "title", "message"}}`. Both are documented as they are;
+  making them one shape is a breaking change for clients and is a decision for
+  the release candidate.
+- **Tests:** PHP (4 in `ApiDescriptionTest`), e2e: the document and the
+  reference page are served to a token and refused without one.
+- **Rest of M11:**
+- Outgoing event webhooks beyond alerts; CLI parity audit.
 - White-label polish.
 - Translations: English, Bangla, Arabic.
 - License server, plus activation and grace period in the panel.

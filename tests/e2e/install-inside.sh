@@ -1834,6 +1834,16 @@ check "GoAccess counts the account's visits" t_lg_stats
 check "the Logs and Statistics pages work for the Admin and the owner" t_lg_pages
 check "the API reads a log and refuses one that is not listed" t_lg_api
 
+echo "== the API describes itself"
+t_oa_json()  { api https://127.0.0.1:7443/admin/api/v1/openapi.json -o /tmp/openapi.json && grep -Eq '"openapi": ?"3.1.0"' /tmp/openapi.json && grep -q '"/admin/api/v1/accounts/{username}/domains"' /tmp/openapi.json && grep -Eq '"operationId": ?"api_updates_apply"' /tmp/openapi.json; }
+t_oa_anon()  { [ "$(curl -ks -o /dev/null -w '%{http_code}' -H 'Accept: application/json' https://127.0.0.1:7443/admin/api/v1/openapi.json)" = 401 ]; }
+t_oa_docs()  { api https://127.0.0.1:7443/admin/api/v1/docs -H 'Accept: text/html' | grep -qi swagger; }
+t_oa_url()   { grep -Eq '"url": ?"https://' /tmp/openapi.json; }
+check "the OpenAPI document is served to a token" t_oa_json
+check "without a token it is not" t_oa_anon
+check "the API reference page is served" t_oa_docs
+check "the document says where the API is (APP_URL)" t_oa_url
+
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"
 t_switched() {
