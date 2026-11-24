@@ -18,6 +18,7 @@ use App\Modules\Operations\Alerts\AlertSettings;
 use App\Modules\Operations\Alerts\Delivery;
 use App\Modules\Operations\Commands\AlertCommands;
 use App\Modules\Operations\Commands\CronCommands;
+use App\Modules\Operations\Commands\LogCommands;
 use App\Modules\Operations\Commands\ServiceCommands;
 use App\Modules\Operations\Commands\TaskCommands;
 use App\Modules\Operations\Commands\UpdateCommands;
@@ -26,12 +27,15 @@ use App\Modules\Operations\Http\AlertApi;
 use App\Modules\Operations\Http\AlertPages;
 use App\Modules\Operations\Http\CronApi;
 use App\Modules\Operations\Http\CronPages;
+use App\Modules\Operations\Http\LogApi;
+use App\Modules\Operations\Http\LogPages;
 use App\Modules\Operations\Http\ServiceApi;
 use App\Modules\Operations\Http\ServicePages;
 use App\Modules\Operations\Http\TaskApi;
 use App\Modules\Operations\Http\TaskPages;
 use App\Modules\Operations\Http\UpdateApi;
 use App\Modules\Operations\Http\UpdatePages;
+use App\Modules\Operations\Logs\LogViewer;
 use App\Modules\Operations\OperationsListeners;
 use App\Modules\Operations\Services\Services;
 use App\Modules\Operations\Services\Watchdog;
@@ -62,6 +66,10 @@ return static function (ModuleContext $module): void {
 
     $module->services(static function (ServiceRegistrar $services): void {
         $services->singleton(Services::class);
+        $services->singleton(LogViewer::class);
+        $services->bind(LogPages::class);
+        $services->bind(LogApi::class);
+        $services->bind(LogCommands::class);
         $services->singleton(AlertSettings::class);
         $services->singleton(AlertChannels::class);
         $services->singleton(Delivery::class);
@@ -94,6 +102,7 @@ return static function (ModuleContext $module): void {
 
     $module->access(static function (AccessCollector $access): void {
         $access->capability('server.services', 'See how the server\'s services are doing, start, stop and restart them, and set which ones the watchdog restarts.');
+        $access->capability('server.logs', 'Read the server\'s logs and the statistics of every site\'s visits.');
         $access->capability('server.alerts', 'Choose where the server\'s alerts go (email, Telegram, Slack, a webhook) and when it speaks up.');
         $access->capability('server.updates', 'Install the operating system\'s, PHP\'s and LPanel\'s updates, choose what is installed by itself, and reboot the server.');
     });
@@ -119,6 +128,18 @@ return static function (ModuleContext $module): void {
             $routes->post('', [CronApi::class, 'add'])->name('.add');
             $routes->delete('/{id}', [CronApi::class, 'remove'])->name('.remove')->where('id', '\d+');
         }, name: 'api.cron', meta: ['can' => 'accounts.modify', 'csrf' => false, 'rate_limit' => '60/1m']);
+
+        $routes->get('/admin/logs', [LogPages::class, 'adminLogs'])->name('admin.logs')->meta(['can' => 'server.logs', 'no_impersonation' => true]);
+        $routes->get('/admin/statistics', [LogPages::class, 'adminStats'])->name('admin.statistics')->meta(['can' => 'server.logs', 'no_impersonation' => true]);
+        $routes->post('/admin/statistics/refresh', [LogPages::class, 'adminRefresh'])->name('admin.statistics.refresh')->meta(['can' => 'server.logs', 'no_impersonation' => true]);
+        $routes->get('/panel/logs', [LogPages::class, 'userLogs'])->name('user.logs')->meta(['can' => 'user.panel']);
+        $routes->get('/panel/statistics', [LogPages::class, 'userStats'])->name('user.statistics')->meta(['can' => 'user.panel']);
+        $routes->post('/panel/statistics/refresh', [LogPages::class, 'userRefresh'])->name('user.statistics.refresh')->meta(['can' => 'user.panel']);
+        $routes->group('/admin/api/v1', static function (RouteCollector $routes): void {
+            $routes->get('/logs/sources', [LogApi::class, 'sources'])->name('.sources');
+            $routes->get('/logs', [LogApi::class, 'read'])->name('');
+            $routes->get('/statistics', [LogApi::class, 'statistics'])->name('.statistics');
+        }, name: 'api.logs', meta: ['can' => 'server.logs', 'csrf' => false, 'rate_limit' => '30/1m']);
 
         $routes->group('/admin/alerts', static function (RouteCollector $routes): void {
             $routes->get('', [AlertPages::class, 'index'])->name('');
@@ -230,6 +251,20 @@ return static function (ModuleContext $module): void {
             ->describe('Ask the agent how running updates went.');
         $commands->add('updates:due', [UpdateCommands::class, 'due'])
             ->describe('Start what is due: the daily check, and in the night\'s hour the updates the settings install.');
+        $commands->add('logs:sources', [LogCommands::class, 'sources'])
+            ->describe('Show the logs that can be read (the server\'s, or one account\'s with --account).')
+            ->option('account', 'An account.');
+        $commands->add('logs:tail', [LogCommands::class, 'tail'])
+            ->describe('Show the latest lines of a log (see logs:sources for the names).')
+            ->argument('source', 'The log, such as journal:httpd, file:maillog or (with --account) web.access.')
+            ->option('account', 'An account, for web.access, web.error and php.error.')
+            ->option('lines', 'How many: 100, 200 (default), 500 or 1000.')
+            ->option('filter', 'Only the lines that contain this text.');
+        $commands->add('logs:stats', [LogCommands::class, 'stats'])
+            ->describe('Show the statistics GoAccess makes of the access logs: visitors, pages, errors, browsers.')
+            ->argument('account', 'An account (all sites when left out).', required: false)
+            ->option('days', '7, 30 (default) or 90.')
+            ->flag('refresh', 'Make a new report even if one was made in the last half hour.');
         $commands->add('alerts:status', [AlertCommands::class, 'status'])
             ->describe('Show where alerts go, when the server speaks up, and the latest alerts.')
             ->option('limit', 'How many alerts (default 15).');
@@ -272,6 +307,10 @@ return static function (ModuleContext $module): void {
 
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'cron', 'label' => 'Operations.cron_title', 'icon' => 'clock', 'route' => 'user.cron', 'can' => 'feature.cron', 'order' => 40];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'logs', 'label' => 'Operations.logs_title', 'icon' => 'terminal', 'route' => 'admin.logs', 'can' => 'server.logs', 'order' => 9];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'statistics', 'label' => 'Operations.stats_title', 'icon' => 'bars', 'route' => 'admin.statistics', 'can' => 'server.logs', 'order' => 10];
+        $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'statistics', 'label' => 'Operations.stats_title', 'icon' => 'bars', 'route' => 'user.statistics', 'can' => 'user.panel', 'order' => 45];
+        $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'logs', 'label' => 'Operations.logs_title', 'icon' => 'terminal', 'route' => 'user.logs', 'can' => 'user.panel', 'order' => 46];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'alerts', 'label' => 'Operations.alerts_title', 'icon' => 'bell', 'route' => 'admin.alerts', 'can' => 'server.alerts', 'order' => 8];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'updates', 'label' => 'Operations.updates_title', 'icon' => 'download', 'route' => 'admin.updates', 'can' => 'server.updates', 'order' => 7];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'tasks', 'label' => 'Operations.tasks_title', 'icon' => 'activity', 'route' => 'admin.tasks', 'can' => 'server.services', 'order' => 6];

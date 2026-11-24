@@ -1,0 +1,92 @@
+{% extends "layout.twig" %}
+
+{% macro list(title, items, hint) %}
+<section class="card">
+    <div class="card-head"><div><h2>{{ title }}</h2>{% if hint %}<p>{{ hint }}</p>{% endif %}</div></div>
+    {% if items is empty %}
+        <div class="empty" style="padding:24px"><p>{{ 'Operations.stats_nothing'|local }}</p></div>
+    {% else %}
+    <div class="table-wrap"><table class="table"><tbody>
+        {% for i in items %}
+            <tr><td class="mono" style="white-space:normal;word-break:break-all">{{ i.name }}</td><td style="text-align:end;white-space:nowrap"><strong>{{ i.hits|number_format }}</strong></td></tr>
+        {% endfor %}
+    </tbody></table></div>
+    {% endif %}
+</section>
+{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Operations.stats_title'|local }}</h1>
+        <p>{{ (is_admin ? 'Operations.stats_lead_admin' : 'Operations.stats_lead_user')|local }}</p>
+    </div>
+    <form class="page-actions" method="post" action="{{ refresh_url }}">
+        <input type="hidden" name="_token" value="{{ lp.token }}">
+        <button class="btn" type="submit">{{ icon('refresh') }}{{ 'Operations.stats_refresh'|local }}</button>
+    </form>
+</div>
+
+<form class="card" method="get" action="{{ action }}" style="margin-bottom:20px">
+    <div class="card-body">
+        <div class="grid grid-3" style="align-items:end">
+            {% if accounts %}
+            <div class="field">
+                <label for="st-account">{{ 'Operations.logs_account'|local }}</label>
+                <select class="input" id="st-account" name="account">
+                    <option value="">{{ 'Operations.stats_all'|local }}</option>
+                    {% for a in accounts %}<option value="{{ a }}"{% if user == a %} selected{% endif %}>{{ a }}</option>{% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="field">
+                <label for="st-days">{{ 'Operations.stats_period'|local }}</label>
+                <select class="input" id="st-days" name="days">
+                    {% for d in day_options %}<option value="{{ d }}"{% if days == d %} selected{% endif %}>{{ 'Operations.stats_days'|local({n: d}) }}</option>{% endfor %}
+                </select>
+            </div>
+            <div><button class="btn btn-primary" type="submit">{{ 'Operations.logs_show'|local }}</button></div>
+        </div>
+    </div>
+</form>
+
+{% if problem %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ problem starts with 'Operations.' ? problem|local : problem }}</p></div>
+{% elseif report %}
+    {% if report.truncated %}<div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Operations.stats_truncated'|local }}</p></div>{% endif %}
+
+    <div class="grid grid-4 stats-row" style="margin-bottom:20px">
+        <div class="card stat"><span class="stat-icon">{{ icon('activity') }}</span><div><div class="stat-label">{{ 'Operations.stats_requests'|local }}</div><div class="stat-value">{{ report.requests|number_format }}</div><div class="stat-sub">{{ 'Operations.stats_failed'|local({n: report.failed}) }}</div></div></div>
+        <div class="card stat"><span class="stat-icon">{{ icon('users') }}</span><div><div class="stat-label">{{ 'Operations.stats_visitors'|local }}</div><div class="stat-value">{{ report.visitors|number_format }}</div><div class="stat-sub">{{ 'Operations.stats_visitors_sub'|local }}</div></div></div>
+        <div class="card stat"><span class="stat-icon">{{ icon('download') }}</span><div><div class="stat-label">{{ 'Operations.stats_sent'|local }}</div><div class="stat-value">{{ report.bandwidth|bytes }}</div><div class="stat-sub">{{ 'Operations.stats_sent_sub'|local({n: days}) }}</div></div></div>
+        <div class="card stat"><span class="stat-icon">{{ icon('clock') }}</span><div><div class="stat-label">{{ 'Operations.stats_made'|local }}</div><div class="stat-value" style="font-size:16px">{{ report.made|when }}</div><div class="stat-sub">{{ 'Operations.stats_made_sub'|local }}</div></div></div>
+    </div>
+
+    <section class="card" style="margin-bottom:20px">
+        <div class="card-head"><div><h2>{{ 'Operations.stats_daily'|local }}</h2><p>{{ 'Operations.stats_daily_lead'|local }}</p></div></div>
+        {% if report.daily is empty %}
+            <div class="empty">{{ icon('bars') }}<h3>{{ 'Operations.stats_none'|local }}</h3><p>{{ 'Operations.stats_none_text'|local }}</p></div>
+        {% else %}
+        <div class="card-body">
+            <div style="display:flex;align-items:flex-end;gap:{{ report.daily|length > 45 ? 2 : 6 }}px;height:150px">
+                {% for d in report.daily %}
+                    <div title="{{ d.date }}: {{ d.hits }} · {{ d.visitors }}" style="flex:1;min-width:2px;height:{{ max_hits ? max(2, (d.hits * 100 / max_hits)|round) : 2 }}%;background:var(--accent);border-radius:3px 3px 0 0;opacity:.85"></div>
+                {% endfor %}
+            </div>
+            <div style="display:flex;justify-content:space-between;color:var(--text-3);font-size:12px;margin-top:8px"><span>{{ (report.daily|first).date }}</span><span>{{ (report.daily|last).date }}</span></div>
+        </div>
+        {% endif %}
+    </section>
+
+    <div class="grid grid-2" style="align-items:start">
+        {{ _self.list('Operations.stats_pages'|local, report.pages, 'Operations.stats_hits'|local) }}
+        {{ _self.list('Operations.stats_not_found'|local, report.not_found, 'Operations.stats_hits'|local) }}
+        {{ _self.list('Operations.stats_referrers'|local, report.referrers, '') }}
+        {{ _self.list('Operations.stats_status'|local, report.status, '') }}
+        {{ _self.list('Operations.stats_browsers'|local, report.browsers, '') }}
+        {{ _self.list('Operations.stats_systems'|local, report.systems, '') }}
+        {{ _self.list('Operations.stats_hosts'|local, report.hosts, '') }}
+        {% if is_admin and not user %}{{ _self.list('Operations.stats_sites'|local, report.sites, '') }}{% endif %}
+    </div>
+{% endif %}
+{% endblock %}

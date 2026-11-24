@@ -336,6 +336,22 @@ func (m *Manager) accessLogDir() string {
 	return m.LogDir
 }
 
+// AccessLogDir is the folder of the accounts' access logs (<user>.access.log).
+func (m *Manager) AccessLogDir() string { return m.accessLogDir() }
+
+// ErrorLogDirs are the folders of the accounts' error logs (<user>.error.log),
+// one for each web server in use.
+func (m *Manager) ErrorLogDirs() []string {
+	var dirs []string
+	if m.usesApache() {
+		dirs = append(dirs, m.LogDir)
+	}
+	if m.usesNginx() {
+		dirs = append(dirs, m.NginxLogDir)
+	}
+	return dirs
+}
+
 func badArgs(format string, a ...any) error {
 	return protocol.Fail(protocol.CodeBadArgs, fmt.Sprintf(format, a...))
 }

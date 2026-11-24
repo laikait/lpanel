@@ -36,6 +36,7 @@ import (
 	"lpa/internal/ftp"
 	"lpa/internal/isolation"
 	"lpa/internal/journal"
+	"lpa/internal/logs"
 	"lpa/internal/mail"
 	"lpa/internal/mysql"
 	"lpa/internal/ops"
@@ -203,6 +204,10 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	upd := &updates.Manager{Run: sysexec.Exec{}, Log: log, Channel: cfg.Updates.URL, KeyFile: cfg.Updates.KeyFile, State: filepath.Join(state, "updates")}
 	upd.Defaults()
 	ops.Updates(reg, upd)
+
+	lg := &logs.Manager{Run: sysexec.Exec{}, AccessDir: sites.AccessLogDir, ErrorDirs: sites.ErrorLogDirs, State: filepath.Join(state, "logs")}
+	lg.Defaults()
+	ops.Logs(reg, lg)
 	cr := &cron.Manager{Owner: acc.Owner}
 	cr.Defaults()
 	ops.Cron(reg, cr)

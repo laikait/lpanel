@@ -1,0 +1,68 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Operations.logs_title'|local }}</h1>
+        <p>{{ (is_admin ? 'Operations.logs_lead_admin' : 'Operations.logs_lead_user')|local }}</p>
+    </div>
+</div>
+
+{% if problem %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ problem starts with 'Operations.' ? problem|local : problem }}</p></div>
+{% endif %}
+
+<form class="card" method="get" action="{{ action }}" style="margin-bottom:20px">
+    <div class="card-body">
+        <div class="grid grid-4" style="align-items:end">
+            {% if accounts %}
+            <div class="field">
+                <label for="lg-account">{{ 'Operations.logs_account'|local }}</label>
+                <select class="input" id="lg-account" name="account">
+                    <option value="">{{ 'Operations.logs_system'|local }}</option>
+                    {% for a in accounts %}<option value="{{ a }}"{% if user == a %} selected{% endif %}>{{ a }}</option>{% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="field">
+                <label for="lg-source">{{ 'Operations.logs_source'|local }}</label>
+                <select class="input" id="lg-source" name="source">
+                    {% for group, list in groups %}
+                    <optgroup label="{{ ('Operations.logs_group_' ~ group)|local }}">
+                        {% for s in list %}<option value="{{ s.name }}"{% if source == s.name %} selected{% endif %}>{{ s.label }}</option>{% endfor %}
+                    </optgroup>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label for="lg-lines">{{ 'Operations.logs_lines'|local }}</label>
+                <select class="input" id="lg-lines" name="lines">
+                    {% for n in line_options %}<option value="{{ n }}"{% if lines == n %} selected{% endif %}>{{ n }}</option>{% endfor %}
+                </select>
+            </div>
+            <div class="field">
+                <label for="lg-filter">{{ 'Operations.logs_filter'|local }}</label>
+                <input class="input mono" id="lg-filter" name="filter" value="{{ filter }}" maxlength="100" placeholder="{{ 'Operations.logs_filter_hint'|local }}">
+            </div>
+        </div>
+    </div>
+    <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('refresh') }}{{ 'Operations.logs_show'|local }}</button></div>
+</form>
+
+<section class="card">
+    <div class="card-head">
+        <div>
+            <h2>{{ label ?: ('Operations.logs_title'|local) }}</h2>
+            <p>{% if log %}{{ 'Operations.logs_showing'|local({n: log.lines|length}) }}{% if filter %} · {{ 'Operations.logs_matching'|local({text: filter}) }}{% endif %}{% if log.more %} · {{ 'Operations.logs_more'|local }}{% endif %}{% endif %}</p>
+        </div>
+    </div>
+    {% if log is null %}
+        <div class="empty">{{ icon('file') }}<h3>{{ 'Operations.logs_none'|local }}</h3><p>{{ 'Operations.logs_none_text'|local }}</p></div>
+    {% elseif log.lines is empty %}
+        <div class="empty">{{ icon('file') }}<h3>{{ 'Operations.logs_empty'|local }}</h3><p>{{ (filter ? 'Operations.logs_empty_filter' : 'Operations.logs_empty_text')|local }}</p></div>
+    {% else %}
+        <pre class="mono" style="margin:0;padding:14px 18px;max-height:640px;overflow:auto;font-size:12px;line-height:1.55;background:var(--surface-2);border-top:1px solid var(--border);white-space:pre-wrap;word-break:break-all">{% for line in log.lines %}{{ line }}
+{% endfor %}</pre>
+    {% endif %}
+</section>
+{% endblock %}

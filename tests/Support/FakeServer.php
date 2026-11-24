@@ -267,6 +267,15 @@ final class FakeServer
     /** @var array<string, mixed>|null what system.facts answers; null: the agent cannot be asked */
     public ?array $facts = null;
 
+    /** @var array<string, list<string>> log name => its lines (logs.read answers the latest of them, filtered, as the agent does) */
+    public array $logs = [];
+
+    /** @var list<array<string, mixed>> what logs.read and logs.report were asked */
+    public array $logAsked = [];
+
+    /** @var array<string, mixed>|null what logs.report answers; null: GoAccess is not installed */
+    public ?array $logReport = null;
+
     /** @var bool when true, backup.destination cannot reach the destination */
     public bool $backupUnreachable = false;
 
@@ -380,6 +389,47 @@ final class FakeServer
             $list = \array_values(\array_filter($this->tasks, static fn(array $t): bool => ($args['state'] ?? '') === '' || $t['state'] === $args['state']));
 
             return ['status' => 'done', 'result' => ['tasks' => \array_slice($list, 0, (int) ($args['limit'] ?? 50))]];
+        };
+        $answers['logs.sources'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $user = (string) ($args['user'] ?? '');
+            $names = $user === '' ? \array_values(\array_filter(\array_keys($this->logs), static fn(string $n): bool => !\in_array($n, ['web.access', 'web.error', 'php.error'], true))) : \array_values(\array_filter(['web.access', 'web.error', 'php.error'], fn(string $n): bool => isset($this->logs[$n])));
+
+            return ['status' => 'done', 'result' => ['sources' => \array_map(static fn(string $n): array => ['name' => $n, 'label' => $n, 'group' => $user === '' ? 'system' : 'account', 'size' => 0], $names)]];
+        };
+        $answers['logs.read'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $this->logAsked[] = ['op' => 'logs.read'] + $args;
+            $source = (string) $args['source'];
+            $account = \in_array($source, ['web.access', 'web.error', 'php.error'], true);
+
+            if (!isset($this->logs[$source]) || $account !== isset($args['user'])) {
+                return ['status' => 'failed', 'error' => ['code' => 'logs_source', 'message' => 'there is no such log']];
+            }
+
+            $filter = \strtolower((string) ($args['filter'] ?? ''));
+            $lines = \array_values(\array_filter($this->logs[$source], static fn(string $l): bool => $filter === '' || \str_contains(\strtolower($l), $filter)));
+
+            return ['status' => 'done', 'result' => ['source' => $source, 'lines' => \array_slice($lines, -((int) ($args['lines'] ?? 200))), 'more' => false]];
+        };
+        $answers['logs.report'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $this->logAsked[] = ['op' => 'logs.report'] + $args;
+
+            if ($this->logReport === null) {
+                return ['status' => 'failed', 'error' => ['code' => 'logs_goaccess', 'message' => 'GoAccess is not installed or could not run']];
+            }
+
+            return ['status' => 'done', 'result' => $this->logReport + ['scope' => (string) ($args['user'] ?? 'all'), 'days' => (int) ($args['days'] ?? 30)]];
         };
         $answers['updates.panel_status'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->upgradeStatus];
         $answers['services.status'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['services' => $this->serviceList()]];

@@ -1215,9 +1215,42 @@ ipset and reload mechanism (M9a) and the log formats of pure-ftpd and Dovecot
 - **Not yet:** acknowledging an alert, alert rules per account (owners
   being told of their own disk or bandwidth), SMS.
 
-**M10e, logs and GoAccess, is next:** a log viewer (the panel's, the web
-servers', mail, the agent's, journal units) and GoAccess traffic reports per
-domain.
+**M10e, logs and statistics (GoAccess), is built (2026-11-25).**
+
+- **Agent** (`internal/logs`, ops `logs.sources|read|report`): a fixed list of
+  readable logs (the journal of LPanel's and the system's services, and
+  `/var/log` files such as `secure`, `maillog`, Exim's, FTP's, MariaDB's, the web
+  servers' own) and, for an account, its sites' access and error logs and its
+  PHP error log. Nothing outside the list, nor any path from the panel, can be
+  named; an account's name must look like one. The account's PHP error log is
+  the one file the account controls, so it is read with `runuser` as the
+  account: a link planted in its home to a root-only file yields nothing. Lines
+  are cleaned (no control characters, cut at 2000), at most 1000 a read, from
+  the last 4 MB, optionally only those containing some text.
+- **Statistics:** `logs.report` collects the lines of the last 7, 30 or 90 days
+  from an account's access logs (or all, `.1` and gzipped ones too), caps what
+  GoAccess is given (the oldest dropped, and said so), runs
+  `goaccess` on a file only the agent can read, and returns its JSON trimmed to
+  the figures the panel shows: requests, visitors, bandwidth, a daily series,
+  and the top pages, 404s, referrers, answers, browsers, systems, addresses and
+  sites. A report is kept half an hour (per account and period) so a page
+  reload does not count again; "Count again" makes a new one.
+- **Panel** (`Operations/Logs`): Admin pages Logs (system or any account's) and
+  Statistics (all sites or one), capability `server.logs` (administrators);
+  User pages Logs and Statistics for the account's own sites only: the
+  account is the signed-in login's, nothing in the request can change it.
+  API `/admin/api/v1/logs/sources`, `/logs`, `/statistics`; commands
+  `logs:sources|tail|stats`. The installer adds `goaccess` (EPEL).
+- **Tests:** Go (the list and what exists, the latest lines filtered and
+  cleaned, everything outside the list refused without running anything, the
+  journal for a known unit only, PHP's log read as the account, an account's
+  own site logs, the days kept and GoAccess's JSON parsed, a report kept and
+  refreshed, no run for no visits, refusals and failures), PHP (7 in
+  `LogsTest`: HTML-escaped lines, the account choice, an owner confined to
+  their account whatever the request says, the report and refresh, GoAccess or
+  the agent missing, API and CLI, who may read), e2e against the real GoAccess.
+- **Not yet:** downloading a log, following a log live, GeoIP (countries) in
+  the statistics, per-domain rather than per-account statistics.
 
 ### M11: Release
 - REST API completeness pass and the OpenAPI document; CLI parity; webhooks.

@@ -33,6 +33,12 @@ var Tools = map[string]string{
 	// made by the agent from its own catalogue, never taken from the panel.
 	"dnf": "/usr/bin/dnf",
 	"rpm": "/usr/bin/rpm",
+	// Logs: the journal of the services LPanel names, GoAccess for the
+	// statistics of the access logs, and runuser to read a file an account
+	// controls with the account's own rights.
+	"journalctl": "/usr/bin/journalctl",
+	"goaccess":   "/usr/bin/goaccess",
+	"runuser":    "/usr/sbin/runuser",
 	// MariaDB's client, for databases and their users. SQL goes on standard
 	// input (RunInput), never in the arguments.
 	"mariadb": "/usr/bin/mariadb",

@@ -14,7 +14,7 @@
 //	ssh   /var/log/secure       sshd "Failed password/publickey/... for USER from IP"
 //	ftp   /var/log/messages     pure-ftpd "(USER@IP) [WARNING] Authentication failed"
 //	mail  /var/log/maillog      Dovecot "...-login: ...auth failed, N attempts...rip=IP"
-//	smtp  /var/log/exim/mainlog Exim "login authenticator failed for (host) [IP]"
+//	smtp  /var/log/exim/main.log Exim "login authenticator failed for (host) [IP]"
 //
 // The first scan of a source starts at the end of the file, so old history
 // never blocks anyone the moment the feature is turned on.
@@ -86,7 +86,7 @@ func Default() *Scanner {
 		{Name: "ssh", File: "/var/log/secure", Pattern: regexp.MustCompile(`sshd(?:-session)?\[\d+\]: Failed (?:password|publickey|keyboard-interactive/pam|none) for (?:invalid user )?.+? from ([0-9a-fA-F:.]+) port \d+`)},
 		{Name: "ftp", File: "/var/log/messages", Pattern: regexp.MustCompile(`pure-ftpd: \([^)@]*@([0-9a-fA-F:.]+)\) \[WARNING\] Authentication failed`)},
 		{Name: "mail", File: "/var/log/maillog", Pattern: regexp.MustCompile(`(?:imap|pop3|submission|managesieve)-login: .*auth failed(?:, (\d+) attempts?)?.*?\brip=([0-9a-fA-F:.]+)`)},
-		{Name: "smtp", File: "/var/log/exim/mainlog", Pattern: regexp.MustCompile(`login authenticator failed for .*?\[([0-9a-fA-F:.]+)\]`)},
+		{Name: "smtp", File: "/var/log/exim/main.log", Pattern: regexp.MustCompile(`login authenticator failed for .*?\[([0-9a-fA-F:.]+)\]`)},
 	}}
 }
 

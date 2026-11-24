@@ -152,6 +152,9 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `updates.reboot` | change | `{cancel?}`: reboot a minute from now (a transient timer), or call it off |
 | `updates.panel` | change, async | `{version}`: fetch the channel's signed manifest, check it, download and check the bundle, unpack it, start its `upgrade.sh` in the unit `lpanel-upgrade` |
 | `updates.panel_status` | read-only | how the last upgrade went (`status.json`), the end of its log, the release installed now |
+| `logs.sources` | read-only | `{user?}`: the logs that can be read (the system's, or one account's) |
+| `logs.read` | read-only | `{source, user?, lines?, filter?}`: the latest lines of one log (at most 1000, from the last 4 MB), optionally only those containing some text |
+| `logs.report` | read-only | `{user?, days?, refresh?}`: GoAccess's statistics of the access logs (7, 30 or 90 days), kept half an hour |
 | `services.status` | read-only | every service LPanel manages that is installed: its state, whether it starts at boot, since when, its memory, what the unit allows |
 | `services.act` | change | `{unit, action}`: start, stop, restart, reload, enable or disable one of them, within what that unit allows |
 | `isolation.info` | read-only | whether /proc hides other users' processes (and the unit that keeps it), the kernel's four link protections and their values |
@@ -735,7 +738,7 @@ read from its top) and answers the failures per address and service:
 | `ssh` | `/var/log/secure` | sshd `Failed password/publickey/keyboard-interactive for … from IP` |
 | `ftp` | `/var/log/messages` | pure-ftpd `(user@IP) [WARNING] Authentication failed` |
 | `mail` | `/var/log/maillog` | Dovecot `…-login: …auth failed, N attempts…rip=IP` (counts N) |
-| `smtp` | `/var/log/exim/mainlog` | Exim `login authenticator failed for … [IP]` |
+| `smtp` | `/var/log/exim/main.log` | Exim `login authenticator failed for … [IP]` |
 
 A source never read before starts at the end of its log, so history never
 blocks anyone when the feature is turned on. A log that is not there is listed

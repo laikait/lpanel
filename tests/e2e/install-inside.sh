@@ -1796,7 +1796,7 @@ check "a release whose installer fails is rolled back to the one before" t_upd_r
 check "after the rollback the panel, the agent, sites and sign-in work" t_upd_works
 
 echo "== alerts"
-t_al_add()    { lpanel alerts:add email "E2E ops" --to=root@localhost >/tmp/al.out 2>&1 && lpanel alerts:status | grep -q "E2E ops *email *root@localhost"; }
+t_al_add()    { lpanel alerts:add email "E2E ops" --to=root@e2e-panel.test >/tmp/al.out 2>&1 && lpanel alerts:status | grep -q "E2E ops *email *root@e2e-panel.test"; }
 t_al_refuse() { ! lpanel alerts:add slack Bad --url=http://hooks.example.com/x >/dev/null 2>&1 && ! lpanel alerts:add email Bad --to=nope >/dev/null 2>&1; }
 t_al_test()   { lpanel alerts:test 1 && for _ in $(seq 20); do grep -rqs "lpanel@e2e-panel.test" /var/log/exim/ && return 0; sleep 1; done; echo "no mail left the panel"; tail -5 /var/log/exim/*.log 2>/dev/null; return 1; }
 t_al_check()  { lpanel alerts:settings --disk=0 --memory=0 --load=0 >/dev/null && lpanel alerts:check; }
@@ -1810,6 +1810,29 @@ check "the five-minute check runs" t_al_check
 check "the Alerts page shows the channel" t_al_page
 check "the API lists channels without their secrets" t_al_api
 check "channel changes are in the audit log" t_al_audit
+
+echo "== logs and statistics"
+t_lg_sources() { lpanel logs:sources | grep -q "^journal:lpa " && lpanel logs:sources | grep -q "^file:exim "; }
+t_lg_journal() { lpanel logs:tail journal:lpa --lines=100 | grep -q . ; }
+t_lg_filter()  { [ "$(lpanel logs:tail journal:lpa --filter=zzz-no-such-text-zzz | wc -l)" = 0 ]; }
+t_lg_refuse()  { ! lpanel logs:tail file:../../etc/shadow >/dev/null 2>&1 && ! lpanel logs:tail web.access --account=../etc >/dev/null 2>&1 && ! lpanel logs:tail journal:ssh-agent >/dev/null 2>&1; }
+t_lg_account() { sget shop.example.test / >/dev/null; lpanel logs:tail web.access --account=shop1 --lines=100 | grep -q "GET "; }
+t_lg_stats()   { lpanel logs:stats shop1 --days=7 --refresh | tee /tmp/stats.out | grep -Eq "^requests [1-9][0-9]*, visitors [1-9]"; }
+t_lg_pages()   { local a b c
+    a=$(curl -ks -b $jar -o /tmp/lg.html -w '%{http_code}' 'https://127.0.0.1:7443/admin/logs?source=journal:lpa')
+    b=$(curl -ks -b $jar -o /tmp/st.html -w '%{http_code}' https://127.0.0.1:7443/admin/statistics)
+    signin_as 7444 /panel shop1 Owner-Pass-Word-1 >/dev/null
+    c=$(curl -ks -b /tmp/jar2 -o /tmp/ust.html -w '%{http_code}' https://127.0.0.1:7444/panel/statistics)
+    [ "$a $b $c" = "200 200 200" ] && grep -q 'href="/admin/logs"' /tmp/lg.html && grep -q "Requests" /tmp/st.html && grep -q "Requests" /tmp/ust.html; }
+t_lg_api()     { api "https://127.0.0.1:7443/admin/api/v1/logs?source=journal:lpa&lines=100" | grep -q '"lines":\[' && [ "$(api -o /dev/null -w '%{http_code}' 'https://127.0.0.1:7443/admin/api/v1/logs?source=../../etc/passwd')" = 422 ]; }
+check "the logs that can be read are listed" t_lg_sources
+check "the agent's journal can be read, and filtered" t_lg_journal
+check "a filter that matches nothing shows nothing" t_lg_filter
+check "a path, a bad account name and an unlisted unit are refused" t_lg_refuse
+check "an account's own site log shows its visits" t_lg_account
+check "GoAccess counts the account's visits" t_lg_stats
+check "the Logs and Statistics pages work for the Admin and the owner" t_lg_pages
+check "the API reads a log and refuses one that is not listed" t_lg_api
 
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"

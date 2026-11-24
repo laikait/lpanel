@@ -110,7 +110,7 @@ dnf -y -q install \
     rspamd clamd clamav-update \
     pure-ftpd \
     openssh-server openssh-clients bubblewrap rsync git-core \
-    restic cronie dnf-plugins-core
+    restic cronie dnf-plugins-core goaccess
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
