@@ -1,0 +1,15 @@
+<section class="card h-full" aria-labelledby="svc-title">
+    <div class="flex items-center justify-between gap-3 px-6 pt-5">
+        <h2 class="flex items-center gap-3 text-lg font-bold" id="svc-title"><span class="text-brand">{{ icon('server') }}</span>{{ 'Operations.card_title'|local }}</h2>
+        <a class="text-sm font-semibold" href="{{ link }}">{{ 'Operations.card_all'|local }} →</a>
+    </div>
+    <p class="m-0 px-6 pt-1 text-sm text-ink-3">{% if running == total %}{{ 'Operations.card_ok'|local }}{% else %}{{ 'Operations.card_some'|local({n: total - running}) }}{% endif %} · {{ running }}/{{ total }}</p>
+    <ul class="m-0 grid list-none gap-x-6 px-6 pb-5 pt-3 sm:grid-cols-2">
+        {% for s in services %}
+            <li class="flex items-center gap-3 border-t border-line py-2.5 first:border-t-0 sm:[&:nth-child(2)]:border-t-0">
+                <span class="size-2.5 shrink-0 rounded-full ring-4 {{ s.running ? 'bg-brand ring-brand-soft' : (s.expected ? 'bg-bad ring-bad-soft' : 'bg-warn ring-warn-soft') }}"></span>
+                <span class="min-w-0 flex-1 truncate font-medium">{{ s.label }}</span>
+            </li>
+        {% endfor %}
+    </ul>
+</section>

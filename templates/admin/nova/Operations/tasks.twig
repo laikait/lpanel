@@ -1,0 +1,58 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Operations.tasks_title'|local }}</h1>
+        <p>{{ 'Operations.tasks_lead'|local }}</p>
+    </div>
+</div>
+
+{% if not available %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Operations.error_unreachable'|local }}</p></div>
+{% endif %}
+
+<div class="mb-6 grid gap-5 sm:grid-cols-3">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('refresh') }}</span>
+        <div><div class="stat-label">{{ 'Operations.tasks_tile_running'|local }}</div><div class="stat-value">{{ counts.running|default(0) }}</div><div class="stat-sub">{{ 'Operations.tasks_tile_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('alert') }}</span>
+        <div><div class="stat-label">{{ 'Operations.tasks_tile_failed'|local }}</div><div class="stat-value">{% if counts.failed|default(0) %}<span class="badge bad">{{ counts.failed }}</span>{% else %}0{% endif %}</div><div class="stat-sub">{{ 'Operations.tasks_tile_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('pause') }}</span>
+        <div><div class="stat-label">{{ 'Operations.tasks_tile_interrupted'|local }}</div><div class="stat-value">{{ counts.interrupted|default(0) }}</div><div class="stat-sub">{{ 'Operations.tasks_tile_sub'|local }}</div></div>
+    </div>
+</div>
+
+<section class="card">
+    <div class="card-head">
+        <div><h2>{{ 'Operations.tasks_title'|local }}</h2></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <a class="btn btn-sm{{ state == '' ? ' btn-primary' : '' }}" href="?">{{ 'Operations.tasks_all'|local }}</a>
+            {% for s in states %}<a class="btn btn-sm{{ state == s ? ' btn-primary' : '' }}" href="?state={{ s }}">{{ ('Operations.tasks_state_' ~ s)|local }}</a>{% endfor %}
+        </div>
+    </div>
+    {% if tasks is empty %}
+        <div class="empty">{{ icon('check') }}<h3>{{ 'Operations.tasks_none'|local }}</h3><p>{{ 'Operations.tasks_none_text'|local }}</p></div>
+    {% else %}
+    <div class="table-wrap"><table class="table">
+        <tbody>
+        {% for t in tasks %}
+            <tr>
+                <td>
+                    <strong class="mono">{{ t.op }}</strong>
+                    {% if t.error_message %}<div class="domain-sub" style="white-space:normal">{{ t.error_message }}</div>{% endif %}
+                    {% if t.state == 'interrupted' %}<div class="domain-sub">{{ 'Operations.tasks_interrupted_hint'|local }}</div>{% endif %}
+                </td>
+                <td><span class="badge {{ t.state == 'done' ? 'ok' : (t.state == 'running' ? 'warn' : (t.state == 'failed' ? 'bad' : 'plain')) }}">{{ ('Operations.tasks_state_' ~ t.state)|local }}</span></td>
+                <td style="text-align:end" class="domain-sub">{{ t.started|when }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,97 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Operations.services_title'|local }}</h1>
+        <p>{{ 'Operations.services_lead'|local }}</p>
+    </div>
+</div>
+
+{% if not available %}
+    <div class="alert alert-error">{{ icon('alert') }}<p>{{ 'Operations.error_unreachable'|local }}</p></div>
+{% endif %}
+
+<div class="mb-6 grid gap-5 sm:grid-cols-3">
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('check') }}</span>
+        <div><div class="stat-label">{{ 'Operations.tile_running'|local }}</div><div class="stat-value">{{ running }}</div><div class="stat-sub">{{ 'Operations.tile_running_sub'|local({total: total}) }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('alert') }}</span>
+        <div><div class="stat-label">{{ 'Operations.tile_down'|local }}</div><div class="stat-value">{% if down %}<span class="badge bad">{{ down }}</span>{% else %}0{% endif %}</div><div class="stat-sub">{{ 'Operations.tile_down_sub'|local }}</div></div>
+    </div>
+    <div class="card stat">
+        <span class="stat-icon">{{ icon('refresh') }}</span>
+        <div><div class="stat-label">{{ 'Operations.tile_restarts'|local }}</div><div class="stat-value">{{ restarts_day }}</div><div class="stat-sub">{{ 'Operations.tile_restarts_sub'|local }}</div></div>
+    </div>
+</div>
+
+{% if groups is empty and available %}
+    <div class="card"><div class="empty">{{ icon('server') }}<h3>{{ 'Operations.none'|local }}</h3><p>{{ 'Operations.none_text'|local }}</p></div></div>
+{% endif %}
+
+{% for group, items in groups %}
+<section class="card" style="margin-bottom:20px">
+    <div class="card-head"><div><h2>{{ ('Operations.group_' ~ group)|local }}</h2></div></div>
+    <div class="table-wrap"><table class="table">
+        <tbody>
+        {% for s in items %}
+            {% set tone = s.running ? 'ok' : (s.active == 'failed' ? 'bad' : (s.expected and s.watch ? 'bad' : 'plain')) %}
+            <tr>
+                <td>
+                    <strong>{{ s.label }}</strong> <span class="domain-sub mono" style="display:inline">{{ s.unit }}</span>
+                    <div class="domain-sub">
+                        {% if s.running and s.since %}{{ 'Operations.since'|local({when: s.since|when}) }} · {% endif %}
+                        {{ (s.enabled ? 'Operations.boot_on' : 'Operations.boot_off')|local }}
+                        {% if s.restarts %} · {{ 'Operations.restarts'|local({n: s.restarts}) }}{% endif %}
+                        {% if s.memory_bytes %} · {{ s.memory_bytes|bytes }}{% endif %}
+                    </div>
+                    {% if s.hold %}<div class="domain-sub" title="{{ 'Operations.held_hint'|local }}">{{ 'Operations.held'|local }}</div>{% endif %}
+                    {% if s.down_since %}<div class="domain-sub" style="color:var(--bad)">{{ 'Operations.down_since'|local({when: s.down_since[:16]}) }}</div>{% endif %}
+                </td>
+                <td class="hide-sm"><span class="badge {{ tone }}">{{ ('Operations.state_' ~ s.active)|local }}</span></td>
+                <td style="text-align:end">
+                    <div style="display:inline-flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+                    {% for action, url in s.act_urls %}
+                        {% if action in ['start', 'restart', 'stop', 'reload'] %}
+                        <form class="inline-form" method="post" action="{{ url }}"{% if action in ['stop', 'restart'] %} data-confirm="{{ ('Operations.confirm_' ~ action)|local({name: s.label}) }}"{% endif %}>
+                            <input type="hidden" name="_token" value="{{ lp.token }}">
+                            <button class="btn btn-sm{{ action == 'start' and not s.running ? ' btn-primary' : '' }}" type="submit">{{ ('Operations.act_' ~ action)|local }}</button>
+                        </form>
+                        {% endif %}
+                    {% endfor %}
+                    <form class="inline-form" method="post" action="{{ s.watch_url }}">
+                        <input type="hidden" name="_token" value="{{ lp.token }}">
+                        <input type="hidden" name="watch" value="{{ s.watch ? '0' : '1' }}">
+                        <button class="btn btn-sm btn-ghost" type="submit" title="{{ 'Operations.watch_on'|local }}">{{ icon(s.watch ? 'check' : 'pause') }}{{ 'Operations.watch'|local }}</button>
+                    </form>
+                    {% if s.allowed is empty %}<span class="domain-sub" title="{{ 'Operations.cannot'|local }}">{{ 'Operations.protected'|local }}</span>{% endif %}
+                    </div>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+</section>
+{% endfor %}
+
+<section class="card">
+    <div class="card-head"><div><h2>{{ 'Operations.events'|local }}</h2><p>{{ 'Operations.events_lead'|local }}</p></div></div>
+    {% if events is empty %}
+        <div class="empty">{{ icon('check') }}<h3>{{ 'Operations.events_none'|local }}</h3><p>{{ 'Operations.events_none_text'|local }}</p></div>
+    {% else %}
+    <div class="table-wrap"><table class="table">
+        <tbody>
+        {% for e in events %}
+            <tr>
+                <td><strong class="mono">{{ e.unit }}</strong>{% if e.detail %}<div class="domain-sub">{{ e.detail }}</div>{% endif %}</td>
+                <td><span class="badge {{ e.kind in ['down', 'restart_failed', 'gave_up'] ? 'bad' : (e.kind == 'restarted' ? 'warn' : (e.kind == 'recovered' ? 'ok' : 'plain')) }}">{{ ('Operations.event_' ~ e.kind)|local }}</span></td>
+                <td style="text-align:end" class="domain-sub">{{ e.at|when }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table></div>
+    {% endif %}
+</section>
+{% endblock %}

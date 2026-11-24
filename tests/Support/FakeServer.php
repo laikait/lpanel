@@ -164,6 +164,37 @@ final class FakeServer
         'ports' => [['port' => '22', 'proto' => 'tcp', 'sources' => []], ['port' => '80', 'proto' => 'tcp', 'sources' => []], ['port' => '7443', 'proto' => 'tcp', 'sources' => []]],
         'allow' => [], 'deny' => [], 'countries' => [], 'nets' => ['CN' => ['203.0.113.0/24'], 'RU' => ['198.51.100.0/24']], 'keep' => [22, 7443, 7444],
     ];
+    /**
+     * The services: unit => label, group, what it allows, and its state.
+     *
+     * @var array<string, array{label: string, group: string, allowed: list<string>, active: string, enabled: bool}>
+     */
+    public array $svc = [
+        'httpd.service' => ['label' => 'Apache', 'group' => 'web', 'allowed' => ['start', 'stop', 'restart', 'reload', 'enable', 'disable'], 'active' => 'active', 'enabled' => true],
+        'exim.service' => ['label' => 'Exim', 'group' => 'mail', 'allowed' => ['start', 'stop', 'restart', 'reload', 'enable', 'disable'], 'active' => 'active', 'enabled' => true],
+        'pure-ftpd.service' => ['label' => 'Pure-FTPd', 'group' => 'ftp', 'allowed' => ['start', 'stop', 'restart', 'reload', 'enable', 'disable'], 'active' => 'inactive', 'enabled' => false],
+        'mariadb.service' => ['label' => 'MariaDB', 'group' => 'database', 'allowed' => ['start', 'restart'], 'active' => 'active', 'enabled' => true],
+        'lpa.service' => ['label' => 'LPanel agent', 'group' => 'panel', 'allowed' => [], 'active' => 'active', 'enabled' => true],
+    ];
+
+    /** @var array<string, list<array{schedule: string, command: string}>> the jobs cron runs, by account */
+    public array $cron = [];
+
+    /** @var list<array<string, mixed>> what each cron.apply was asked */
+    public array $cronApplied = [];
+
+    /** @var string|null when set, cron.apply refuses with these words */
+    public ?string $cronRefuse = null;
+
+    /** @var list<array<string, mixed>> what tasks.list answers (newest first) */
+    public array $tasks = [];
+
+    /** @var list<string> what services.act was asked, as "unit action" */
+    public array $serviceActs = [];
+
+    /** @var list<string> units whose restart fails */
+    public array $svcFailRestart = [];
+
     /** @var array{hidepid: bool, links: bool, refuse: bool} what the server has for isolation; refuse makes isolation.apply fail */
     public array $isolation = ['hidepid' => false, 'links' => false, 'refuse' => false];
 
@@ -228,7 +259,7 @@ final class FakeServer
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
-        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries', 'waf.settings', 'isolation.apply'] as $op) {
+        foreach (['ftp.apply', 'ftp.settings', 'ftp.kill', 'ssh.apply', 'backup.destination', 'backup.destination_remove', 'backup.run', 'backup.restore', 'backup.download', 'firewall.port', 'firewall.lists', 'firewall.countries', 'waf.settings', 'isolation.apply', 'services.act', 'cron.apply'] as $op) {
             $answers[$op] = fn(array $args, string $id): array => $this->change($op, $args, $id);
         }
 
@@ -307,6 +338,16 @@ final class FakeServer
             'cached' => \array_map(fn(string $c): array => ['code' => $c, 'v4' => \count($this->fw['nets'][$c] ?? []), 'v6' => 0, 'fetched' => '2026-11-23T00:00:00Z'], $this->fw['countries']),
             'rules' => $this->fw['allow'] !== [] || $this->fw['deny'] !== [] || $this->fw['countries'] !== [], 'keep' => $this->fw['keep'],
         ]];
+        $answers['tasks.list'] = function (array $args): array {
+            if ($this->down) {
+                throw FakeAgent::unavailable();
+            }
+
+            $list = \array_values(\array_filter($this->tasks, static fn(array $t): bool => ($args['state'] ?? '') === '' || $t['state'] === $args['state']));
+
+            return ['status' => 'done', 'result' => ['tasks' => \array_slice($list, 0, (int) ($args['limit'] ?? 50))]];
+        };
+        $answers['services.status'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => ['services' => $this->serviceList()]];
         $answers['isolation.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => $this->isolationInfo()];
         $answers['waf.info'] = fn(): array => $this->down ? throw FakeAgent::unavailable() : ['status' => 'done', 'result' => [
             'available' => $this->waf['available'], 'server' => $this->waf['server'], 'rules' => $this->waf['rules'], 'paranoia' => $this->waf['paranoia'],
@@ -439,6 +480,24 @@ final class FakeServer
         return \count(\array_filter($this->executed, static fn(string $e): bool => $e === $op));
     }
 
+    /** Put a service in a state (active, inactive, failed) as if something outside the panel did it. */
+    public function service(string $unit, string $active): void
+    {
+        $this->svc[$unit]['active'] = $active;
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function serviceList(): array
+    {
+        $out = [];
+
+        foreach ($this->svc as $unit => $s) {
+            $out[] = ['unit' => $unit, 'label' => $s['label'], 'group' => $s['group'], 'allowed' => $s['allowed'], 'installed' => true, 'active' => $s['active'], 'sub' => $s['active'] === 'active' ? 'running' : 'dead', 'enabled' => $s['enabled'], 'since' => $s['active'] === 'active' ? '2026-11-24T08:00:00Z' : '', 'memory_bytes' => 1048576, 'restarts' => 0];
+        }
+
+        return $out;
+    }
+
     /** @return array<string, mixed> */
     private function isolationInfo(): array
     {
@@ -536,6 +595,52 @@ final class FakeServer
 
         if (\str_starts_with($op, 'firewall.')) {
             return $this->runFirewall($op, $args);
+        }
+
+        if ($op === 'cron.apply') {
+            $this->cronApplied[] = $args;
+
+            if ($this->cronRefuse !== null) {
+                return ['status' => 'failed', 'error' => ['code' => 'bad_args', 'message' => $this->cronRefuse]];
+            }
+
+            $user = (string) $args['username'];
+
+            if ($args['suspended'] || $args['jobs'] === []) {
+                unset($this->cron[$user]);
+            } else {
+                $this->cron[$user] = $args['jobs'];
+            }
+
+            return ['status' => 'done', 'result' => ['username' => $user, 'jobs' => \count($this->cron[$user] ?? []), 'changed' => true]];
+        }
+
+        if ($op === 'services.act') {
+            $unit = (string) $args['unit'];
+            $action = (string) $args['action'];
+            $this->serviceActs[] = $unit . ' ' . $action;
+
+            if (!isset($this->svc[$unit])) {
+                return ['status' => 'failed', 'error' => ['code' => 'bad_args', 'message' => $unit . ' is not a service LPanel manages']];
+            }
+
+            if (!\in_array($action, $this->svc[$unit]['allowed'], true)) {
+                return ['status' => 'failed', 'error' => ['code' => 'service_refused', 'message' => $unit . ' cannot be ' . $action . 'ed from here: the panel depends on it']];
+            }
+
+            if (\in_array($unit, $this->svcFailRestart, true) && $action === 'restart') {
+                return ['status' => 'failed', 'error' => ['code' => 'service_failed', 'message' => $unit . ' could not be restarted: the control process exited with error code']];
+            }
+
+            match ($action) {
+                'start', 'restart' => $this->svc[$unit]['active'] = 'active',
+                'stop' => $this->svc[$unit]['active'] = 'inactive',
+                'enable' => $this->svc[$unit]['enabled'] = true,
+                'disable' => $this->svc[$unit]['enabled'] = false,
+                default => null,
+            };
+
+            return ['status' => 'done', 'result' => \current(\array_filter($this->serviceList(), static fn(array $x): bool => $x['unit'] === $unit))];
         }
 
         if ($op === 'isolation.apply') {

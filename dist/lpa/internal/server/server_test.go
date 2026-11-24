@@ -251,3 +251,28 @@ func TestTimeoutsPanicsAndBusy(t *testing.T) {
 		t.Fatalf("timeout %+v, panic %+v, busy %+v", timeout, panicked, busy)
 	}
 }
+
+func TestTasksListsWhatTheAgentHasDoneWithoutItsSecrets(t *testing.T) {
+	h := newHarness(t)
+	h.call("task-000000000001", "test.count", `{}`)
+	h.call("task-000000000002", "test.count", `{}`)
+
+	all, raw := h.call("tasks-0000000001", "tasks.list", `{}`)
+	if all.Status != protocol.StatusDone {
+		t.Fatalf("%+v", all)
+	}
+	list := raw["result"].(map[string]any)["tasks"].([]any)
+	if len(list) < 2 {
+		t.Fatalf("%+v", list)
+	}
+	first := list[0].(map[string]any)
+	if first["op"] == nil || first["state"] == nil || first["args_sha256"] != nil || first["result"] != nil {
+		t.Fatalf("an entry is its op and state, nothing it was given or answered: %+v", first)
+	}
+
+	bad, _ := h.call("tasks-0000000002", "tasks.list", `{"state":"maybe"}`)
+	unknown, _ := h.call("tasks-0000000003", "tasks.list", `{"colour":"red"}`)
+	if code(bad) != protocol.CodeBadArgs || code(unknown) != protocol.CodeBadArgs {
+		t.Fatalf("%+v %+v", bad, unknown)
+	}
+}

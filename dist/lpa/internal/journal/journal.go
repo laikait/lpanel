@@ -17,6 +17,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"time"
 
 	"lpa/internal/fsutil"
@@ -88,26 +90,42 @@ func (j *Journal) Claim(id, op, argsSHA256 string) (*Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(j.path(id), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if errors.Is(err, fs.ErrExist) {
-		existing, getErr := j.Get(id)
-		if getErr != nil {
-			return nil, getErr
-		}
-		return existing, ErrExists
-	}
+	// The entry appears whole or not at all: written to a file of its own,
+	// then linked to its name, which fails if the name is taken. (Creating
+	// the name first and writing after would let a retry of the same id,
+	// arriving between the two, read an empty file.)
+	tmp, err := os.CreateTemp(j.Dir, "."+id+".claim-*")
 	if err != nil {
 		return nil, err
 	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
+	name := tmp.Name()
+	defer os.Remove(name)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
 		return nil, err
 	}
-	if err := f.Sync(); err != nil {
-		f.Close()
+	if err := tmp.Chmod(0o600); err != nil && runtime.GOOS != "windows" {
+		tmp.Close()
 		return nil, err
 	}
-	return entry, f.Close()
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return nil, err
+	}
+	if err := tmp.Close(); err != nil {
+		return nil, err
+	}
+	if err := os.Link(name, j.path(id)); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			existing, getErr := j.Get(id)
+			if getErr != nil {
+				return nil, getErr
+			}
+			return existing, ErrExists
+		}
+		return nil, err
+	}
+	return entry, nil
 }
 
 // Succeed stores the result of a claimed entry.
@@ -167,4 +185,59 @@ func (j *Journal) Prune(age time.Duration) (int, error) {
 		}
 	}
 	return removed, nil
+}
+
+// Summary is an entry without its arguments and result, which can hold
+// secrets: what the Admin panel's task viewer shows.
+type Summary struct {
+	ID         string     `json:"id"`
+	Op         string     `json:"op"`
+	State      string     `json:"state"`
+	Started    time.Time  `json:"started"`
+	Finished   *time.Time `json:"finished,omitempty"`
+	ErrCode    string     `json:"error_code,omitempty"`
+	ErrMessage string     `json:"error_message,omitempty"`
+}
+
+// ScanMax is the most entries List looks at (the newest files first).
+const ScanMax = 2000
+
+// List returns the newest entries, at most limit, optionally only those in
+// one state ("" is any). Newest first.
+func (j *Journal) List(state string, limit int) ([]Summary, error) {
+	files, err := os.ReadDir(j.Dir)
+	if err != nil {
+		return nil, err
+	}
+	type file struct {
+		id  string
+		mod time.Time
+	}
+	var all []file
+	for _, f := range files {
+		if filepath.Ext(f.Name()) != ".json" {
+			continue
+		}
+		info, err := f.Info()
+		if err != nil {
+			continue
+		}
+		all = append(all, file{f.Name()[:len(f.Name())-5], info.ModTime()})
+	}
+	sort.Slice(all, func(a, b int) bool { return all[a].mod.After(all[b].mod) })
+	if len(all) > ScanMax {
+		all = all[:ScanMax]
+	}
+	out := []Summary{}
+	for _, f := range all {
+		e, err := j.Get(f.id)
+		if err != nil || (state != "" && e.State != state) {
+			continue
+		}
+		out = append(out, Summary{ID: e.ID, Op: e.Op, State: e.State, Started: e.Started, Finished: e.Finished, ErrCode: e.ErrCode, ErrMessage: e.ErrMessage})
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }

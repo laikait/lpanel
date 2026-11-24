@@ -1,0 +1,72 @@
+{% extends "layout.twig" %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Operations.cron_title'|local }}</h1>
+        <p>{{ 'Operations.cron_lead'|local }}</p>
+    </div>
+</div>
+
+{% if suspended %}
+    <div class="alert alert-warning">{{ icon('alert') }}<p>{{ 'Operations.cron_suspended'|local }}</p></div>
+{% endif %}
+
+<div class="grid grid-side" style="align-items:start">
+    <section class="card">
+        <div class="card-head">
+            <div><h2>{{ 'Operations.cron_jobs'|local }}</h2><p>{{ 'Operations.cron_jobs_lead'|local({user: lp.me.name}) }}</p></div>
+            <span class="badge plain">{{ 'Operations.cron_room'|local({n: jobs|length, max: max}) }}</span>
+        </div>
+        {% if jobs is empty %}
+            <div class="empty">{{ icon('clock') }}<h3>{{ 'Operations.cron_none'|local }}</h3><p>{{ 'Operations.cron_none_text'|local }}</p></div>
+        {% else %}
+        <div class="table-wrap"><table class="table">
+            <tbody>
+            {% for j in jobs %}
+                <tr>
+                    <td>
+                        <strong class="mono">{{ j.schedule }}</strong>
+                        <div class="domain-sub mono" style="white-space:normal;word-break:break-all">{{ j.command }}</div>
+                    </td>
+                    <td style="text-align:end">
+                        <form class="inline-form" method="post" action="{{ j.delete_url }}" data-confirm="{{ 'Operations.cron_confirm'|local }}">
+                            <input type="hidden" name="_token" value="{{ lp.token }}">
+                            <button class="btn btn-sm btn-ghost" type="submit" aria-label="{{ 'Operations.cron_remove'|local }}">{{ icon('trash') }}</button>
+                        </form>
+                    </td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table></div>
+        {% endif %}
+    </section>
+
+    <form class="card" method="post" action="{{ add_url }}">
+        <div class="card-head"><div><h2>{{ 'Operations.cron_add_title'|local }}</h2></div></div>
+        <div class="card-body">
+            <input type="hidden" name="_token" value="{{ lp.token }}">
+            <div class="field">
+                <label for="cron-schedule">{{ 'Operations.cron_schedule'|local }}</label>
+                <input class="input mono{{ errors.schedule is defined ? ' is-invalid' : '' }}" id="cron-schedule" name="schedule" list="cron-common" value="{{ old.schedule|default('') }}" placeholder="*/15 * * * *" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+                <datalist id="cron-common">
+                    <option value="0 * * * *">{{ 'Operations.cron_hourly'|local }}</option>
+                    <option value="*/15 * * * *">{{ 'Operations.cron_15'|local }}</option>
+                    <option value="30 3 * * *">{{ 'Operations.cron_daily'|local }}</option>
+                    <option value="0 4 * * 1">{{ 'Operations.cron_weekly'|local }}</option>
+                </datalist>
+                {% if errors.schedule is defined %}<div class="error">{{ errors.schedule|local }}</div>{% endif %}
+                <div class="hint">{{ 'Operations.cron_schedule_hint'|local }}</div>
+            </div>
+            <div class="field" style="margin:0">
+                <label for="cron-command">{{ 'Operations.cron_command'|local }}</label>
+                <input class="input mono{{ errors.command is defined ? ' is-invalid' : '' }}" id="cron-command" name="command" value="{{ old.command|default('') }}" maxlength="1000" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+                {% if errors.command is defined %}<div class="error">{{ errors.command|local }}</div>{% endif %}
+                {% if errors.server is defined %}<div class="error">{{ errors.server|local }}</div>{% endif %}
+                <div class="hint">{{ 'Operations.cron_command_hint'|local }}</div>
+            </div>
+        </div>
+        <div class="card-foot"><button class="btn btn-primary" type="submit">{{ icon('plus') }}{{ 'Operations.cron_add'|local }}</button></div>
+    </form>
+</div>
+{% endblock %}

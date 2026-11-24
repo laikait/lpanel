@@ -145,6 +145,10 @@ Operations marked async answer `accepted` at once. The panel then asks
 | `firewall.info` | read-only | firewalld's state, the zones, the open ports (and which service opens each), the allow and deny lists, the blocked countries and what is cached |
 | `firewall.port` | change | `{action: open\|close, port, proto, sources?, protect?}`: open a port, limit it to some addresses, or close it |
 | `firewall.lists` | change | `{allow, deny, protect?}`: the allow list and the deny list, whole |
+| `cron.apply` | change | `{username, suspended, jobs: [{schedule, command}]}`: an account's whole list of scheduled jobs (none, or suspended: the file is removed) |
+| `tasks.list` | read-only (answered by the server itself, like `op.status`) | `{state?, limit?}`: the journal's newest entries (operation, state, times, error), never their arguments or results |
+| `services.status` | read-only | every service LPanel manages that is installed: its state, whether it starts at boot, since when, its memory, what the unit allows |
+| `services.act` | change | `{unit, action}`: start, stop, restart, reload, enable or disable one of them, within what that unit allows |
 | `isolation.info` | read-only | whether /proc hides other users' processes (and the unit that keeps it), the kernel's four link protections and their values |
 | `isolation.apply` | change | `{hidepid, links}`: both settings, whole |
 | `waf.info` | read-only | whether Apache has ModSecurity loaded, the Core Rule Set's version, the paranoia level |
@@ -589,6 +593,38 @@ host only, at most 4 MB, every line a network of the right family, or the
 list is not kept); a country that cannot be fetched changes nothing. Error
 codes: `firewall_off`, `firewall_kept`, `firewall_lockout`, `firewall_fetch`,
 `firewall_toomany`.
+
+### Cron jobs (`cron.apply`)
+
+An account's jobs are one file, `/etc/cron.d/lpanel-<user>` (root, 0644), written
+whole and run by the system's cron as that account, never as root. Everything in
+it is made by the agent from parts it has checked: the account's name, five
+schedule fields of numbers, ranges, steps and lists (or `@hourly`, `@daily`,
+`@weekly`, `@monthly`, `@yearly`; `@reboot` is refused), and a command of one
+line of printable text (a `%`, which cron reads as a line break, is written
+`\%`). The environment lines are the agent's own: the account's `HOME`,
+`TMPDIR`, `TMP`, `TEMP` pointing at its own `tmp` folder, `MAILTO=""`.
+
+A job may not run more often than every five minutes (the minute field names
+at most twelve minutes, and none closer than five apart when every hour runs),
+and an account has at most 20. No jobs, or a suspended account, removes the
+file; the same list twice changes nothing. Removing the file of an account that
+no longer exists needs no user.
+
+### Services (`services.*`)
+
+A fixed list of units: the panel's own (agent, sign-in helper, panel web server
+and PHP, scheduler), Apache, nginx, each PHP-FPM version, MariaDB, PowerDNS,
+Exim, Dovecot, Rspamd, ClamAV, Pure-FTPd, SSH, firewalld, cron and chrony. A
+unit that is not on it cannot be named (`bad_args`), whatever the panel sends;
+an action is one of six words, run as `systemctl <action> -- <unit>` without a
+shell. Each unit lists what it allows: the agent and the sign-in helper allow
+nothing; the panel's web server and PHP allow only restart and reload;
+MariaDB only start and restart; SSH never stops or is disabled; firewalld
+neither stops nor is disabled. A refusal is `service_refused`, a failed
+systemctl is `service_failed` with systemd's own words. `services.status`
+reads all units in one `systemctl show`; a unit systemd does not know is left
+out.
 
 ### Account isolation (`isolation.*`)
 

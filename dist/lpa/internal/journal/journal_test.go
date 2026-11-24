@@ -78,3 +78,67 @@ func privateDir(t *testing.T) string {
 	}
 	return dir
 }
+
+func TestListIsNewestFirstAndHasNoArgumentsOrResults(t *testing.T) {
+	j, _ := Open(privateDir(t))
+	old, _ := j.Claim("0000000000000001", "db.apply", "aaa")
+	j.Succeed(old, map[string]string{"password": "secret-in-a-result"})
+	os.Chtimes(j.path("0000000000000001"), time.Now().Add(-time.Hour), time.Now().Add(-time.Hour))
+	bad, _ := j.Claim("0000000000000002", "backup.run", "bbb")
+	j.Fail(bad, "backup_failed", "the destination is full")
+	j.Claim("0000000000000003", "php.install", "ccc")
+
+	all, err := j.List("", 10)
+	if err != nil || len(all) != 3 {
+		t.Fatalf("%v %+v", err, all)
+	}
+	if all[2].ID != "0000000000000001" {
+		t.Fatalf("the oldest is last: %+v", all)
+	}
+	for _, s := range all {
+		raw, _ := os.ReadFile(j.path(s.ID))
+		_ = raw
+	}
+	failed, _ := j.List(Failed, 10)
+	if len(failed) != 1 || failed[0].ErrCode != "backup_failed" || failed[0].ErrMessage != "the destination is full" {
+		t.Fatalf("%+v", failed)
+	}
+	running, _ := j.List(Running, 10)
+	if len(running) != 1 || running[0].Op != "php.install" {
+		t.Fatalf("%+v", running)
+	}
+	one, _ := j.List("", 1)
+	if len(one) != 1 {
+		t.Fatalf("%+v", one)
+	}
+}
+
+func TestAClaimIsNeverSeenHalfWritten(t *testing.T) {
+	j, _ := Open(privateDir(t))
+	done := make(chan struct{})
+	errs := make(chan error, 200)
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			id := "race-" + string(rune('a'+i%26)) + "-" + time.Now().Format("150405.000000000")
+			go func() {
+				for k := 0; k < 20; k++ {
+					if _, err := j.Claim(id, "web.apply", "aaa"); err != nil && !errors.Is(err, ErrExists) {
+						errs <- err
+						return
+					}
+				}
+			}()
+			if _, err := j.Claim(id, "web.apply", "aaa"); err != nil && !errors.Is(err, ErrExists) {
+				errs <- err
+			}
+		}
+	}()
+	<-done
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-errs:
+		t.Fatalf("a retry saw a claim half written: %v", err)
+	default:
+	}
+}

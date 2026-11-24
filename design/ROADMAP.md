@@ -1084,9 +1084,59 @@ ipset and reload mechanism (M9a) and the log formats of pure-ftpd and Dovecot
 (M9b).
 
 ### M10: Operations
-- Server dashboard and service watchdog.
+
+**M10a, the services and the watchdog, is built (2026-11-24).**
+
+- **Agent** (`internal/services`, ops `services.status|act`): a fixed list of
+  units (the panel's, the web servers, each PHP version, MariaDB, DNS, mail,
+  FTP, SSH, firewalld, cron, chrony) with what each allows; the panel's own
+  units, MariaDB, SSH and firewalld cannot be stopped or disabled from here.
+- **Panel** (new module `Operations`): the Admin page "Services" (grouped, with
+  state, since when, memory, start, stop, restart, reload, and the watchdog
+  switch), a card on the dashboard, the bell, API `/admin/api/v1/services`,
+  commands `services:status|start|stop|restart|reload|enable|disable|watch`
+  and `watchdog:run`. Capability `server.services` (administrators).
+- **The watchdog** runs every minute: a service that starts at boot, was not
+  stopped through the panel and is watched, but is not running, is restarted;
+  at most three times an hour, then it is given up on and said so once. A
+  service that is starting, reloading or stopping is left alone, and one must
+  have been found down for 20 seconds before it is restarted (found by the e2e:
+  without this, a reload of Apache was answered with a restart). What
+  happens is logged and announced on the `ops.service_event` hook, where the
+  alerts of M10d will listen. A bug found by its test: a stop had not been
+  remembered, so the watchdog would have restarted what an administrator
+  stopped.
+- **Found by the e2e on the way, and fixed:** the agent's journal wrote an
+  entry's name before its content, so a retry of the same request arriving in
+  between read an empty file (`journal entry …: unexpected end of JSON input`);
+  an entry now appears whole or not at all. The firewall fetched a country's
+  IPv4 and IPv6 lists in a random order. The e2e script's `pipefail` made
+  `curl page | grep -q text` fail whenever grep quit early, more often as pages
+  grew; it is off.
+- **Not yet:** editing a service's configuration safely (the second item
+  below), alerts (M10d).
+
 - Service manager with safe config editing.
-- Cron editor and background task viewer.
+**M10b, the cron editor and the background task viewer, is built (2026-11-24).**
+
+- **Cron** (agent `internal/cron`, op `cron.apply`; panel `Operations/Cron`):
+  an account's jobs in the User panel (a page with common schedules, the
+  account's package needs the `cron` feature), the API
+  (`/admin/api/v1/accounts/{user}/cron`) and `cron:list|add|remove`. One file
+  per account in `/etc/cron.d`, run as the account with its own temporary
+  folder and no mail; at most one run in five minutes and 20 jobs; suspended
+  accounts and packages without the feature run nothing but keep their list.
+  The installer adds cronie. A removed account takes its jobs with it.
+- **Background tasks** (the agent's `tasks.list`, the panel's `Operations/Tasks`):
+  the Admin page (running, failed, interrupted, with filters), API
+  `/admin/api/v1/tasks` and `tasks:list`: what the agent has done and is doing,
+  from its journal, without any arguments or results.
+- **Tests:** Go (the cron rules and file, the journal list, the server's
+  `tasks.list`), PHP (8 in `CronTest`, 1 more in `OperationsTest`), e2e: the
+  real cron daemon loads the file, a too-frequent job is refused, removing it
+  removes the file.
+- **Not yet:** a log of what each job printed or when it last ran.
+
 - OS, panel and PHP updates.
 - GoAccess stats, logs, and alerts (email, Telegram, Slack, webhook).
 

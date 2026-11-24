@@ -776,12 +776,14 @@ func (m *Manager) have(code string) bool {
 
 // fetch gets a country's networks (IPv4 and IPv6) and caches them.
 func (m *Manager) fetch(ctx context.Context, code string) error {
-	urls := map[string]string{
-		"v4": "https://www.ipdeny.com/ipblocks/data/aggregated/" + strings.ToLower(code) + "-aggregated.zone",
-		"v6": "https://www.ipdeny.com/ipv6/ipaddress-blocks/" + strings.ToLower(code) + ".zone",
+	// IPv4 first, then IPv6, always in this order.
+	urls := []struct{ fam, url string }{
+		{"v4", "https://www.ipdeny.com/ipblocks/data/aggregated/" + strings.ToLower(code) + "-aggregated.zone"},
+		{"v6", "https://www.ipdeny.com/ipv6/ipaddress-blocks/" + strings.ToLower(code) + ".zone"},
 	}
 	got := map[string][]byte{}
-	for fam, url := range urls {
+	for _, u := range urls {
+		fam, url := u.fam, u.url
 		body, err := m.Fetch(ctx, url)
 		if err != nil {
 			return protocol.Fail(CodeFetch, fmt.Sprintf("the list for %s could not be fetched: %v", code, err))

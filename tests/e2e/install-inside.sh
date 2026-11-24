@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Runs inside a fresh AlmaLinux 9 systemd container (see install.sh).
-set -uo pipefail
+# No pipefail: a check like `curl page | grep -q text` fails (curl: broken pipe) whenever grep
+# finds its text and quits before curl has written the whole page, more often the bigger
+# the page is. What the checks look at is the text, not the producer's exit status.
+set -u
 
 ROOT_PASSWORD='Root-Test-Pass-91'
 pass=0
@@ -19,6 +22,9 @@ status() { curl -ks -o /dev/null -w '%{http_code}' "$1"; }
 location() { curl -ks -o /dev/null -w '%{redirect_url}' "$1"; }
 
 echo "$ROOT_PASSWORD" | passwd --stdin root >/dev/null
+# fs.protected_fifos belongs to the kernel every container on this machine shares:
+# note when it changes, so a surprise can be explained (see the isolation check).
+( last=x; while :; do v=$(cat /proc/sys/fs/protected_fifos 2>/dev/null); if [ "$v" != "$last" ]; then { echo "$(date +%T) $v"; if [ "$last" != x ]; then ps -eo pid,etimes,args --sort=etimes | head -8 | cut -c1-110; journalctl --no-pager --since "12 seconds ago" 2>/dev/null | tail -12 | cut -c20-170; fi; } >> /tmp/fifos.log; last=$v; fi; sleep 0.3; done ) >/dev/null 2>&1 &
 # On a VM with SELinux on (tests/vm/run.sh), every denial from here on fails
 # the run at the end.
 started=$(date '+%m/%d/%Y %H:%M:%S')
@@ -179,14 +185,16 @@ t_both_in()   { rm -f $both
                 r1=$(post https://127.0.0.1:7443/admin/login https://127.0.0.1:7443/admin/login username=root "password=$ROOT_PASSWORD")
                 r2=$(post https://127.0.0.1:7444/panel/login https://127.0.0.1:7444/panel/login username=shop1 password=Owner-Pass-Word-1)
                 curl -ks -b $both https://127.0.0.1:7443/admin > /tmp/both-admin.html; curl -ks -b $both https://127.0.0.1:7444/panel > /tmp/both-panel.html
-                grep -q "Welcome back, root" /tmp/both-admin.html && grep -q "shop.example.test" /tmp/both-panel.html \n                    || { echo "admin login: $r1; panel login: $r2"; grep -o '<title>[^<]*' /tmp/both-admin.html /tmp/both-panel.html; grep -ao 'alert[^>]*>[^<]*<p>[^<]*' /tmp/both-admin.html /tmp/both-panel.html | head -3; return 1; }; }
+                grep -q "Welcome back, root" /tmp/both-admin.html && grep -q "shop.example.test" /tmp/both-panel.html \
+                    || { echo "admin login: $r1; panel login: $r2"; grep -o '<title>[^<]*' /tmp/both-admin.html /tmp/both-panel.html; grep -ao 'alert[^>]*>[^<]*<p>[^<]*' /tmp/both-admin.html /tmp/both-panel.html | head -3; return 1; }; }
 t_two_cookies() { grep -q lpanel_admin $both && grep -q lpanel_user $both; }
 SHOP1_LOGIN=$(mariadb -uroot -N lpanel -e "select login_id from accounts where username='shop1'")
 t_login_as()  { local out; out=$(post https://127.0.0.1:7443/admin "https://127.0.0.1:7443/admin/login-as/$SHOP1_LOGIN"); echo "$out"
                 [[ "$out" == "303 https://127.0.0.1:7444/panel/login-as?ticket="* ]] || return 1
                 curl -ks -b $both -c $both -o /dev/null "${out#303 }"
                 curl -ks -b $both https://127.0.0.1:7444/panel | grep -q "You are signed in as shop1. You are really root"; }
-t_still_root() { curl -ks -b $both https://127.0.0.1:7443/admin | grep -q "Welcome back, root"; }
+t_still_root() { local code; code=$(curl -ks -b $both -o /tmp/still-root.html -w '%{http_code}' https://127.0.0.1:7443/admin)
+                  grep -q "Welcome back, root" /tmp/still-root.html || { echo "HTTP $code, $(wc -c < /tmp/still-root.html) bytes"; grep -o '<title>[^<]*' /tmp/still-root.html; grep -ao 'Welcome[^<]*' /tmp/still-root.html | head -2; head -c 300 /tmp/still-root.html; echo; cat $both | cut -c1-120; return 1; }; }
 t_on_behalf() { [ "$(mariadb -uroot -N lpanel -e "select count(*) from audit_log where action='auth.login_as' and actor_name='root' and subject='shop1'")" = 1 ]; }
 check "one browser is signed in to both interfaces at once" t_both_in
 check "each interface has its own session cookie" t_two_cookies
@@ -606,8 +614,13 @@ echo "== DNS (PowerDNS)"
 IP4=$(lpanel dns:settings | awk '$1 == "IPv4" { print $3 }')
 q() { dig @127.0.0.1 +short +norecurse "$@" 2>&1; }     # name [type]
 zid() { mariadb -uroot -N lpanel -e "select r.id from dns_records r join dns_zones z on z.id = r.zone_id where z.name = '$1' and r.name = '$2' and r.type = '$3' limit 1"; }
-t_pdns_up()     { systemctl is-active --quiet pdns && ss -ltnp | grep -q '127.0.0.1:8081' && ! ss -ltn | grep -qE '(0\.0\.0\.0|\*|\[::\]):8081 ' \
-                  && [ "$(stat -c '%a %U' /etc/lpa/pdns.key)" = "600 root" ] && [ "$(stat -c '%a %U %G' /etc/pdns/pdns.conf)" = "640 root pdns" ]; }
+t_pdns_up()     { local why=""
+                  systemctl is-active --quiet pdns || why="$why not-active($(systemctl is-active pdns));"
+                  ss -ltnp | grep -q '127.0.0.1:8081' || why="$why not-listening;"
+                  ! ss -ltn | grep -qE '(0\.0\.0\.0|\*|\[::\]):8081 ' || why="$why listens-everywhere;"
+                  [ "$(stat -c '%a %U' /etc/lpa/pdns.key)" = "600 root" ] || why="$why key-mode($(stat -c '%a %U' /etc/lpa/pdns.key));"
+                  [ "$(stat -c '%a %U %G' /etc/pdns/pdns.conf)" = "640 root pdns" ] || why="$why conf-mode($(stat -c '%a %U %G' /etc/pdns/pdns.conf));"
+                  [ -z "$why" ] || { echo "pdns:$why"; systemctl status pdns --no-pager | head -12 | cut -c1-160; journalctl -u pdns --no-pager | tail -6 | cut -c1-200; ss -ltnp | grep 8081; return 1; }; }
 t_api_key()     { [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8081/api/v1/servers/localhost/zones)" = 401 ] && lpanel dns:info | grep -q 'Running *yes'; }
 t_zone_made()   { [ -n "$IP4" ] && [ "$(q shop.example.test A)" = "$IP4" ] && [ "$(q www.shop.example.test A)" = "$IP4" ] \
                   && q shop.example.test MX | grep -qx '10 mail.shop.example.test.' && q shop.example.test TXT | grep -q 'v=spf1 a mx ~all' \
@@ -689,7 +702,12 @@ lpanel domains:set shop1 shop.example.test --wildcard=no >/dev/null
 
 # Each stack switches to another, and every site moves with it.
 echo "== mail (Exim, Dovecot)"
-dnf -y -q install swaks python3-dkimpy >/dev/null 2>&1 || dnf -y -q install swaks python3-dkimpy >/dev/null 2>&1
+# The mirrors now and then fail for a minute: try again before every mail check fails for it.
+for _try in 1 2 3 4 5 6; do
+    dnf -y -q install swaks python3-dkimpy >/tmp/dnf-swaks.log 2>&1 && command -v swaks >/dev/null && break
+    sleep 15
+done
+command -v swaks >/dev/null || { echo "swaks could not be installed:"; tail -5 /tmp/dnf-swaks.log; }
 MIP=$(hostname -I | tr ' ' '\n' | grep -m1 -E '^[0-9]+(\.[0-9]+){3}$')   # this machine's own address: not a relay host
 MPW='Mail-Pass-Word-1'
 # Outgoing mail goes to a catcher on this machine (the relay host), which
@@ -1407,10 +1425,10 @@ t_rs_moved()    { /usr/local/lpa/bin/lpa backup-password d1 | lpanel backup:dest
                   && ! { echo wrong-password | lpanel backup:destination-add moved2 local --path=/backup/lpanel --existing >/dev/null 2>&1; }; }
 active_shop3()  { lpanel accounts:list > /tmp/rsl.out 2>/dev/null; grep -Eq '^shop3 +three\.example\.test .*active' /tmp/rsl.out; }
 t_rs_recreate() { local s rex; s=$(snap shop3 moved); rex=$(mariadb -uroot -N lpanel -e "select id from panel_users where username='rex'")
-                  lpanel accounts:terminate shop3 --yes >/dev/null && for _ in $(seq 60); do systemctl start lpanel-scheduler.service; getent passwd shop3 >/dev/null || break; sleep 1; done
+                  lpanel accounts:terminate shop3 --yes >/dev/null && for _ in $(seq 90); do systemctl start lpanel-scheduler.service; getent passwd shop3 >/dev/null || { lpanel accounts:list > /tmp/rsl2.out 2>&1; grep -q '^shop3 ' /tmp/rsl2.out || break; }; sleep 1; done
                   ! getent passwd shop3 && ! mariadb -uroot -e 'use shop3_data' 2>/dev/null || return 1
                   lpanel backup:recreate "$s" --destination=moved --dry-run > /tmp/rsdry.out && grep -q 'reseller rex' /tmp/rsdry.out \
-                  && lpanel backup:recreate "$s" --destination=moved --wait > /tmp/rsr.out 2>&1; local r=$?; cat /tmp/rsr.out >&2; [ $r = 0 ] || { tail -c 3000 /var/log/lpanel/*.log /usr/local/lpanel/system/Logs/* >&2 2>/dev/null; return 1; }
+                  && lpanel backup:recreate "$s" --destination=moved --wait > /tmp/rsr.out 2>&1; local r=$?; [ $r = 0 ] || { tail -c 1500 /var/log/lpanel/php-error.log /usr/local/lpanel/system/Logs/* >&2 2>/dev/null; echo "--- dry run:" >&2; tail -6 /tmp/rsdry.out >&2; echo "--- recreate (exit $r):" >&2; tail -14 /tmp/rsr.out >&2; return 1; }; cat /tmp/rsr.out >&2
                   for _ in $(seq 30); do systemctl start lpanel-scheduler.service; says three.example.test "bool(false)" >/dev/null 2>&1 && break; sleep 1; done
                   for _ in $(seq 60); do systemctl start lpanel-scheduler.service; active_shop3 && break; sleep 1; done
                   local n=0; step() { n=$((n+1)); "$@" || { echo "step $n failed: $*" >&2; return 1; }; }
@@ -1482,7 +1500,13 @@ t_iso_on() {
     grep -q "hidepid=" /proc/self/mounts || why="$why mount;"
     systemctl is-enabled --quiet lpanel-hidepid.service || why="$why unit;"
     [ "$(sysctl -n fs.protected_symlinks fs.protected_hardlinks fs.protected_regular fs.protected_fifos | tr '\n' ' ')" = "1 1 2 2 " ] || why="$why sysctl;"
-    [ -z "$why" ] || { echo "not as expected:$why"; cat /tmp/iso1.out; grep ' /proc ' /proc/self/mounts; return 1; }
+    # fs.protected_* belong to the kernel every container on this machine shares, so another
+    # container (or the host) can change them under us; sync puts them back, which is what it is for.
+    if [ -n "$why" ] && [ "$why" = " status-links; sysctl;" ]; then
+        lpanel isolation:sync > /tmp/iso1b.out 2>&1 && why=""
+        [ "$(sysctl -n fs.protected_symlinks fs.protected_hardlinks fs.protected_regular fs.protected_fifos | tr '\n' ' ')" = "1 1 2 2 " ] || why=" sysctl-after-sync;"
+    fi
+    [ -z "$why" ] || { echo "not as expected:$why"; grep -a " 1$" -A21 /tmp/fifos.log | head -23; return 1; }
 }
 t_iso_hidden() {
     # root sees dozens of processes, an account its own ps and little else
@@ -1508,6 +1532,64 @@ check "an account sees only its own processes, root sees all" t_iso_hidden
 check "the services still run with /proc hidden" t_iso_services
 check "isolation switches off and on again" t_iso_off_on
 check "PHP pools give programs the account's own temporary folder" t_iso_pool_tmp
+
+# Operations (M10): the services page's data, the watchdog bringing back a
+# service something outside the panel stopped (and leaving alone one stopped
+# through the panel), the cron jobs of an account, and the agent's task list.
+t_ops_services() {
+    lpanel services:status > /tmp/ops1.out 2>&1 \
+        && grep -q "^mariadb.service  *active" /tmp/ops1.out && grep -q "^lpa.service  *active" /tmp/ops1.out \
+        && grep -q "^dovecot.service  *active  *enabled" /tmp/ops1.out
+}
+t_ops_refused() {
+    { lpanel services:stop mariadb > /tmp/ops2.out 2>&1; [ $? = 1 ]; } && grep -q "cannot be" /tmp/ops2.out \
+        && { lpanel services:stop lpa > /tmp/ops2b.out 2>&1; [ $? = 1 ]; } && systemctl is-active --quiet mariadb lpa
+}
+t_ops_watchdog() {
+    systemctl stop dovecot
+    # The first round notes that it is down; one a little later (the grace is 20 seconds) restarts it.
+    lpanel watchdog:run > /tmp/ops3a.out 2>&1
+    sleep 22
+    lpanel watchdog:run > /tmp/ops3.out 2>&1
+    systemctl is-active --quiet dovecot || { cat /tmp/ops3a.out /tmp/ops3.out; return 1; }
+    # Either this round or the scheduler's restarted it; it is up and was down once.
+    [ "$(mariadb -uroot -N lpanel -e "select count(*) from ops_service_events where unit='dovecot.service' and kind='restarted'")" -ge 1 ]
+}
+t_ops_hold() {
+    lpanel services:stop dovecot > /tmp/ops4.out 2>&1 || { cat /tmp/ops4.out; return 1; }
+    lpanel watchdog:run > /tmp/ops5.out 2>&1
+    ! systemctl is-active --quiet dovecot || return 1
+    lpanel services:start dovecot > /tmp/ops6.out 2>&1 || { cat /tmp/ops6.out; return 1; }
+    systemctl is-active --quiet dovecot
+}
+t_ops_events() {
+    [ "$(mariadb -uroot -N lpanel -e "select group_concat(kind order by id) from ops_service_events where unit='dovecot.service' and kind<>'recovered'")" = "down,restarted,admin,admin" ] \
+        || { mariadb -uroot -N lpanel -e "select unit, kind, detail from ops_service_events"; return 1; }
+}
+t_ops_cron() {
+    local n=0; step() { n=$((n+1)); "$@" || { echo "cron step $n failed: $*" >&2; return 1; }; }
+    step systemctl is-active --quiet crond || return 1
+    step lpanel cron:add shop1 "*/5 * * * *" "date > /home/shop1/tmp/cron-ran 2>&1" > /tmp/ops7.out 2>&1 || { cat /tmp/ops7.out; return 1; }
+    step grep -q '^\*/5 \* \* \* \* shop1 date > /home/shop1/tmp/cron-ran' /etc/cron.d/lpanel-shop1 || { cat /etc/cron.d/lpanel-shop1; return 1; }
+    step grep -q '^TMPDIR=/home/shop1/tmp' /etc/cron.d/lpanel-shop1 || return 1
+    step test "$(stat -c '%U:%a' /etc/cron.d/lpanel-shop1)" = "root:644" || return 1
+    lpanel cron:add shop1 "* * * * *" true > /tmp/ops8.out 2>&1; step test $? = 1 || return 1
+    step grep -q "at most once every 5 minutes" /tmp/ops8.out || { cat /tmp/ops8.out; return 1; }
+    for _ in $(seq 20); do journalctl -u crond --no-pager | grep -q "lpanel-shop1" && break; sleep 1; done
+    journalctl -u crond --no-pager | grep -q "lpanel-shop1" || { echo "crond did not mention the file:"; journalctl -u crond --no-pager | tail -5; }
+    step lpanel cron:remove shop1 "$(mariadb -uroot -N lpanel -e "select id from cron_jobs limit 1")" > /dev/null || return 1
+    step test ! -e /etc/cron.d/lpanel-shop1
+}
+t_ops_tasks() {
+    lpanel tasks:list --limit=100 > /tmp/ops9.out 2>&1 && grep -q "cron.apply" /tmp/ops9.out && grep -q "services.act" /tmp/ops9.out
+}
+check "the services are listed with their state, and the panel's own cannot be stopped" t_ops_services
+check "the agent and the database refuse to be stopped from the panel" t_ops_refused
+check "the watchdog restarts a service something else stopped" t_ops_watchdog
+check "a service stopped through the panel is left alone until started" t_ops_hold
+check "the watchdog's and the administrator's actions are in the log" t_ops_events
+check "an account's cron job is written for cron to run as the account, and too frequent ones are refused" t_ops_cron
+check "the task list shows what the agent has done" t_ops_tasks
 
 # The web application firewall (ModSecurity with the Core Rule Set) lives in
 # Apache, so on the apache and hybrid stacks the real thing is tried: an

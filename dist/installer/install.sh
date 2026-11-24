@@ -110,7 +110,7 @@ dnf -y -q install \
     rspamd clamd clamav-update \
     pure-ftpd \
     openssh-server openssh-clients bubblewrap rsync git-core \
-    restic
+    restic cronie
 note "$($PHP -r 'echo "PHP ", PHP_VERSION;'), $(mariadb --version | awk '{print $1, $5}' | tr -d ,), $(nginx -v 2>&1), $(httpd -v | head -1)"
 
 # PHP for customers' sites: each version side by side, one PHP-FPM pool per
@@ -678,6 +678,8 @@ fi
 step "Database tables"
 runuser -u lpanel -- $PHP "$PANEL/laika" migrate
 
+# Cron runs the accounts' scheduled jobs (/etc/cron.d/lpanel-<account>, written by the agent).
+systemctl enable -q --now crond
 systemctl enable -q --now lpa.service lpanel-authd.socket lpanel-php-fpm.service lpanel-nginx.service lpanel-scheduler.timer
 # Restarted even when already running, so a rerun brings new binaries, units
 # and SELinux domains into effect (authd's socket is made again with its label).

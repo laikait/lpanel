@@ -126,6 +126,9 @@ func (s *Server) dispatch(req *protocol.Request) protocol.Response {
 	if req.Op == "op.status" {
 		return s.status(req)
 	}
+	if req.Op == "tasks.list" {
+		return s.tasks(req)
+	}
 	op, ok := s.Registry.Get(req.Op)
 	if !ok {
 		return refuse(req.ID, protocol.CodeUnknownOp, "no operation called "+req.Op)
@@ -223,6 +226,31 @@ func (s *Server) status(req *protocol.Request) protocol.Response {
 		return failed(req.ID, protocol.CodeFailed, err.Error())
 	}
 	return fromEntry(entry)
+}
+
+// tasks lists what the agent has done and is doing: the journal's newest
+// entries, without their arguments or results.
+func (s *Server) tasks(req *protocol.Request) protocol.Response {
+	var args struct {
+		State string `json:"state"`
+		Limit int    `json:"limit"`
+	}
+	if err := ops.Decode(req.Args, &args); err != nil {
+		return refuse(req.ID, protocol.CodeBadArgs, "tasks.list takes {\"state\": …, \"limit\": …}")
+	}
+	switch args.State {
+	case "", journal.Running, journal.Done, journal.Failed, journal.Interrupted:
+	default:
+		return refuse(req.ID, protocol.CodeBadArgs, "state is running, done, failed or interrupted")
+	}
+	if args.Limit < 1 || args.Limit > 200 {
+		args.Limit = 50
+	}
+	list, err := s.Journal.List(args.State, args.Limit)
+	if err != nil {
+		return failed(req.ID, protocol.CodeFailed, err.Error())
+	}
+	return answer(req.ID, map[string]any{"tasks": list}, nil)
 }
 
 // freshNonce records a nonce, refusing one seen within twice the clock skew

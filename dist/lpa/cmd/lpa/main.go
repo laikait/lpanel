@@ -29,6 +29,7 @@ import (
 	"lpa/internal/backup"
 	"lpa/internal/certs"
 	"lpa/internal/config"
+	"lpa/internal/cron"
 	"lpa/internal/dns"
 	"lpa/internal/files"
 	"lpa/internal/firewall"
@@ -42,6 +43,7 @@ import (
 	"lpa/internal/protocol"
 	"lpa/internal/quota"
 	"lpa/internal/server"
+	"lpa/internal/services"
 	"lpa/internal/sshkeys"
 	"lpa/internal/sysexec"
 	"lpa/internal/sysinfo"
@@ -196,6 +198,10 @@ func registry(cfg config.Config, log *slog.Logger, started time.Time, serving bo
 	iso := &isolation.Manager{Run: sysexec.Exec{}, Log: log}
 	iso.Defaults()
 	ops.Isolation(reg, iso)
+	ops.Services(reg, &services.Manager{Run: sysexec.Exec{}})
+	cr := &cron.Manager{Owner: acc.Owner}
+	cr.Defaults()
+	ops.Cron(reg, cr)
 	ops.SSH(reg, keys)
 	ops.Backup(reg, backups)
 	self, err := os.Executable()
