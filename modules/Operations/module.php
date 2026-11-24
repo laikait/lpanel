@@ -10,11 +10,20 @@ use App\Engine\Hook\HookEngine;
 use App\Engine\Module\ModuleContext;
 use App\Engine\Routing\RouteCollector;
 use App\Engine\Scheduler\ScheduleCollector;
+use App\Modules\Operations\Alerts\AlertChannels;
+use App\Modules\Operations\Alerts\AlertChecks;
+use App\Modules\Operations\Alerts\AlertListeners;
+use App\Modules\Operations\Alerts\Alerts;
+use App\Modules\Operations\Alerts\AlertSettings;
+use App\Modules\Operations\Alerts\Delivery;
+use App\Modules\Operations\Commands\AlertCommands;
 use App\Modules\Operations\Commands\CronCommands;
 use App\Modules\Operations\Commands\ServiceCommands;
 use App\Modules\Operations\Commands\TaskCommands;
 use App\Modules\Operations\Commands\UpdateCommands;
 use App\Modules\Operations\Cron\CronJobs;
+use App\Modules\Operations\Http\AlertApi;
+use App\Modules\Operations\Http\AlertPages;
 use App\Modules\Operations\Http\CronApi;
 use App\Modules\Operations\Http\CronPages;
 use App\Modules\Operations\Http\ServiceApi;
@@ -53,6 +62,15 @@ return static function (ModuleContext $module): void {
 
     $module->services(static function (ServiceRegistrar $services): void {
         $services->singleton(Services::class);
+        $services->singleton(AlertSettings::class);
+        $services->singleton(AlertChannels::class);
+        $services->singleton(Delivery::class);
+        $services->singleton(Alerts::class);
+        $services->singleton(AlertChecks::class);
+        $services->singleton(AlertListeners::class);
+        $services->bind(AlertPages::class);
+        $services->bind(AlertApi::class);
+        $services->bind(AlertCommands::class);
         $services->singleton(Watchdog::class);
         $services->singleton(CronJobs::class);
         $services->singleton(Tasks::class);
@@ -76,6 +94,7 @@ return static function (ModuleContext $module): void {
 
     $module->access(static function (AccessCollector $access): void {
         $access->capability('server.services', 'See how the server\'s services are doing, start, stop and restart them, and set which ones the watchdog restarts.');
+        $access->capability('server.alerts', 'Choose where the server\'s alerts go (email, Telegram, Slack, a webhook) and when it speaks up.');
         $access->capability('server.updates', 'Install the operating system\'s, PHP\'s and LPanel\'s updates, choose what is installed by itself, and reboot the server.');
     });
 
@@ -100,6 +119,25 @@ return static function (ModuleContext $module): void {
             $routes->post('', [CronApi::class, 'add'])->name('.add');
             $routes->delete('/{id}', [CronApi::class, 'remove'])->name('.remove')->where('id', '\d+');
         }, name: 'api.cron', meta: ['can' => 'accounts.modify', 'csrf' => false, 'rate_limit' => '60/1m']);
+
+        $routes->group('/admin/alerts', static function (RouteCollector $routes): void {
+            $routes->get('', [AlertPages::class, 'index'])->name('');
+            $routes->post('/channels', [AlertPages::class, 'add'])->name('.add');
+            $routes->post('/channels/{id}', [AlertPages::class, 'change'])->name('.change')->where('id', '\d+');
+            $routes->post('/channels/{id}/delete', [AlertPages::class, 'delete'])->name('.delete')->where('id', '\d+');
+            $routes->post('/channels/{id}/test', [AlertPages::class, 'test'])->name('.test')->where('id', '\d+');
+            $routes->post('/settings', [AlertPages::class, 'saveSettings'])->name('.settings');
+        }, name: 'admin.alerts', meta: ['can' => 'server.alerts', 'no_impersonation' => true]);
+
+        $routes->group('/admin/api/v1/alerts', static function (RouteCollector $routes): void {
+            $routes->get('', [AlertApi::class, 'index'])->name('');
+            $routes->post('/channels', [AlertApi::class, 'add'])->name('.add');
+            $routes->put('/channels/{id}', [AlertApi::class, 'change'])->name('.change')->where('id', '\d+');
+            $routes->delete('/channels/{id}', [AlertApi::class, 'remove'])->name('.remove')->where('id', '\d+');
+            $routes->post('/channels/{id}/test', [AlertApi::class, 'test'])->name('.test')->where('id', '\d+');
+            $routes->put('/settings', [AlertApi::class, 'saveSettings'])->name('.settings');
+            $routes->get('/{id}', [AlertApi::class, 'show'])->name('.show')->where('id', '\d+');
+        }, name: 'api.alerts', meta: ['can' => 'server.alerts', 'csrf' => false, 'rate_limit' => '60/1m']);
 
         $routes->group('/admin/updates', static function (RouteCollector $routes): void {
             $routes->get('', [UpdatePages::class, 'index'])->name('');
@@ -192,6 +230,35 @@ return static function (ModuleContext $module): void {
             ->describe('Ask the agent how running updates went.');
         $commands->add('updates:due', [UpdateCommands::class, 'due'])
             ->describe('Start what is due: the daily check, and in the night\'s hour the updates the settings install.');
+        $commands->add('alerts:status', [AlertCommands::class, 'status'])
+            ->describe('Show where alerts go, when the server speaks up, and the latest alerts.')
+            ->option('limit', 'How many alerts (default 15).');
+        $commands->add('alerts:add', [AlertCommands::class, 'add'])
+            ->describe('Add a place for alerts to go: email, telegram, slack or webhook.')
+            ->argument('kind', 'email, telegram, slack or webhook.')
+            ->argument('name', 'A name for it.')
+            ->option('to', 'email: the address.')
+            ->option('token', 'telegram: the bot\'s token.')
+            ->option('chat', 'telegram: the chat\'s number, or @channelname.')
+            ->option('url', 'slack, webhook: the https address.')
+            ->option('key', 'webhook: a key (16 characters or more) to sign each alert with (X-LPanel-Signature).')
+            ->option('categories', 'Only these: services, updates, backups, ssl, resources, security (default all).')
+            ->option('from', 'The least severe alert it gets: info, warning (default) or critical.');
+        $commands->add('alerts:remove', [AlertCommands::class, 'remove'])
+            ->describe('Remove a place alerts go.')
+            ->argument('id', 'Its number (see alerts:status).');
+        $commands->add('alerts:test', [AlertCommands::class, 'test'])
+            ->describe('Send a test alert to a channel.')
+            ->argument('id', 'Its number (see alerts:status).');
+        $commands->add('alerts:settings', [AlertCommands::class, 'setSettings'])
+            ->describe('Show or change when the server speaks up on its own (0 turns one off).')
+            ->option('disk', 'Percent of a filesystem used.')
+            ->option('memory', 'Percent of memory in use.')
+            ->option('load', 'Five-minute load average per CPU.')
+            ->option('ssl', 'Days before a certificate expires.')
+            ->option('quiet', 'Minutes in which the same alert is not sent twice.');
+        $commands->add('alerts:check', [AlertCommands::class, 'check'])
+            ->describe('Look at the disks, memory, load, certificates and the agent once, and tell what began or ended (every five minutes).');
         $commands->add('watchdog:run',[ServiceCommands::class, 'watchdog'])
             ->describe('Look at the services once, and restart the ones that fell over.')
             ->option('grace', 'Seconds a service must have been found down before it is restarted (default 20).');
@@ -200,10 +267,12 @@ return static function (ModuleContext $module): void {
     $module->schedules(static function (ScheduleCollector $schedules): void {
         $schedules->command('watchdog:run')->everyMinute()->withoutOverlapping(600);
         $schedules->command('updates:due')->everyMinute()->withoutOverlapping(600);
+        $schedules->command('alerts:check')->everyFiveMinutes()->withoutOverlapping(600);
     });
 
     $module->filter('panel.nav', static function (array $items): array {
         $items[] = ['area' => 'user', 'section' => 'Panel.section_hosting', 'key' => 'cron', 'label' => 'Operations.cron_title', 'icon' => 'clock', 'route' => 'user.cron', 'can' => 'feature.cron', 'order' => 40];
+        $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'alerts', 'label' => 'Operations.alerts_title', 'icon' => 'bell', 'route' => 'admin.alerts', 'can' => 'server.alerts', 'order' => 8];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'updates', 'label' => 'Operations.updates_title', 'icon' => 'download', 'route' => 'admin.updates', 'can' => 'server.updates', 'order' => 7];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'tasks', 'label' => 'Operations.tasks_title', 'icon' => 'activity', 'route' => 'admin.tasks', 'can' => 'server.services', 'order' => 6];
         $items[] = ['area' => 'admin', 'section' => 'Panel.section_server', 'key' => 'services', 'label' => 'Operations.services_title', 'icon' => 'server', 'route' => 'admin.services', 'can' => 'server.services', 'order' => 5];
@@ -211,7 +280,11 @@ return static function (ModuleContext $module): void {
         return $items;
     });
 
-    $module->onBoot(static function (OperationsListeners $listeners, FilterEngine $filters, HookEngine $hooks): void {
+    $module->onBoot(static function (OperationsListeners $listeners, AlertListeners $alerts, FilterEngine $filters, HookEngine $hooks): void {
+        $hooks->add('ops.service_event', [$alerts, 'serviceEvent'], 50, 'Operations', 3);
+        $hooks->add('ops.update_event', [$alerts, 'updateEvent'], 50, 'Operations', 2);
+        $hooks->add('backups.finished', [$alerts, 'backupFinished'], 50, 'Operations', 6);
+        $hooks->add('auth.throttled', [$alerts, 'signInThrottled'], 50, 'Operations', 2);
         $hooks->add('accounts.changed', [$listeners, 'accountChanged'], 40, 'Operations', 2);
         $hooks->add('packages.updated', [$listeners, 'packageUpdated'], 40, 'Operations', 1);
         $filters->add('panel.attention', [$listeners, 'attention'], 5, 'Operations', 3);

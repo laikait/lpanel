@@ -1795,6 +1795,22 @@ check "a manifest changed after signing is refused, the same release is not inst
 check "a release whose installer fails is rolled back to the one before" t_upd_rollback
 check "after the rollback the panel, the agent, sites and sign-in work" t_upd_works
 
+echo "== alerts"
+t_al_add()    { lpanel alerts:add email "E2E ops" --to=root@localhost >/tmp/al.out 2>&1 && lpanel alerts:status | grep -q "E2E ops *email *root@localhost"; }
+t_al_refuse() { ! lpanel alerts:add slack Bad --url=http://hooks.example.com/x >/dev/null 2>&1 && ! lpanel alerts:add email Bad --to=nope >/dev/null 2>&1; }
+t_al_test()   { lpanel alerts:test 1 && for _ in $(seq 20); do grep -rqs "lpanel@e2e-panel.test" /var/log/exim/ && return 0; sleep 1; done; echo "no mail left the panel"; tail -5 /var/log/exim/*.log 2>/dev/null; return 1; }
+t_al_check()  { lpanel alerts:settings --disk=0 --memory=0 --load=0 >/dev/null && lpanel alerts:check; }
+t_al_page()   { local code; code=$(curl -ks -b $jar -o /tmp/alerts.html -w '%{http_code}' https://127.0.0.1:7443/admin/alerts); [ "$code" = 200 ] && grep -q "E2E ops" /tmp/alerts.html && grep -q 'href="/admin/alerts"' /tmp/alerts.html; }
+t_al_api()    { api https://127.0.0.1:7443/admin/api/v1/alerts | grep -q '"name":"E2E ops"' && ! api https://127.0.0.1:7443/admin/api/v1/alerts | grep -q '"config"'; }
+t_al_audit()  { mariadb -uroot -N lpanel -e "select action from audit_log where action like 'alerts.%'" | grep -q alerts.channel_add && mariadb -uroot -N lpanel -e "select action from audit_log where action like 'alerts.%'" | grep -q alerts.test; }
+check "an email channel is added" t_al_add
+check "a plain-http webhook and a bad address are refused" t_al_refuse
+check "a test alert leaves through the server's mail system" t_al_test
+check "the five-minute check runs" t_al_check
+check "the Alerts page shows the channel" t_al_page
+check "the API lists channels without their secrets" t_al_api
+check "channel changes are in the audit log" t_al_audit
+
 NEXT=$(case "$WEB" in apache) echo hybrid ;; nginx) echo apache ;; hybrid) echo nginx ;; esac)
 echo "== switching to $NEXT"
 t_switched() {

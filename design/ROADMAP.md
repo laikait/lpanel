@@ -1182,7 +1182,42 @@ ipset and reload mechanism (M9a) and the log formats of pure-ftpd and Dovecot
   fails rolled back with the panel working afterwards.
 - **Not yet:** a check of the free disk space before an upgrade; SELinux
   enforcing on a real server for the upgrade unit (unverified, like M1c).
-- GoAccess stats, logs, and alerts (email, Telegram, Slack, webhook).
+**M10d, alerts (email, Telegram, Slack, webhook), is built (2026-11-25).**
+
+- **Panel only** (`Operations/Alerts`; no agent change): the Admin page
+  `/admin/alerts` (root only, capability `server.alerts`): where alerts go
+  (channels, each limited to categories and a least severity, with a test
+  button and its last result), when the server speaks up (thresholds), and
+  what was said (history, with what became of each). API
+  `/admin/api/v1/alerts` and `alerts:status|add|remove|test|settings|check`.
+- **Channels:** email (through this server's exim; the installer now sets the
+  panel's mail to `sendmail`, also on servers installed before), Telegram (bot
+  token and chat), a Slack-style incoming webhook (also Mattermost, Discord's
+  Slack mode), and a webhook of one's own that gets signed JSON
+  (`X-LPanel-Signature: sha256=` HMAC of the body). Secrets are sealed with
+  the panel's key and never shown again; web addresses must be https and lead
+  to a public address (`Client::publicOnly`), eight seconds at most.
+- **What raises an alert:** events from hooks, `ops.service_event` (restarted,
+  could not restart, given up), `ops.update_event` (security updates waiting,
+  update failed, a release out), the new `backups.finished` (partial or failed
+  runs) and `auth.throttled` (root sign-in guessed at); and conditions looked
+  at every five minutes (`alerts:check`): a filesystem, memory or load over
+  its threshold, a certificate within N days of expiring (AutoSSL could not
+  renew it) or expired, the agent not answering. A condition is told when it
+  begins, again after a day, and when it ends ("Resolved: ..."). The same
+  alert is not sent twice in the quiet period (default an hour).
+- **Tests:** PHP (12 in `AlertsTest`: validation and sealing, routing by
+  category and severity, Slack and the signed webhook, a failing channel
+  breaking nothing and leaking no token, a webhook refused for a private
+  address, repeats, the condition lifecycle, the hooks, the five-minute check,
+  certificates, page/API/CLI/audit, root only), e2e: a channel added, bad
+  ones refused, a test alert leaving through exim.
+- **Not yet:** acknowledging an alert, alert rules per account (owners
+  being told of their own disk or bandwidth), SMS.
+
+**M10e, logs and GoAccess, is next:** a log viewer (the panel's, the web
+servers', mail, the agent's, journal units) and GoAccess traffic reports per
+domain.
 
 ### M11: Release
 - REST API completeness pass and the OpenAPI document; CLI parity; webhooks.

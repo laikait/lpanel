@@ -1,0 +1,145 @@
+{% extends "layout.twig" %}
+
+{% macro sev(s) %}<span class="badge {{ s == 'critical' ? 'bad' : (s == 'warning' ? 'warn' : 'plain') }}">{{ ('Operations.alerts_sev_' ~ s)|local }}</span>{% endmacro %}
+
+{% block content %}
+<div class="page-head">
+    <div>
+        <h1>{{ 'Operations.alerts_title'|local }}</h1>
+        <p>{{ 'Operations.alerts_lead'|local }}</p>
+    </div>
+</div>
+
+<div class="grid grid-side" style="margin-bottom:20px">
+    <div class="stack">
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Operations.alerts_channels'|local }}</h2><p>{{ 'Operations.alerts_channels_lead'|local }}</p></div></div>
+            {% if channels is empty %}
+                <div class="empty">{{ icon('bell') }}<h3>{{ 'Operations.alerts_none_title'|local }}</h3><p>{{ 'Operations.alerts_none_text'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table"><tbody>
+                {% for c in channels %}
+                    <tr>
+                        <td>
+                            <strong>{{ c.name }}</strong>{% if not c.enabled %} <span class="badge plain">{{ 'Operations.alerts_off'|local }}</span>{% endif %}
+                            <div class="domain-sub"><span class="badge plain">{{ ('Operations.alerts_kind_' ~ c.kind)|local }}</span> <span class="mono">{{ c.target }}</span></div>
+                            <div class="domain-sub">{{ c.cats ? c.cats|map(k => ('Operations.alerts_cat_' ~ k)|local)|join(', ') : 'Operations.alerts_cat_all'|local }} · {{ 'Operations.alerts_from'|local({severity: ('Operations.alerts_sev_' ~ c.min_severity)|local}) }}</div>
+                            {% if c.last_error %}<div class="domain-sub" style="white-space:normal;color:var(--bad)">{{ 'Operations.alerts_last_failed'|local }}: {{ c.last_error }}</div>
+                            {% elseif c.last_ok_at %}<div class="domain-sub">{{ 'Operations.alerts_last_ok'|local({when: c.last_ok_at|when}) }}</div>
+                            {% else %}<div class="domain-sub">{{ 'Operations.alerts_never_sent'|local }}</div>{% endif %}
+                            <details class="domain-sub"><summary>{{ 'Operations.alerts_edit'|local }}</summary>
+                                <form method="post" action="{{ c.change_url }}" style="margin-top:10px">
+                                    <input type="hidden" name="_token" value="{{ lp.token }}">
+                                    <div class="field">
+                                        <label>{{ 'Operations.alerts_categories'|local }}</label>
+                                        <div style="display:flex;flex-wrap:wrap;gap:6px 16px">
+                                            {% for k in categories %}<label style="display:flex;gap:6px;align-items:center"><input type="checkbox" name="categories[]" value="{{ k }}"{% if not c.cats or k in c.cats %} checked{% endif %}> {{ ('Operations.alerts_cat_' ~ k)|local }}</label>{% endfor %}
+                                        </div>
+                                    </div>
+                                    <div class="field">
+                                        <label for="sev-{{ c.id }}">{{ 'Operations.alerts_min_severity'|local }}</label>
+                                        <select class="input" id="sev-{{ c.id }}" name="min_severity">
+                                            {% for s in severities %}<option value="{{ s }}"{% if c.min_severity == s %} selected{% endif %}>{{ ('Operations.alerts_sev_' ~ s)|local }}</option>{% endfor %}
+                                        </select>
+                                    </div>
+                                    <input type="hidden" name="enabled" value="0">
+                                    <label class="switch-row">
+                                        <span><strong>{{ 'Operations.alerts_enabled'|local }}</strong></span>
+                                        <input class="toggle" type="checkbox" name="enabled" value="1"{% if c.enabled %} checked{% endif %}>
+                                    </label>
+                                    <button class="btn btn-sm btn-primary" type="submit">{{ 'Operations.alerts_save'|local }}</button>
+                                </form>
+                            </details>
+                        </td>
+                        <td style="text-align:end;white-space:nowrap;vertical-align:top">
+                            <form class="inline-form" method="post" action="{{ c.test_url }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm" type="submit">{{ icon('play') }}{{ 'Operations.alerts_test'|local }}</button>
+                            </form>
+                            <form class="inline-form" method="post" action="{{ c.delete_url }}" data-confirm="{{ 'Operations.alerts_confirm_remove'|local({name: c.name}) }}">
+                                <input type="hidden" name="_token" value="{{ lp.token }}">
+                                <button class="btn btn-sm btn-danger" type="submit">{{ 'Operations.alerts_remove'|local }}</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody></table></div>
+            {% endif %}
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Operations.alerts_add'|local }}</h2><p>{{ 'Operations.alerts_add_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <div class="grid grid-2">
+                    <form method="post" action="{{ urls.add }}" class="stack">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="kind" value="email">
+                        <h3>{{ icon('mail') }} {{ 'Operations.alerts_kind_email'|local }}</h3>
+                        <div class="field"><label for="a-e-name">{{ 'Operations.alerts_name'|local }}</label><input class="input" id="a-e-name" name="name" maxlength="80" required></div>
+                        <div class="field"><label for="a-e-to">{{ 'Operations.alerts_email_to'|local }}</label><input class="input" id="a-e-to" name="to" type="email" required><div class="hint">{{ 'Operations.alerts_email_hint'|local }}</div></div>
+                        <button class="btn btn-primary" type="submit">{{ 'Operations.alerts_add_button'|local }}</button>
+                    </form>
+                    <form method="post" action="{{ urls.add }}" class="stack">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="kind" value="telegram">
+                        <h3>{{ icon('phone') }} {{ 'Operations.alerts_kind_telegram'|local }}</h3>
+                        <div class="field"><label for="a-t-name">{{ 'Operations.alerts_name'|local }}</label><input class="input" id="a-t-name" name="name" maxlength="80" required></div>
+                        <div class="field"><label for="a-t-token">{{ 'Operations.alerts_telegram_token'|local }}</label><input class="input mono" id="a-t-token" name="token" autocomplete="off" required><div class="hint">{{ 'Operations.alerts_telegram_hint'|local }}</div></div>
+                        <div class="field"><label for="a-t-chat">{{ 'Operations.alerts_telegram_chat'|local }}</label><input class="input mono" id="a-t-chat" name="chat" placeholder="-1001234567890" required></div>
+                        <button class="btn btn-primary" type="submit">{{ 'Operations.alerts_add_button'|local }}</button>
+                    </form>
+                    <form method="post" action="{{ urls.add }}" class="stack">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="kind" value="slack">
+                        <h3>{{ icon('users') }} {{ 'Operations.alerts_kind_slack'|local }}</h3>
+                        <div class="field"><label for="a-s-name">{{ 'Operations.alerts_name'|local }}</label><input class="input" id="a-s-name" name="name" maxlength="80" required></div>
+                        <div class="field"><label for="a-s-url">{{ 'Operations.alerts_slack_url'|local }}</label><input class="input mono" id="a-s-url" name="url" type="url" autocomplete="off" placeholder="https://hooks.slack.com/services/…" required><div class="hint">{{ 'Operations.alerts_slack_hint'|local }}</div></div>
+                        <button class="btn btn-primary" type="submit">{{ 'Operations.alerts_add_button'|local }}</button>
+                    </form>
+                    <form method="post" action="{{ urls.add }}" class="stack">
+                        <input type="hidden" name="_token" value="{{ lp.token }}"><input type="hidden" name="kind" value="webhook">
+                        <h3>{{ icon('link') }} {{ 'Operations.alerts_kind_webhook'|local }}</h3>
+                        <div class="field"><label for="a-w-name">{{ 'Operations.alerts_name'|local }}</label><input class="input" id="a-w-name" name="name" maxlength="80" required></div>
+                        <div class="field"><label for="a-w-url">{{ 'Operations.alerts_webhook_url'|local }}</label><input class="input mono" id="a-w-url" name="url" type="url" autocomplete="off" placeholder="https://" required></div>
+                        <div class="field"><label for="a-w-key">{{ 'Operations.alerts_webhook_key'|local }}</label><input class="input mono" id="a-w-key" name="signing_key" autocomplete="off"><div class="hint">{{ 'Operations.alerts_webhook_hint'|local }}</div></div>
+                        <button class="btn btn-primary" type="submit">{{ 'Operations.alerts_add_button'|local }}</button>
+                    </form>
+                </div>
+                <p class="hint" style="margin-top:14px">{{ 'Operations.alerts_public_only'|local }}</p>
+            </div>
+        </section>
+
+        <section class="card">
+            <div class="card-head"><div><h2>{{ 'Operations.alerts_history'|local }}</h2><p>{{ 'Operations.alerts_history_lead'|local }}</p></div></div>
+            {% if history is empty %}
+                <div class="empty">{{ icon('clock') }}<h3>{{ 'Operations.alerts_history_none'|local }}</h3><p>{{ 'Operations.alerts_history_none_text'|local }}</p></div>
+            {% else %}
+            <div class="table-wrap"><table class="table"><tbody>
+                {% for a in history %}
+                    <tr>
+                        <td>
+                            <strong>{{ a.title }}</strong>
+                            {% if a.detail %}<div class="domain-sub" style="white-space:normal">{{ a.detail }}</div>{% endif %}
+                            <div class="domain-sub">{{ ('Operations.alerts_cat_' ~ a.category)|local }} · {% if a.suppressed %}{{ 'Operations.alerts_repeat'|local }}{% elseif a.sent or a.failed %}{{ 'Operations.alerts_sent'|local({sent: a.sent, failed: a.failed}) }}{% else %}{{ 'Operations.alerts_no_channel'|local }}{% endif %}</div>
+                        </td>
+                        <td style="text-align:end;white-space:nowrap">{{ _self.sev(a.severity) }}<div class="domain-sub">{{ a.at|when }}</div></td>
+                    </tr>
+                {% endfor %}
+            </tbody></table></div>
+            {% endif %}
+        </section>
+    </div>
+
+    <div class="stack">
+        <form class="card" method="post" action="{{ urls.settings }}">
+            <div class="card-head"><div><h2>{{ 'Operations.alerts_settings'|local }}</h2><p>{{ 'Operations.alerts_settings_lead'|local }}</p></div></div>
+            <div class="card-body">
+                <input type="hidden" name="_token" value="{{ lp.token }}">
+                <div class="field"><label for="al-disk">{{ 'Operations.alerts_set_disk'|local }}</label><input class="input" id="al-disk" name="disk" type="number" min="0" max="99" value="{{ settings.disk }}"><div class="hint">{{ 'Operations.alerts_set_percent'|local }}</div></div>
+                <div class="field"><label for="al-memory">{{ 'Operations.alerts_set_memory'|local }}</label><input class="input" id="al-memory" name="memory" type="number" min="0" max="99" value="{{ settings.memory }}"><div class="hint">{{ 'Operations.alerts_set_percent'|local }}</div></div>
+                <div class="field"><label for="al-load">{{ 'Operations.alerts_set_load'|local }}</label><input class="input" id="al-load" name="load" type="number" min="0" max="20" value="{{ settings.load }}"><div class="hint">{{ 'Operations.alerts_set_load_hint'|local }}</div></div>
+                <div class="field"><label for="al-ssl">{{ 'Operations.alerts_set_ssl'|local }}</label><input class="input" id="al-ssl" name="ssl" type="number" min="0" max="60" value="{{ settings.ssl }}"><div class="hint">{{ 'Operations.alerts_set_ssl_hint'|local }}</div></div>
+                <div class="field"><label for="al-quiet">{{ 'Operations.alerts_set_quiet'|local }}</label><input class="input" id="al-quiet" name="quiet" type="number" min="5" max="1440" value="{{ settings.quiet }}"><div class="hint">{{ 'Operations.alerts_set_quiet_hint'|local }}</div></div>
+            </div>
+            <div class="card-foot"><button class="btn btn-primary" type="submit">{{ 'Operations.alerts_save'|local }}</button></div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -282,7 +282,9 @@ DB_USERNAME=lpanel
 DB_PASSWORD=${DB_PASSWORD}
 SESSION_STORE=database
 SESSION_COOKIE_SECURE=true
-MAIL_TRANSPORT=log
+MAIL_TRANSPORT=sendmail
+MAIL_FROM_ADDRESS=lpanel@${HOST}
+MAIL_FROM_NAME=LPanel
 LPANEL_ROOT_VERIFIER=authd
 LPANEL_AGENT_KEY_FILE=/etc/lpanel/agent.key
 ENV
@@ -290,6 +292,14 @@ ENV
     note "new APP_KEY and database password written"
 else
     note "existing $PANEL/.env kept"
+    # Alerts and the panel's other mail go through this server's own exim.
+    if grep -q '^MAIL_TRANSPORT=log' "$PANEL/.env"; then
+        sed -i 's/^MAIL_TRANSPORT=log/MAIL_TRANSPORT=sendmail/' "$PANEL/.env"
+        grep -q '^MAIL_FROM_ADDRESS=' "$PANEL/.env" || printf 'MAIL_FROM_ADDRESS=lpanel@%s
+MAIL_FROM_NAME=LPanel
+' "$HOST" >> "$PANEL/.env"
+        note "panel mail now goes through the server's mail system"
+    fi
 fi
 chown root:lpanel "$PANEL/.env"
 chmod 0640 "$PANEL/.env"

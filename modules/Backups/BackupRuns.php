@@ -6,6 +6,7 @@ namespace App\Modules\Backups;
 
 use App\Engine\Auth\Identity;
 use App\Engine\Database\ConnectionManager;
+use App\Engine\Hook\HookEngine;
 use App\Engine\Database\Query\QueryBuilder;
 use App\Engine\Http\Request;
 use App\Modules\Accounts\Accounts;
@@ -38,6 +39,7 @@ final class BackupRuns
         private readonly AccountExport $export,
         private readonly AgentClient $agent,
         private readonly AuditLog $audit,
+        private readonly HookEngine $hooks,
     ) {}
 
     /**
@@ -289,6 +291,8 @@ final class BackupRuns
         $this->audit->record('backup.finished', null, null, (string) ($destination['name'] ?? $run['destination_id']), $state === self::DONE ? AuditLog::OK : AuditLog::FAILED, [
             'run' => (int) $run['id'], 'state' => $state, 'ok' => $ok, 'failed' => $failed,
         ] + ($error === null ? [] : ['error' => $error]) + self::failures($result));
+        // For alerts and anything else that wants to know how a run went.
+        $this->hooks->do('backups.finished', (int) $run['id'], $state, $ok, $failed, (string) ($destination['name'] ?? $run['destination_id']), $error);
     }
 
     /**
