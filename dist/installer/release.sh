@@ -53,7 +53,8 @@ case "${1:-}" in
         msg=$(mktemp)
         trap 'rm -f "$msg"' EXIT
         { printf 'lpanel-release-v1\n'; cat "$out/latest.json.new"; } > "$msg"
-        openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg" | base64 -w0 > "$out/latest.json.sig.new"
+        # OpenSSL 3 wants -rawin for a message; 1.1.1 (version 8) signs it as it is.
+        { openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg" 2>/dev/null || openssl pkeyutl -sign -inkey "$key" -in "$msg"; } | base64 -w0 > "$out/latest.json.sig.new"
         echo >> "$out/latest.json.sig.new"
         # The signature first, then the manifest: a client between the two
         # renames sees a mismatch and tries again later, never a wrong release.

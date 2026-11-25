@@ -130,7 +130,10 @@ if ! rpm -q restic >/dev/null 2>&1 && ! command -v restic >/dev/null 2>&1; then
         curl -fsSL -o "$tmp" "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2" \
             || die "could not download restic ${RESTIC_VERSION}."
         [ "$(sha256sum "$tmp" | cut -d' ' -f1)" = "$RESTIC_SHA256" ] || { rm -f "$tmp"; die "restic ${RESTIC_VERSION} does not match its checksum."; }
-        bunzip2 -c "$tmp" > /usr/bin/restic && chmod 0755 /usr/bin/restic && rm -f "$tmp"
+        rpm -q bzip2 >/dev/null 2>&1 || dnf -y -q install bzip2
+        bunzip2 -c "$tmp" > "$tmp.bin" || { rm -f "$tmp" "$tmp.bin"; die "could not unpack restic ${RESTIC_VERSION}."; }
+        install -m 0755 "$tmp.bin" /usr/bin/restic
+        rm -f "$tmp" "$tmp.bin"
         note "restic ${RESTIC_VERSION} from the project's release (this system's repositories have none)"
     fi
 fi
@@ -646,10 +649,23 @@ if grep -Eq '^[[:space:]]*Subsystem[[:space:]]+sftp[[:space:]]+internal-sftp' /e
     sed -i -E 's|^([[:space:]]*Subsystem[[:space:]]+sftp[[:space:]]+)internal-sftp.*|\1/usr/libexec/openssh/sftp-server|' /etc/ssh/sshd_config
     note "sshd: SFTP now goes through the account's shell (sftp-server instead of internal-sftp)"
 fi
-if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
-    note "WARNING: /etc/ssh/sshd_config does not include sshd_config.d; accounts' SSH rules are not in effect"
+# OpenSSH 8.0 (version 8) has neither "Include" nor KbdInteractiveAuthentication
+# (there, keys alone are asked for instead):
+# there the rules go into sshd_config itself, between markers, at its end.
+SSHD_DROPIN=/etc/ssh/sshd_config.d/40-lpanel.conf
+SSHD_INLINE=0
+SSH_VER=$(rpm -q --qf '%{VERSION}' openssh-server | awk -F'[.p]' '{ print $1, $2 }')
+if [ "${SSH_VER% *}" -lt 8 ] || { [ "${SSH_VER% *}" -eq 8 ] && [ "${SSH_VER#* }" -lt 2 ]; }; then
+    SSHD_INLINE=1
+    SSHD_DROPIN=$(mktemp)
+else
+    install -d -m 0755 -o root -g root /etc/ssh/sshd_config.d
+    if ! grep -Eq '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/\*\.conf' /etc/ssh/sshd_config; then
+        sed -i '1i Include /etc/ssh/sshd_config.d/*.conf' /etc/ssh/sshd_config
+    fi
 fi
-cat > /etc/ssh/sshd_config.d/40-lpanel.conf <<'SSHD'
+sed -i '/^# BEGIN LPanel accounts$/,/^# END LPanel accounts$/d' /etc/ssh/sshd_config
+cat > "$SSHD_DROPIN" <<'SSHD'
 # LPanel's hosting accounts (written by the installer; changes are overwritten).
 # Keys come from the panel only, never from the account's own ~/.ssh;
 # passwords are never accepted, and nothing is forwarded.
@@ -665,7 +681,13 @@ Match Group lpanel-users
     PermitTunnel no
     PermitTTY yes
 SSHD
-chmod 0600 /etc/ssh/sshd_config.d/40-lpanel.conf
+if [ "$SSHD_INLINE" = 1 ]; then
+    sed -i 's/^    KbdInteractiveAuthentication no/    AuthenticationMethods publickey/' "$SSHD_DROPIN"
+    { echo '# BEGIN LPanel accounts'; cat "$SSHD_DROPIN"; echo '# END LPanel accounts'; } >> /etc/ssh/sshd_config
+    rm -f "$SSHD_DROPIN"
+else
+    chmod 0600 "$SSHD_DROPIN"
+fi
 # A configuration sshd refuses would lock everyone out at its next restart.
 # (sshd -t needs host keys; a fresh machine makes them at first start.)
 [ -e /etc/ssh/ssh_host_ed25519_key ] || ssh-keygen -A
@@ -675,6 +697,7 @@ if /usr/sbin/sshd -t 2>/tmp/lpanel-sshd-test; then
     note "sshd: accounts sign in with keys from the panel, into their jail (bubblewrap $(rpm -q --qf '%{VERSION}' bubblewrap))"
 else
     rm -f /etc/ssh/sshd_config.d/40-lpanel.conf
+    sed -i '/^# BEGIN LPanel accounts$/,/^# END LPanel accounts$/d' /etc/ssh/sshd_config
     note "FAILED: sshd refused the configuration ($(head -1 /tmp/lpanel-sshd-test)); accounts cannot use SSH until it is fixed"
 fi
 rm -f /tmp/lpanel-sshd-test

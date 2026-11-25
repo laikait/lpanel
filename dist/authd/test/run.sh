@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build and test lpanel-authd in a throwaway AlmaLinux 9 container, and leave
+# Build and test lpanel-authd in a throwaway AlmaLinux 8 container, and leave
 # the binary in dist/authd/bin/lpanel-authd_linux_amd64.
 #
-# EL9 has the oldest glibc LPanel supports (2.34), so a binary built here runs
+# EL8 has the oldest glibc LPanel supports (2.28), so a binary built here runs
 # on every supported system. PAM needs cgo, so it cannot be cross-compiled.
 #   dist/authd/test/run.sh
 set -euo pipefail
@@ -16,7 +16,7 @@ export MSYS_NO_PATHCONV=1
 version=$(cat "$HERE/VERSION")
 
 name=lpanel-authd-test-$$
-docker run -d --name "$name" almalinux:9 sleep 1800 >/dev/null
+docker run -d --name "$name" almalinux:8 sleep 1800 >/dev/null
 trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
 docker exec "$name" mkdir -p /src
 cd "$HERE" && docker cp . "$name:/src/"

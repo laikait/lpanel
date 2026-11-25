@@ -40,7 +40,7 @@ var etcFiles = []string{
 	"rocky-release", "locale.conf", "shells", "my.cnf", "my.cnf.d", "opt/remi", "php.ini", "php.d",
 	"gitconfig", "vimrc", "virc", "nanorc", "wgetrc", "npmrc", "terminfo",
 	// profile.d scripts read these (environment-modules through a link in /usr).
-	"environment-modules", "bash_completion.d",
+	"environment-modules", "modulefiles", "bash_completion.d",
 }
 
 // Account is who the jail is for.
@@ -160,6 +160,9 @@ func Env(a Account, host []string) []string {
 	env := []string{
 		"HOME=" + a.Home, "USER=" + a.Name, "LOGNAME=" + a.Name, "SHELL=" + Shell,
 		"PATH=/usr/local/bin:/usr/bin",
+		// environment-modules (on by default on version 8) starts a pager from
+		// the login profile, which waits on the terminal for ever.
+		"MODULES_PAGER=cat",
 	}
 	for _, kv := range host {
 		k, _, _ := strings.Cut(kv, "=")

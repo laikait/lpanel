@@ -493,9 +493,9 @@ t_fallback()  { acme https://127.0.0.1:14999/dir \
 # A certificate from an authority of the owner's own (not self-signed, so
 # AutoSSL leaves it in place), given as key, leaf and issuer on stdin.
 t_custom()    { openssl req -x509 -newkey rsa:2048 -nodes -days 30 -subj "/CN=E2E Own CA" -keyout /tmp/ca.key -out /tmp/ca.crt 2>/dev/null \
-                && openssl req -newkey rsa:2048 -nodes -subj "/CN=other.example.test" -addext "subjectAltName=DNS:other.example.test,DNS:www.other.example.test" \
-                    -keyout /tmp/own.key -out /tmp/own.csr 2>/dev/null \
-                && openssl x509 -req -in /tmp/own.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -days 30 -copy_extensions copy -out /tmp/own.crt 2>/dev/null \
+                && openssl req -newkey rsa:2048 -nodes -subj "/CN=other.example.test" -keyout /tmp/own.key -out /tmp/own.csr 2>/dev/null \
+                && printf 'subjectAltName=DNS:other.example.test,DNS:www.other.example.test\n' > /tmp/own.ext \
+                && openssl x509 -req -in /tmp/own.csr -CA /tmp/ca.crt -CAkey /tmp/ca.key -CAcreateserial -days 30 -extfile /tmp/own.ext -out /tmp/own.crt 2>/dev/null \
                 && cat /tmp/own.key /tmp/own.crt /tmp/ca.crt | lpanel ssl:install shop1 other.example.test \
                 && issuer other.example.test | grep -q "CN *= *E2E Own CA" && [ "$(ssl_row other.example.test source)" = custom ] \
                 && [ "$(stat -c '%a %U' /etc/pki/lpanel/sites/shop1)" = "700 root" ] \
@@ -707,9 +707,11 @@ lpanel domains:set shop1 shop.example.test --wildcard=no >/dev/null
 echo "== mail (Exim, Dovecot)"
 # The mirrors now and then fail for a minute: try again before every mail check fails for it.
 for _try in 1 2 3 4 5 6; do
-    dnf -y -q install swaks python3-dkimpy >/tmp/dnf-swaks.log 2>&1 && command -v swaks >/dev/null && break
+    dnf -y -q install swaks python3 >/tmp/dnf-swaks.log 2>&1 && command -v swaks >/dev/null && break
     sleep 15
 done
+# The check of a DKIM signature uses dkimpy: a package on 9 and 10, from PyPI on 8.
+python3 -c 'import dkim' 2>/dev/null || dnf -y -q install python3-dkimpy >>/tmp/dnf-swaks.log 2>&1 || pip3 install -q dkimpy >>/tmp/dnf-swaks.log 2>&1
 command -v swaks >/dev/null || { echo "swaks could not be installed:"; tail -5 /tmp/dnf-swaks.log; }
 MIP=$(hostname -I | tr ' ' '\n' | grep -m1 -E '^[0-9]+(\.[0-9]+){3}$')   # this machine's own address: not a relay host
 MPW='Mail-Pass-Word-1'
@@ -762,7 +764,7 @@ PY
 cat > /tmp/dkim-check.py <<'PY'
 import dkim, subprocess, sys
 def dns(name, timeout=5):
-    out = subprocess.run(["dig", "@127.0.0.1", "+short", "+norecurse", "TXT", name.decode().rstrip(".")], capture_output=True, text=True).stdout
+    out = subprocess.run(["dig", "@127.0.0.1", "+short", "+norecurse", "TXT", name.decode().rstrip(".")], stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True).stdout
     return "".join(part for line in out.splitlines() for part in line.split('"')[1::2]).encode()
 msg = open(sys.argv[1], "rb").read()
 sys.exit(0 if dkim.verify(msg, dnsfunc=dns) else 1)
@@ -1274,7 +1276,7 @@ sftpk() { local k=$1; shift; sftp -i "$k" "${SSHO[@]}" -b - shop7@127.0.0.1 "$@"
 rm -f /tmp/k1 /tmp/k1.pub /tmp/k2 /tmp/k2.pub /tmp/kgen
 ssh-keygen -q -t ed25519 -N '' -C e2e@laptop -f /tmp/k1; ssh-keygen -q -t ed25519 -N '' -C own -f /tmp/k2
 t_ssh_setup()    { sshd -T -C user=shop7,host=x,addr=127.0.0.1 > /tmp/sshdT; grep -Ei '^(authorizedkeysfile|allowtcpforwarding|passwordauthentication|permituserrc) ' /tmp/sshdT >&2
-                   systemctl is-active --quiet sshd && [ -f /etc/ssh/sshd_config.d/40-lpanel.conf ] \
+                   systemctl is-active --quiet sshd && { [ -f /etc/ssh/sshd_config.d/40-lpanel.conf ] || grep -q '^# BEGIN LPanel accounts' /etc/ssh/sshd_config; } \
                    && grep -qx 'authorizedkeysfile /etc/ssh/lpanel/keys/%u' /tmp/sshdT && grep -qx 'allowtcpforwarding no' /tmp/sshdT \
                    && grep -qx 'passwordauthentication no' /tmp/sshdT && grep -qx 'permituserrc no' /tmp/sshdT \
                    && sshd -T -C user=root,host=x,addr=127.0.0.1 | grep -qx 'authorizedkeysfile .ssh/authorized_keys' \
@@ -1835,7 +1837,7 @@ check "the Logs and Statistics pages work for the Admin and the owner" t_lg_page
 check "the API reads a log and refuses one that is not listed" t_lg_api
 
 echo "== the API describes itself"
-t_oa_json()  { api https://127.0.0.1:7443/admin/api/v1/openapi.json -o /tmp/openapi.json && grep -Eq '"openapi": ?"3.1.0"' /tmp/openapi.json && grep -q '"/admin/api/v1/accounts/{username}/domains"' /tmp/openapi.json && grep -Eq '"operationId": ?"api_updates_apply"' /tmp/openapi.json; }
+t_oa_json()  { local i; for i in 1 2 3; do api --max-time 60 https://127.0.0.1:7443/admin/api/v1/openapi.json -o /tmp/openapi.json && grep -Eq '"openapi": ?"3.1.0"' /tmp/openapi.json && grep -q '"/admin/api/v1/accounts/{username}/domains"' /tmp/openapi.json && grep -Eq '"operationId": ?"api_updates_apply"' /tmp/openapi.json && return 0; sleep 3; done; head -c 300 /tmp/openapi.json >&2; return 1; }
 t_oa_anon()  { [ "$(curl -ks -o /dev/null -w '%{http_code}' -H 'Accept: application/json' https://127.0.0.1:7443/admin/api/v1/openapi.json)" = 401 ]; }
 t_oa_docs()  { api https://127.0.0.1:7443/admin/api/v1/docs -H 'Accept: text/html' | grep -qi swagger; }
 t_oa_url()   { grep -Eq '"url": ?"https://' /tmp/openapi.json; }
