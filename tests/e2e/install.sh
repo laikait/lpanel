@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End to end: install LPanel from its bundle on a fresh AlmaLinux 9 machine
+# End to end: install LPanel from its bundle on a fresh AlmaLinux machine (EL=8|9|10)
 # (a systemd container), then use it as a person would: sign in as root with
 # the real root password through real PAM, and see live data from the agent.
 #

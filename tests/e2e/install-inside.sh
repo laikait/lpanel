@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs inside a fresh AlmaLinux 9 systemd container (see install.sh).
+# Runs inside a fresh AlmaLinux 8, 9 or 10 systemd container (see install.sh).
 # No pipefail: a check like `curl page | grep -q text` fails (curl: broken pipe) whenever grep
 # finds its text and quits before curl has written the whole page, more often the bigger
 # the page is. What the checks look at is the text, not the producer's exit status.
@@ -1749,6 +1749,8 @@ panel_run() { # waits for the latest upgrade to finish, as the scheduler would s
     echo "still ${st:-unknown}"
 }
 t_upd_channel() {
+    # OpenSSL 1.1.1 (version 8) cannot sign Ed25519: release.sh falls back to python's cryptography there.
+    python3 -c 'import cryptography' 2>/dev/null || dnf -y -q install python3-cryptography >/dev/null 2>&1
     mkdir -p "$REL" && bash /e2e/release.sh keygen /root/release-keys > /dev/null || return 1
     make_release 0.1.1-e2e > /tmp/rel.out 2>&1 || { cat /tmp/rel.out; return 1; }
     (cd "$REL" && nohup python3 -m http.server 8099 --bind 127.0.0.1 > /tmp/channel.log 2>&1 &)

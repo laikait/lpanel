@@ -1276,12 +1276,32 @@ ipset and reload mechanism (M9a) and the log formats of pure-ftpd and Dovecot
   the release candidate.
 - **Tests:** PHP (4 in `ApiDescriptionTest`), e2e: the document and the
   reference page are served to a token and refused without one.
+**M11b, the installer on AlmaLinux and Rocky 8, 9 and 10, is built (2026-11-26).**
+
+The install e2e (`EL=8|9|10 tests/e2e/install.sh`) passes all 350 checks on each
+(Apache stack). What each version needed, found by running it:
+
+- **Version 8:** module streams `mariadb:10.11` and `nginx:1.24`; no `restic`
+  package (the project's release is installed, by checksum, after `bzip2`);
+  OpenSSH 8.0 has no `Include` and no `KbdInteractiveAuthentication`, so
+  the accounts' SSH rules go into `sshd_config` between markers with
+  `AuthenticationMethods publickey`; `lpanel-authd` is built on version 8, so its
+  glibc (2.28) is the oldest any supported system has; the jail sets
+  `MODULES_PAGER=cat` and binds `/etc/modulefiles` (the login profile's
+  environment-modules started a pager that waited for ever).
+- **All versions:** `/var/lib/lpanel` is 0751, so nginx, its own user, can reach its
+  temporary files: an answer over 64 KB was cut off (the OpenAPI document, phpMyAdmin pages).
+- **Repositories by version:** Remi and Rspamd per `$EL`; `clamav-freshclam`
+  replaces `clamav-update`.
+- **`release.sh`** signs with OpenSSL 3's `-rawin`, and with python's
+  `cryptography` where OpenSSL is 1.1.1 (it cannot sign Ed25519).
+- Not run: the nginx and hybrid stacks on 8 and 10; Rocky itself (same packages).
 - **Rest of M11:**
 - Outgoing event webhooks beyond alerts; CLI parity audit.
 - White-label polish.
 - Translations: English, Bangla, Arabic.
 - License server, plus activation and grace period in the panel.
-- Installer hardening for AlmaLinux/Rocky 8, 9 and 10.
+- ~~Installer hardening for AlmaLinux/Rocky 8, 9 and 10~~ (done, 2026-11-26; below).
 - Upgrade path tests, and documentation.
 
 **Exit:** v1.0.0 is tagged. A fresh install and an upgrade from the previous

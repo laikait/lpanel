@@ -53,8 +53,15 @@ case "${1:-}" in
         msg=$(mktemp)
         trap 'rm -f "$msg"' EXIT
         { printf 'lpanel-release-v1\n'; cat "$out/latest.json.new"; } > "$msg"
-        # OpenSSL 3 wants -rawin for a message; 1.1.1 (version 8) signs it as it is.
-        { openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg" 2>/dev/null || openssl pkeyutl -sign -inkey "$key" -in "$msg"; } | base64 -w0 > "$out/latest.json.sig.new"
+        # OpenSSL 3 signs a message with -rawin; 1.1.1 (version 8) cannot sign Ed25519 at all,
+        # so there python's cryptography does it.
+        if openssl pkeyutl -sign -inkey "$key" -rawin -in "$msg" 2>/dev/null > "$out/latest.json.sig.raw" && [ -s "$out/latest.json.sig.raw" ]; then
+            :
+        else
+            python3 -c 'import sys; from cryptography.hazmat.primitives.serialization import load_pem_private_key as l; sys.stdout.buffer.write(l(open(sys.argv[1], "rb").read(), None).sign(open(sys.argv[2], "rb").read()))' "$key" "$msg" > "$out/latest.json.sig.raw"
+        fi
+        base64 -w0 < "$out/latest.json.sig.raw" > "$out/latest.json.sig.new"
+        rm -f "$out/latest.json.sig.raw"
         echo >> "$out/latest.json.sig.new"
         # The signature first, then the manifest: a client between the two
         # renames sees a mismatch and tries again later, never a wrong release.

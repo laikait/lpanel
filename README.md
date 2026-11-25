@@ -2,7 +2,7 @@
 
 A web hosting control panel for hosting companies, with root admin, reseller,
 end-user and sub-user tiers. It is installed on each server
-(AlmaLinux 9 first) and manages that machine through a privileged Go agent.
+(AlmaLinux and Rocky 8, 9 and 10) and manages that machine through a privileged Go agent.
 
 Start with [design/README.md](design/README.md): the [feature list](design/FEATURES.md),
 [roadmap](design/ROADMAP.md) and [architecture](design/ARCHITECTURE.md).

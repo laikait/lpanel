@@ -283,7 +283,8 @@ account owner granted. The root admin can do everything.
 
 | OS | Release |
 |---|---|
-| AlmaLinux 9 / Rocky Linux 9 | v1 (development and test target) |
+| AlmaLinux / Rocky Linux 9 | v1 (development and test target) |
+| AlmaLinux / Rocky Linux 8 and 10 | v1 (install e2e passes, Apache stack) |
 | AlmaLinux / Rocky 8 and 10 | v1 |
 | Ubuntu 22.04 / 24.04 / 26.04 LTS | v1.x |
 | Debian 12 / 13 | v1.x |
